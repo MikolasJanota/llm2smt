@@ -128,6 +128,16 @@ int main(int argc, char** argv) {
     using namespace llm2smt;
     using namespace smt2parser;
 
+    if (argc >= 2 && std::string(argv[1]) == "--version") {
+        std::cout << "llm2smt " << LLM2SMT_VERSION << "\n"
+                  << "Build:  " << LLM2SMT_BUILD_TYPE << "\n"
+                  << "SAT:    " << LLM2SMT_SAT_SOLVER << "\n";
+#ifndef NDEBUG
+        std::cout << "Assertions: enabled\n";
+#endif
+        return 0;
+    }
+
     try {
         antlr4::ANTLRInputStream* input_stream = nullptr;
         std::ifstream file;
