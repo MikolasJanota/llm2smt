@@ -38,6 +38,9 @@ public:
     bool cb_has_external_clause(bool& is_forgettable) override;
     int  cb_add_external_clause_lit() override;
 
+    // Allocate a fresh SAT variable (for Bool-valued atoms outside EUF).
+    int new_var() { return next_var_++; }
+
     // Access internals (for testing)
     CC&          cc()          { return cc_; }
     NodeManager& nm()          { return nm_; }

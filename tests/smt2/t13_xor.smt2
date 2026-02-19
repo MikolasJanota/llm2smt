@@ -1,0 +1,7 @@
+; xor(P, P) is always false, so asserting it is unsat.
+(set-logic QF_UF)
+(declare-sort U 0)
+(declare-fun a () U)
+(declare-fun b () U)
+(assert (xor (= a b) (= a b)))
+(check-sat)

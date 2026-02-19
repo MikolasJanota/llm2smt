@@ -25,7 +25,10 @@ public:
     int new_var() override { return ++next_var_; }
 
     void add_clause(std::span<const int> lits) override {
-        clauses_.emplace_back(lits.begin(), lits.end());
+        std::vector<int> cl(lits.begin(), lits.end());
+        std::sort(cl.begin(), cl.end());
+        cl.erase(std::unique(cl.begin(), cl.end()), cl.end());
+        clauses_.emplace_back(std::move(cl));
     }
 
     void connect_propagator(ExternalPropagator& prop) override {

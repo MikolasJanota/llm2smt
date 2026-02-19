@@ -1,0 +1,10 @@
+; (=> a=b b=c) plus a=b plus not(a=c) is unsat by transitivity.
+(set-logic QF_UF)
+(declare-sort U 0)
+(declare-fun a () U)
+(declare-fun b () U)
+(declare-fun c () U)
+(assert (=> (= a b) (= b c)))
+(assert (= a b))
+(assert (not (= a c)))
+(check-sat)

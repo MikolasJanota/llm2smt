@@ -2,6 +2,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "core/node.h"
@@ -17,21 +18,27 @@ struct SmtContext {
     EufSolver&   euf;
     SatSolver&   sat;
 
-    // Sort declarations (QF_EUF has only user-declared uninterpreted sorts)
-    std::unordered_map<std::string, uint32_t> declared_sorts;  // name → arity
-
-    // Function/constant declarations
-    // name → NodeId (0-arity) or SymbolId (for functions to be applied later)
+    std::unordered_map<std::string, uint32_t> declared_sorts;
     std::unordered_map<std::string, SymbolId>  declared_fns;
+    // Symbols whose return sort is Bool (predicates, propositional constants)
+    std::unordered_set<SymbolId>               bool_fns;
+    // Bool-valued node → SAT literal (for predicate applications)
+    std::unordered_map<NodeId, int>            node_to_lit;
 
-    // Accumulated assertions (SAT literals)
     std::vector<int> assertions;
-
-    // Logic
-    std::string logic;
+    std::string      logic;
 
     SmtContext(NodeManager& nm_, EufSolver& euf_, SatSolver& sat_)
         : nm(nm_), euf(euf_), sat(sat_) {}
+
+    // Return (allocating if necessary) the SAT literal for a Bool-valued node.
+    int lit_for_node(NodeId n) {
+        auto it = node_to_lit.find(n);
+        if (it != node_to_lit.end()) return it->second;
+        int lit = euf.new_var();
+        node_to_lit[n] = lit;
+        return lit;
+    }
 };
 
 } // namespace llm2smt

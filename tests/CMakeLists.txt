@@ -29,6 +29,30 @@ add_smt2_test(sat_no_conflict       t07_sat_no_conflict.smt2       sat)
 # t08: a=b  ∧  c=d  ∧  g(a,c)≠g(b,d) →  unsat  (binary congruence)
 add_smt2_test(unsat_binary_congruence t08_unsat_binary_congruence.smt2 unsat)
 
+# Core theory — true / false
+# t09: (assert true) ∧ (assert (not false))  →  sat
+add_smt2_test(true_false_sat          t09_true_false.smt2            sat)
+# t10: (assert false)                          →  unsat
+add_smt2_test(false_unsat             t10_false_unsat.smt2           unsat)
+
+# Core theory — => (implication)
+# t11: (=> a=b b=c) ∧ a=b ∧ ¬(a=c)          →  unsat  (transitivity via =>)
+add_smt2_test(implies_unsat           t11_implies.smt2               unsat)
+# t12: (=> a=b b=a) alone                     →  sat   (trivially true)
+add_smt2_test(implies_sat             t12_implies_sat.smt2           sat)
+
+# Core theory — xor
+# t13: xor(P, P) = false                      →  unsat
+add_smt2_test(xor_unsat               t13_xor.smt2                   unsat)
+# t14: xor(P, ¬P) = true                      →  sat
+add_smt2_test(xor_sat                 t14_xor_sat.smt2               sat)
+
+# Core theory — ite
+# t15: ite(true, P, ¬P) = P  ∧  ¬P           →  unsat
+add_smt2_test(ite_unsat               t15_ite.smt2                   unsat)
+# t16: ite(false, P, true) = true             →  sat
+add_smt2_test(ite_sat                 t16_ite_sat.smt2               sat)
+
 # ── Unit test binaries ────────────────────────────────────────────────────────
 add_executable(test_node_manager test_node_manager.cpp)
 target_link_libraries(test_node_manager PRIVATE core GTest::gtest_main)
