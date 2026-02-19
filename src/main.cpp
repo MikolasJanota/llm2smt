@@ -37,8 +37,12 @@ public:
     SolveResult solve() override {
         if (!propagator_) return SolveResult::UNKNOWN;
 
-        // Collect all variables
+        // Collect all variables (EufSolver allocates vars without calling new_var,
+        // so derive max_var from the literals that actually appear in clauses).
         int max_var = next_var_;
+        for (const auto& clause : clauses_)
+            for (int lit : clause)
+                max_var = std::max(max_var, std::abs(lit));
 
         // Check unit clauses first
         assignment_.assign(max_var + 1, 0);

@@ -48,8 +48,9 @@ std::any Smt2Visitor::visitCommand(
         // (set-logic SYMBOL)
         std::string logic = symbol_name(ctx->symbol(0));
         ctx_.logic = logic;
-        if (logic != "QF_EUF") {
-            std::cerr << "Warning: expected QF_EUF, got " << logic << "\n";
+        if (logic != "QF_EUF" && logic != "QF_UF") {
+            std::cerr << "Warning: unsupported logic " << logic
+                      << ", proceeding as QF_UF\n";
         }
     }
     else if (ctx->cmd_declareSort()) {
