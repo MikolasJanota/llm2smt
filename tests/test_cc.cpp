@@ -270,6 +270,66 @@ TEST(CC, BacktrackCongruence) {
     EXPECT_FALSE(f.cc.are_congruent(fa, fb));
 }
 
+// ExplainChainedCongruence: regresses a proof-forest disconnection bug.
+//
+// When two congruence steps both try to set a proof edge FROM the same flat
+// node (because the node appeared in two separate pending-entry chains), the
+// OLD code's "skip if already has parent" guard left the forest disconnected
+// so that find_lca(x, z) returned NULL_NODE even though are_congruent(x,z).
+//
+// Setup (binary-function currying pattern, like PEQ benchmarks):
+//   f_sym, a, b, c — atoms
+//   fa = @(f, a),  fb = @(f, b),  fc = @(f, c)      — 1st curry step
+//   faa = @(fa, a), fab = @(fa, b), fbc = @(fb, c), fcc = @(fc, c)  — 2nd step
+//
+// Assert a = b, b = c, then verify explain(faa, fcc) doesn't crash.
+TEST(CC, ExplainChainedCongruence) {
+    CCFixture f;
+    // atoms
+    NodeId a    = f.make_const("a");
+    NodeId b    = f.make_const("b");
+    NodeId c    = f.make_const("c");
+    NodeId fsym = f.make_const("f_sym");
+    // 1st-level curry: @(f_sym, x)
+    NodeId fa   = f.make_const("fa");   // @(fsym, a)
+    NodeId fb   = f.make_const("fb");   // @(fsym, b)
+    NodeId fc   = f.make_const("fc");   // @(fsym, c)
+    // 2nd-level curry: @(@(f_sym, x), y)
+    NodeId faa  = f.make_const("faa");  // @(fa, a)
+    NodeId fab  = f.make_const("fab");  // @(fa, b)
+    NodeId fbb  = f.make_const("fbb");  // @(fb, b)
+    NodeId fbc  = f.make_const("fbc");  // @(fb, c)
+    NodeId fcc  = f.make_const("fcc");  // @(fc, c)
+
+    // Register app equations (all flat)
+    f.cc.add_app_equation(fa,  fsym, a);
+    f.cc.add_app_equation(fb,  fsym, b);
+    f.cc.add_app_equation(fc,  fsym, c);
+    f.cc.add_app_equation(faa, fa,   a);
+    f.cc.add_app_equation(fab, fa,   b);
+    f.cc.add_app_equation(fbb, fb,   b);
+    f.cc.add_app_equation(fbc, fb,   c);
+    f.cc.add_app_equation(fcc, fc,   c);
+
+    // a=b: triggers fa≡fb, then faa≡fbb (and fab≡fbb by congruence on 2nd arg)
+    f.cc.add_equation(a, b);
+    // b=c: triggers fb≡fc, then fbb≡fcc (and fbc≡fcc)
+    f.cc.add_equation(b, c);
+
+    // All six 2nd-level nodes must be in the same class
+    ASSERT_TRUE(f.cc.are_congruent(faa, fcc));
+    ASSERT_TRUE(f.cc.are_congruent(fab, fbc));
+
+    // Must not crash (old code: find_lca returned NULL_NODE → assertion failure)
+    EXPECT_NO_THROW(f.cc.explain(faa, fcc));
+    EXPECT_NO_THROW(f.cc.explain(fab, fbc));
+    EXPECT_NO_THROW(f.cc.explain(fbb, fcc));
+
+    // Explanation must be non-empty
+    auto expl = f.cc.explain(faa, fcc);
+    EXPECT_FALSE(expl.empty());
+}
+
 // MultiLevelPop: push three levels, pop directly to 0 in one call.
 TEST(CC, MultiLevelPop) {
     CCFixture f;

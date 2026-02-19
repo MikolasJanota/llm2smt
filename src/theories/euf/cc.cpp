@@ -137,11 +137,13 @@ void CC::propagate() {
         }
         // ra = kept representative, rb = merged (smaller class)
 
-        // Set proof edge between the ORIGINAL nodes from the pending entry
-        // (not their representatives). The "from" node is the one whose
-        // representative is rb (the class being merged away).
-        NodeId proof_from = (repr_[entry.a] == rb) ? entry.a : entry.b;
-        NodeId proof_to   = (repr_[entry.a] == rb) ? entry.b : entry.a;
+        // Set proof edge from the REPRESENTATIVE of the smaller class (rb)
+        // to an original node from the larger class.
+        // Using rb (not entry.a/entry.b) is required: rb is currently a
+        // representative so proof_parent_[rb] == NULL_NODE is guaranteed,
+        // ensuring the proof forest stays connected across chained merges.
+        NodeId proof_from = rb;
+        NodeId proof_to   = (repr_[entry.a] == ra) ? entry.a : entry.b;
         set_proof_edge(proof_from, proof_to, entry.label);
 
         do_merge(ra, rb);
