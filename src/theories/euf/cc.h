@@ -55,15 +55,18 @@ struct PendingEntry {
 struct UndoAction {
     enum class Kind {
         SetRepr,
-        ClassListPop,
+        // Undo a class-list merge: move `extra` elements from class_list_[node]
+        // back to class_list_[old_val]  (node=ra, old_val=rb).
+        ClassListMerge,
         UseListPop,
         LookupRemove,
         ProofEdge,
         EquationPop
     } kind;
 
-    NodeId node          = NULL_NODE;
-    NodeId old_val       = NULL_NODE;
+    NodeId   node        = NULL_NODE;
+    NodeId   old_val     = NULL_NODE;
+    uint32_t extra       = 0;        // ClassListMerge: number of elements moved
     std::pair<NodeId,NodeId> lookup_key = {NULL_NODE, NULL_NODE};
 };
 
@@ -128,7 +131,7 @@ private:
 
     void record(UndoAction ua);
     void record_set_repr(NodeId node, NodeId old_repr);
-    void record_class_list_pop(NodeId r);
+    void record_class_list_merge(NodeId ra, NodeId rb, uint32_t count);
     void record_use_list_pop(NodeId r);
     void record_lookup_remove(std::pair<NodeId,NodeId> key);
     void record_proof_edge(NodeId node);

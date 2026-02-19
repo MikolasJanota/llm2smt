@@ -157,12 +157,13 @@ void CC::do_merge(NodeId ra, NodeId rb) {
         repr_[c] = ra;
     }
 
-    // Merge class lists
+    // Merge class lists and record a single undo action that can restore rb's list.
+    uint32_t count = static_cast<uint32_t>(class_list_[rb].size());
     for (NodeId c : class_list_[rb]) {
         class_list_[ra].push_back(c);
-        record_class_list_pop(ra);
     }
     class_list_[rb].clear();
+    record_class_list_merge(ra, rb, count);
 
     // Scan use_list of rb, checking lookup with updated reprs
     for (EqId eq_id : use_list_[rb]) {
@@ -216,8 +217,13 @@ void CC::pop_level(size_t target_level) {
             case UndoAction::Kind::SetRepr:
                 repr_[ua.node] = ua.old_val;
                 break;
-            case UndoAction::Kind::ClassListPop:
-                class_list_[ua.node].pop_back();
+            case UndoAction::Kind::ClassListMerge:
+                // Move the last `extra` elements from class_list_[node=ra]
+                // back to class_list_[old_val=rb].
+                for (uint32_t i = 0; i < ua.extra; ++i) {
+                    class_list_[ua.old_val].push_back(class_list_[ua.node].back());
+                    class_list_[ua.node].pop_back();
+                }
                 break;
             case UndoAction::Kind::UseListPop:
                 use_list_[ua.node].pop_back();
@@ -256,10 +262,12 @@ void CC::record_set_repr(NodeId node, NodeId old_repr) {
     record(ua);
 }
 
-void CC::record_class_list_pop(NodeId r) {
+void CC::record_class_list_merge(NodeId ra, NodeId rb, uint32_t count) {
     UndoAction ua;
-    ua.kind = UndoAction::Kind::ClassListPop;
-    ua.node = r;
+    ua.kind    = UndoAction::Kind::ClassListMerge;
+    ua.node    = ra;
+    ua.old_val = rb;
+    ua.extra   = count;
     record(ua);
 }
 
@@ -319,7 +327,8 @@ void CC::explain_path(NodeId a, NodeId lca,
                        std::deque<std::pair<NodeId,NodeId>>& pending_pairs,
                        std::vector<EqId>& result) {
     NodeId cur = a;
-    while (uf.find(cur) != uf.find(lca)) {
+    // Use node identity for termination (not PathUF reps, which change under unite).
+    while (cur != lca) {
         NodeId par = proof_parent_[cur];
         assert(par != NULL_NODE && "broken proof path to LCA");
 
@@ -334,13 +343,15 @@ void CC::explain_path(NodeId a, NodeId lca,
             EqId eq2 = cl.eq2;
             if (eq1 != NULL_EQ) result.push_back(eq1);
             if (eq2 != NULL_EQ) result.push_back(eq2);
-            // Recursively explain the argument equalities
+            // Schedule recursive explanation of the argument equalities.
+            // Use node identity (!=), not are_congruent: we need to explain WHY
+            // the args are congruent, so we must add them even when they ARE congruent.
             const Equation& e1 = equations_[eq1];
             const Equation& e2 = equations_[eq2];
             if (e1.kind == EqKind::App && e2.kind == EqKind::App) {
-                if (!are_congruent(e1.app_fn, e2.app_fn))
+                if (e1.app_fn != e2.app_fn)
                     pending_pairs.push_back({e1.app_fn, e2.app_fn});
-                if (!are_congruent(e1.app_arg, e2.app_arg))
+                if (e1.app_arg != e2.app_arg)
                     pending_pairs.push_back({e1.app_arg, e2.app_arg});
             }
         }

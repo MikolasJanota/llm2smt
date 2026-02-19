@@ -99,6 +99,81 @@ TEST(EufSolver, CongruenceConflict) {
     EXPECT_FALSE(ok) << "Should detect congruence conflict";
 }
 
+// BUG-9 regression: the conflict clause for a congruence conflict must contain
+// the negation of the triggering atomic equality, not just the disequality literal.
+TEST(EufSolver, ConflictClauseContainsEqualityJustification) {
+    EufFixture f;
+    NodeId a  = f.make_const("a");
+    NodeId b  = f.make_const("b");
+    NodeId fa = f.make_app("f", 1, {a});
+    NodeId fb = f.make_app("f", 1, {b});
+
+    int lit_ab   = f.euf.register_equality(a, b);
+    int lit_fafb = f.euf.register_equality(fa, fb);
+
+    f.euf.notify_assignment(lit_ab,   false);   // a = b
+    f.euf.notify_assignment(-lit_fafb, false);  // f(a) ≠ f(b)
+
+    std::vector<int> model = {lit_ab, -lit_fafb};
+    ASSERT_FALSE(f.euf.cb_check_found_model(model));
+
+    bool forgettable = false;
+    ASSERT_TRUE(f.euf.cb_has_external_clause(forgettable));
+
+    // Collect the conflict clause
+    std::vector<int> clause;
+    int lit;
+    while ((lit = f.euf.cb_add_external_clause_lit()) != 0)
+        clause.push_back(lit);
+
+    // Clause must contain lit_fafb (negation of the disequality) ...
+    EXPECT_TRUE(std::find(clause.begin(), clause.end(), lit_fafb) != clause.end())
+        << "clause missing lit_fafb (negated disequality)";
+    // ... and -lit_ab (negation of the equality that caused the congruence).
+    EXPECT_TRUE(std::find(clause.begin(), clause.end(), -lit_ab) != clause.end())
+        << "clause missing -lit_ab (equality justification)";
+    // Total: at least two literals
+    EXPECT_GE(clause.size(), 2u);
+}
+
+// After backtrack, new assignments in the same or higher level must be handled
+// correctly — in particular, the CC state must be clean for new merges.
+TEST(EufSolver, PostBacktrackNewAssignment) {
+    EufFixture f;
+    NodeId a = f.make_const("a");
+    NodeId b = f.make_const("b");
+    NodeId c = f.make_const("c");
+
+    int lit_ab = f.euf.register_equality(a, b);
+    int lit_ac = f.euf.register_equality(a, c);
+
+    // Level 1: assert a=b
+    f.euf.notify_new_decision_level();
+    f.euf.notify_assignment(lit_ab, false);
+    {
+        Flattener flat(f.nm, f.euf.cc());
+        EXPECT_TRUE(f.euf.cc().are_congruent(
+            flat.flatten_and_register(a), flat.flatten_and_register(b)));
+    }
+
+    // Backtrack
+    f.euf.notify_backtrack(0);
+
+    // Level 1 again: assert a=c instead
+    f.euf.notify_new_decision_level();
+    f.euf.notify_assignment(lit_ac, false);
+    {
+        Flattener flat(f.nm, f.euf.cc());
+        NodeId fa = flat.flatten_and_register(a);
+        NodeId fb = flat.flatten_and_register(b);
+        NodeId fc = flat.flatten_and_register(c);
+        EXPECT_FALSE(f.euf.cc().are_congruent(fa, fb))
+            << "a and b should be separate after backtrack";
+        EXPECT_TRUE(f.euf.cc().are_congruent(fa, fc))
+            << "a and c should be congruent";
+    }
+}
+
 TEST(EufSolver, BacktrackRestoresState) {
     EufFixture f;
     NodeId a = f.make_const("a");
