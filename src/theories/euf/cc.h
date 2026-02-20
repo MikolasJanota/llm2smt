@@ -157,6 +157,10 @@ private:
     // Find LCA of a and b in the proof forest.
     NodeId find_lca(NodeId a, NodeId b);
 
+    // Reusable scratch for find_lca; avoids a per-call allocation.
+    std::vector<uint32_t> lca_stamp_;
+    uint32_t              lca_gen_ = 0;
+
     // Walk from a up to lca, collecting justifications into result.
     void explain_path(NodeId a, NodeId lca, PathUF& uf,
                       std::deque<std::pair<NodeId,NodeId>>& pending_pairs,

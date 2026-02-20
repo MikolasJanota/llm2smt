@@ -155,7 +155,8 @@ TEST(CC, BacktrackingNested) {
 
 TEST(CC, ExplainCongruence) {
     // given a=b, fa=f(a), fb=f(b) → fa≡fb
-    // Full explanation must include both app equations AND the atomic a=b.
+    // Explanation must be the single atomic equality a=b; structural app
+    // equations are not SAT literals and must not appear in the result.
     CCFixture f;
     NodeId a    = f.make_const("a");
     NodeId b    = f.make_const("b");
@@ -170,11 +171,13 @@ TEST(CC, ExplainCongruence) {
     ASSERT_TRUE(f.cc.are_congruent(fa, fb));
 
     auto expl = f.cc.explain(fa, fb);
-    // Must contain both app equations and the atomic justification
-    EXPECT_EQ(expl.size(), 3u);
-    EXPECT_TRUE(std::find(expl.begin(), expl.end(), app_eq1) != expl.end());
-    EXPECT_TRUE(std::find(expl.begin(), expl.end(), app_eq2) != expl.end());
+    // Explanation must contain only the atomic SAT-level equality a=b.
+    // The structural app equations (fa=@(f,a), fb=@(f,b)) are not SAT literals
+    // and must NOT appear in the conflict explanation.
+    EXPECT_EQ(expl.size(), 1u);
     EXPECT_TRUE(std::find(expl.begin(), expl.end(), ab_eq)   != expl.end());
+    EXPECT_TRUE(std::find(expl.begin(), expl.end(), app_eq1) == expl.end());
+    EXPECT_TRUE(std::find(expl.begin(), expl.end(), app_eq2) == expl.end());
 }
 
 // ── New tests ──────────────────────────────────────────────────────────────

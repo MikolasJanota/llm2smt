@@ -23,7 +23,6 @@ CC::CC() {
 
 void CC::ensure_node(NodeId n) {
     if (n >= static_cast<NodeId>(repr_.size())) {
-        NodeId old = static_cast<NodeId>(repr_.size());
         repr_.resize(n + 1, NULL_NODE);
         class_list_.resize(n + 1);
         use_list_.resize(n + 1);
@@ -201,7 +200,7 @@ void CC::do_merge(NodeId ra, NodeId rb) {
 }
 
 void CC::set_proof_edge(NodeId from, NodeId to, const EdgeLabel& label) {
-    if (proof_parent_[from] != NULL_NODE) return; // already has a parent
+    assert(proof_parent_[from] == NULL_NODE && "proof edge set twice — proof forest corrupted");
     proof_parent_[from] = to;
     proof_label_[from]  = label;
     record_proof_edge(from);
@@ -241,6 +240,7 @@ void CC::pop_level(size_t target_level) {
                 break;
             case UndoAction::Kind::ProofEdge:
                 proof_parent_[ua.node] = NULL_NODE;
+                proof_label_[ua.node]  = EdgeLabel{DirectLabel{NULL_EQ}};
                 break;
             case UndoAction::Kind::EquationPop:
                 equations_.pop_back();
@@ -304,29 +304,35 @@ void CC::record_proof_edge(NodeId node) {
 // Explain (§5)
 // ============================================================================
 
-// Find lowest common ancestor of a and b in the proof forest
+// Find lowest common ancestor of a and b in the proof forest.
+// Uses a generation-stamped scratch buffer to avoid per-call allocation.
 NodeId CC::find_lca(NodeId a, NodeId b) {
-    // Mark ancestors of a
-    std::vector<bool> visited(proof_parent_.size(), false);
+    // Grow scratch lazily; a generation counter lets us skip the clear.
+    if (lca_stamp_.size() < proof_parent_.size())
+        lca_stamp_.resize(proof_parent_.size(), 0);
+    if (++lca_gen_ == 0) {          // handle uint32_t wrap-around
+        std::fill(lca_stamp_.begin(), lca_stamp_.end(), 0);
+        ++lca_gen_;
+    }
+
+    // Stamp every ancestor of a (including a itself).
     NodeId cur = a;
     while (cur != NULL_NODE) {
-        visited[cur] = true;
+        lca_stamp_[cur] = lca_gen_;
         NodeId p = proof_parent_[cur];
         if (p == NULL_NODE || p == cur) break;
         cur = p;
     }
-    visited[a] = true; // include a itself (for the case a==b trivially)
 
-    // Walk from b until we hit a visited node
+    // Walk from b; first stamped node is the LCA.
     cur = b;
     while (cur != NULL_NODE) {
-        if (visited[cur]) return cur;
+        if (lca_stamp_[cur] == lca_gen_) return cur;
         NodeId p = proof_parent_[cur];
         if (p == NULL_NODE || p == cur) break;
         cur = p;
     }
-    // If b itself is visited, or we reached a common root
-    if (cur != NULL_NODE && visited[cur]) return cur;
+    if (cur != NULL_NODE && lca_stamp_[cur] == lca_gen_) return cur;
     return NULL_NODE;
 }
 
@@ -349,11 +355,9 @@ void CC::explain_path(NodeId a, NodeId lca,
             const auto& cl = std::get<CongruenceLabel>(label);
             EqId eq1 = cl.eq1;
             EqId eq2 = cl.eq2;
-            if (eq1 != NULL_EQ) result.push_back(eq1);
-            if (eq2 != NULL_EQ) result.push_back(eq2);
-            // Schedule recursive explanation of the argument equalities.
-            // Use node identity (!=), not are_congruent: we need to explain WHY
-            // the args are congruent, so we must add them even when they ARE congruent.
+            // eq1/eq2 are structural App equations, not SAT-level atomic equalities;
+            // they are not added to result (build_conflict ignores App equations anyway).
+            // We only use them to recover the argument nodes for recursive explanation.
             const Equation& e1 = equations_[eq1];
             const Equation& e2 = equations_[eq2];
             if (e1.kind == EqKind::App && e2.kind == EqKind::App) {
