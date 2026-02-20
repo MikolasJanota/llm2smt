@@ -333,6 +333,83 @@ TEST(CC, ExplainChainedCongruence) {
     EXPECT_FALSE(expl.empty());
 }
 
+// ClassListMergeOrderPreserved: regression for the ClassListMerge undo ordering bug.
+//
+// The bug: ClassListMerge undo popped elements from class_list_[ra] one-by-one
+// and appended them to class_list_[rb], reversing their original order.  After
+// multi-level backtracking the reversed order caused a lower-level undo to move
+// the WRONG elements between class lists — for example, leaving class_list_[c]
+// containing some foreign node d instead of c itself.  A subsequent do_merge
+// involving c would then iterate over {d} and update repr[d] but never repr[c],
+// violating the invariant repr[x]==r for every x in class_list_[r].  The next
+// merge that should have set proof_parent[c] would find repr[c] still pointing
+// to c (incorrectly still its own representative) and attempt to set a second
+// proof edge, triggering the "proof edge set twice" assertion.
+//
+// Scenario:
+//   Level 1: a=b  → {a,b}, {c}, {d}
+//   Level 2: c=d  → {a,b}, {c,d}        (ClassListMerge(ra=c, rb=d, extra=1))
+//   Level 3: a=c  → {a,b,c,d}           (ClassListMerge(ra=a, rb=c, extra=2))
+//   pop_level(2): undo level-3 merge; class_list_[c] must be restored as {c,d}
+//                 (bug: restored as {d,c} — reversed)
+//   pop_level(1): undo level-2 merge; pops 1 element from back of class_list_[c]
+//                 FIX:  pops d → class_list_[c]={c}, class_list_[d]={d}  ✓
+//                 BUG:  pops c → class_list_[c]={d}, class_list_[d]={c}  ✗
+//   pop_level(0): full reset
+//   add_equation(b,c): with the bug do_merge(b,c) iterates class_list_[c]={d},
+//                 updates repr[d] but never repr[c], so are_congruent(b,c)==false.
+TEST(CC, ClassListMergeOrderPreserved) {
+    CCFixture f;
+    NodeId a = f.make_const("a");
+    NodeId b = f.make_const("b");
+    NodeId c = f.make_const("c");
+    NodeId d = f.make_const("d");
+
+    // Level 1: merge 1-element classes a and b → {a,b}
+    f.cc.push_level();
+    f.cc.add_equation(a, b);
+    ASSERT_TRUE(f.cc.are_congruent(a, b));
+
+    // Level 2: merge 1-element classes c and d → {c,d}
+    f.cc.push_level();
+    f.cc.add_equation(c, d);
+    ASSERT_TRUE(f.cc.are_congruent(c, d));
+
+    // Level 3: join the two 2-element classes → {a,b,c,d}
+    // ClassListMerge records extra=2 for rb={c,d} going into ra={a,b}.
+    f.cc.push_level();
+    f.cc.add_equation(a, c);
+    ASSERT_TRUE(f.cc.are_congruent(a, d));
+
+    // Pop level 3: {a,b} and {c,d} must be restored.
+    f.cc.pop_level(2);
+    EXPECT_TRUE(f.cc.are_congruent(a, b));
+    EXPECT_TRUE(f.cc.are_congruent(c, d));
+    EXPECT_FALSE(f.cc.are_congruent(a, c));
+
+    // Pop level 2: {c} and {d} must be restored as separate singletons.
+    // With the bug class_list_[c] is reversed to {d,c}, so undoing
+    // ClassListMerge(ra=c,rb=d,extra=1) pops 'c' (not 'd') from the back,
+    // leaving class_list_[c]={d}.  The next merge on c then misses c itself.
+    f.cc.pop_level(1);
+    EXPECT_TRUE(f.cc.are_congruent(a, b));
+    EXPECT_FALSE(f.cc.are_congruent(c, d));
+
+    // Pop level 1: all four nodes must be fully independent.
+    f.cc.pop_level(0);
+    EXPECT_FALSE(f.cc.are_congruent(a, b));
+    EXPECT_FALSE(f.cc.are_congruent(c, d));
+
+    // Critical check: a fresh merge after full backtrack must work correctly.
+    // With the bug class_list_[c] still contains d instead of c, so
+    // do_merge(b,c) never updates repr[c] and are_congruent(b,c) remains false.
+    f.cc.push_level();
+    f.cc.add_equation(b, c);
+    EXPECT_TRUE(f.cc.are_congruent(b, c));  // fails with the ordering bug
+    f.cc.pop_level(0);
+    EXPECT_FALSE(f.cc.are_congruent(b, c));
+}
+
 // MultiLevelPop: push three levels, pop directly to 0 in one call.
 TEST(CC, MultiLevelPop) {
     CCFixture f;

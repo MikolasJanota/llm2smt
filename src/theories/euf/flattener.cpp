@@ -62,7 +62,6 @@ NodeId Flattener::do_flatten(NodeId term, std::vector<FlatEq>& eqs) {
             node_to_cc_[app_node] = app_const;
             FlatEq feq{app_const, cur, arg_flat};
             eqs.push_back(feq);
-            all_structural_eqs_.push_back(feq);
         }
         cur = app_const;
     }
@@ -86,10 +85,5 @@ NodeId Flattener::flatten_and_register(NodeId term) {
     return fr.flat_node;
 }
 
-void Flattener::re_register_all() {
-    for (const FlatEq& eq : all_structural_eqs_) {
-        cc_.add_app_equation(eq.result, eq.fn, eq.arg);
-    }
-}
 
 } // namespace llm2smt

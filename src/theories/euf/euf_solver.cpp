@@ -19,9 +19,15 @@ int EufSolver::register_equality(NodeId lhs, NodeId rhs) {
     auto it = atom_to_lit_.find(key);
     if (it != atom_to_lit_.end()) return it->second;
 
+    // Pre-flatten at registration time (level 0) so structural equations are
+    // permanent in the CC and never need re-registration after backtracking.
+    NodeId flat_lhs = flattener_.flatten_and_register(lhs);
+    NodeId flat_rhs = flattener_.flatten_and_register(rhs);
+
     int var = next_var_++;
-    lit_to_atom_[var]  = EqAtom{lhs, rhs};
-    lit_to_atom_[-var] = EqAtom{lhs, rhs};
+    EqAtom atom{lhs, rhs, flat_lhs, flat_rhs};
+    lit_to_atom_[var]  = atom;
+    lit_to_atom_[-var] = atom;
     atom_to_lit_[key]  = var;
     return var;
 }
@@ -39,14 +45,10 @@ void EufSolver::notify_assignment(int lit, bool /*is_fixed*/) {
 
     if (lit > 0) {
         // Equality asserted: a = b
-        NodeId flat_lhs = flattener_.flatten_and_register(atom.lhs);
-        NodeId flat_rhs = flattener_.flatten_and_register(atom.rhs);
-        cc_.add_equation(flat_lhs, flat_rhs);
+        cc_.add_equation(atom.flat_lhs, atom.flat_rhs);
     } else {
         // Disequality asserted: a ≠ b
-        NodeId flat_lhs = flattener_.flatten_and_register(atom.lhs);
-        NodeId flat_rhs = flattener_.flatten_and_register(atom.rhs);
-        active_diseqs_.push_back(Disequality{flat_lhs, flat_rhs, lit});
+        active_diseqs_.push_back(Disequality{atom.flat_lhs, atom.flat_rhs, lit});
         diseq_level_counts_.back()++;
     }
 }
@@ -59,10 +61,6 @@ void EufSolver::notify_new_decision_level() {
 
 void EufSolver::notify_backtrack(size_t new_level) {
     cc_.pop_level(new_level);
-    // Re-register all structural equations: backtracking undoes the CC's
-    // lookup/use-list entries for lazily-added app equations, which would
-    // break congruence detection for terms first encountered at higher levels.
-    flattener_.re_register_all();
     current_level_ = new_level;
 
     // Pop active disequalities introduced after new_level

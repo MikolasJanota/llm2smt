@@ -126,6 +126,7 @@ void CC::propagate() {
 
         NodeId ra = repr_[entry.a];
         NodeId rb = repr_[entry.b];
+
         if (ra == rb) continue;
 
         // ra and rb must be flat representatives.
@@ -224,14 +225,19 @@ void CC::pop_level(size_t target_level) {
             case UndoAction::Kind::SetRepr:
                 repr_[ua.node] = ua.old_val;
                 break;
-            case UndoAction::Kind::ClassListMerge:
+            case UndoAction::Kind::ClassListMerge: {
                 // Move the last `extra` elements from class_list_[node=ra]
-                // back to class_list_[old_val=rb].
-                for (uint32_t i = 0; i < ua.extra; ++i) {
-                    class_list_[ua.old_val].push_back(class_list_[ua.node].back());
-                    class_list_[ua.node].pop_back();
-                }
+                // back to class_list_[old_val=rb], preserving their original order.
+                // (Popping from the back one-by-one would reverse the order and
+                // corrupt subsequent undo operations at lower levels.)
+                auto& ra_list = class_list_[ua.node];
+                auto& rb_list = class_list_[ua.old_val];
+                size_t start = ra_list.size() - ua.extra;
+                for (uint32_t i = 0; i < ua.extra; ++i)
+                    rb_list.push_back(ra_list[start + i]);
+                ra_list.resize(start);
                 break;
+            }
             case UndoAction::Kind::UseListPop:
                 use_list_[ua.node].pop_back();
                 break;

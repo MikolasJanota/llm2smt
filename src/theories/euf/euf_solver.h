@@ -14,9 +14,12 @@ namespace llm2smt {
 
 // An equality atom: literal `var` represents the assertion `lhs = rhs`.
 // Positive literal → lhs == rhs; negative literal → lhs != rhs.
+// flat_lhs / flat_rhs are the CC-flat nodes pre-computed at registration time.
 struct EqAtom {
     NodeId lhs;
     NodeId rhs;
+    NodeId flat_lhs;
+    NodeId flat_rhs;
 };
 
 class EufSolver : public ExternalPropagator {
