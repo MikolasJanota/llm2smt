@@ -52,6 +52,9 @@ for f in "$DIR"/*.smt2; do
     else
         fail=$((fail+1))
         printf "%-55s ours=%-10s cvc5=%-10s MISMATCH\n" "$name" "$ours" "$cvc5_out"
+        echo ""
+        echo "$(basename "$DIR"): pass=$pass  fail=$fail  error=$error  skip=$skip (timeout=${TIMEOUT}s)"
+        exit 1
     fi
 done
 

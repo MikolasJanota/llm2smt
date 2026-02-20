@@ -60,7 +60,9 @@ NodeId Flattener::do_flatten(NodeId term, std::vector<FlatEq>& eqs) {
         } else {
             app_const = fresh_const();
             node_to_cc_[app_node] = app_const;
-            eqs.push_back(FlatEq{app_const, cur, arg_flat});
+            FlatEq feq{app_const, cur, arg_flat};
+            eqs.push_back(feq);
+            all_structural_eqs_.push_back(feq);
         }
         cur = app_const;
     }
@@ -82,6 +84,12 @@ NodeId Flattener::flatten_and_register(NodeId term) {
         cc_.add_app_equation(eq.result, eq.fn, eq.arg);
     }
     return fr.flat_node;
+}
+
+void Flattener::re_register_all() {
+    for (const FlatEq& eq : all_structural_eqs_) {
+        cc_.add_app_equation(eq.result, eq.fn, eq.arg);
+    }
 }
 
 } // namespace llm2smt

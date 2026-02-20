@@ -129,6 +129,12 @@ void CC::propagate() {
         NodeId rb = repr_[entry.b];
         if (ra == rb) continue;
 
+        // ra and rb must be flat representatives.
+        // Walk chain if non-flat (can arise when undo restores stale repr).
+        while (repr_[ra] != ra) ra = repr_[ra];
+        while (repr_[rb] != rb) rb = repr_[rb];
+        if (ra == rb) continue;
+
         // Union by class size: merge smaller into larger
         bool swapped = false;
         if (class_list_[ra].size() < class_list_[rb].size()) {
@@ -137,13 +143,13 @@ void CC::propagate() {
         }
         // ra = kept representative, rb = merged (smaller class)
 
-        // Set proof edge from the REPRESENTATIVE of the smaller class (rb)
-        // to an original node from the larger class.
-        // Using rb (not entry.a/entry.b) is required: rb is currently a
-        // representative so proof_parent_[rb] == NULL_NODE is guaranteed,
-        // ensuring the proof forest stays connected across chained merges.
+        // proof_to must be a node in ra's class (the winner).
+        // Without swap: ra = root(repr[entry.a]), so entry.a is in ra's class.
+        // With swap:    ra = original root(repr[entry.b]), so entry.b is in ra's class.
+        // Using (repr_[entry.a] == ra) is WRONG after the while-loop chase,
+        // because repr_[entry.a] still holds the pre-chase intermediate value.
         NodeId proof_from = rb;
-        NodeId proof_to   = (repr_[entry.a] == ra) ? entry.a : entry.b;
+        NodeId proof_to   = swapped ? entry.b : entry.a;
         set_proof_edge(proof_from, proof_to, entry.label);
 
         do_merge(ra, rb);

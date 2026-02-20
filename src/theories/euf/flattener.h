@@ -34,12 +34,21 @@ public:
     // Convenience: flatten and immediately register equations in CC.
     NodeId flatten_and_register(NodeId term);
 
+    // Re-register all structural equations in the CC.
+    // Call this after every CC::pop_level() so the CC recovers structural
+    // knowledge that was undone by backtracking.
+    void re_register_all();
+
 private:
     NodeManager& nm_;
     CC&          cc_;
 
     // Maps original NodeId → flat CC constant NodeId
     std::unordered_map<NodeId, NodeId> node_to_cc_;
+
+    // Permanent record of every structural equation ever generated.
+    // These must survive backtracking; re_register_all() re-feeds them to CC.
+    std::vector<FlatEq> all_structural_eqs_;
 
     // Flatten and return the CC constant for this term, accumulating equations.
     NodeId do_flatten(NodeId term, std::vector<FlatEq>& eqs);

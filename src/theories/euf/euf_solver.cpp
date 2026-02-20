@@ -59,6 +59,10 @@ void EufSolver::notify_new_decision_level() {
 
 void EufSolver::notify_backtrack(size_t new_level) {
     cc_.pop_level(new_level);
+    // Re-register all structural equations: backtracking undoes the CC's
+    // lookup/use-list entries for lazily-added app equations, which would
+    // break congruence detection for terms first encountered at higher levels.
+    flattener_.re_register_all();
     current_level_ = new_level;
 
     // Pop active disequalities introduced after new_level
