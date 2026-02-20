@@ -39,6 +39,22 @@ int Smt2Visitor::get_true_lit()
     return true_lit_;
 }
 
+NodeId Smt2Visitor::get_bool_term_node(bool val)
+{
+    // Create both nodes together on first call.
+    if (true_node_ == NULL_NODE) {
+        SymbolId st = ctx_.nm.declare_symbol("__bool_true",  0);
+        true_node_  = ctx_.nm.mk_const(st);
+        SymbolId sf = ctx_.nm.declare_symbol("__bool_false", 0);
+        false_node_ = ctx_.nm.mk_const(sf);
+        // Axiom: true ≠ false — the SAT literal for (true = false) is forced false.
+        int eq_var = ctx_.euf.register_equality(true_node_, false_node_);
+        std::array<int,1> cl = {-eq_var};
+        ctx_.sat.add_clause(std::span<const int>(cl));
+    }
+    return val ? true_node_ : false_node_;
+}
+
 // ============================================================================
 // Sort detection helper
 // ============================================================================
@@ -151,6 +167,10 @@ NodeId Smt2Visitor::visit_term(
             if (jt != it->end()) return visit_term(jt->second);
         }
     }
+
+    // Bool constants used as U-sorted terms (e.g. argument to a UF that takes Bool).
+    if (name == "true")  return get_bool_term_node(true);
+    if (name == "false") return get_bool_term_node(false);
 
     // U-sorted (ite cond t-then t-else): introduce a fresh EUF constant r with
     // conditional equalities  cond→r=then  and  ¬cond→r=else.

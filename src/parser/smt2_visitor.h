@@ -41,6 +41,14 @@ private:
     int true_lit_ = 0;   // 0 = not yet allocated
     int get_true_lit();  // allocates on first call
 
+    // EUF nodes for the Bool constants `true` and `false` used as U-sorted terms
+    // (e.g. as arguments to a UF that accepts Bool-sorted arguments).
+    // Both nodes are created together on first use; the axiom true≠false is
+    // added at that point so the SAT solver always sees them as distinct.
+    NodeId true_node_  = NULL_NODE;
+    NodeId false_node_ = NULL_NODE;
+    NodeId get_bool_term_node(bool val);  // allocates both on first call
+
     static std::string symbol_name(smt2parser::SMTLIBv2Parser::SymbolContext*);
     static std::string identifier_name(smt2parser::SMTLIBv2Parser::IdentifierContext*);
 
