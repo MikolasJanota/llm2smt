@@ -33,6 +33,10 @@ private:
     // Used when a sub-formula (e.g. or/and) is used in literal position.
     std::unordered_map<smt2parser::SMTLIBv2Parser::TermContext*, int> tseitin_cache_;
 
+    // Cache for U-sorted ite terms: TermContext* → fresh NodeId
+    std::unordered_map<smt2parser::SMTLIBv2Parser::TermContext*, NodeId> ite_node_cache_;
+    int ite_counter_ = 0;  // for generating unique names
+
     // A literal that is always forced true (for `true`/`false` constants).
     int true_lit_ = 0;   // 0 = not yet allocated
     int get_true_lit();  // allocates on first call
@@ -55,6 +59,10 @@ private:
     // Append all literals of a disjunction (or atom) into `lits`.
     void collect_clause_lits(smt2parser::SMTLIBv2Parser::TermContext*,
                               std::vector<int>& lits);
+
+    // Return true if the top-level term is Bool-sorted
+    // (built-in boolean op or declared Bool function).
+    bool is_bool_sorted(smt2parser::SMTLIBv2Parser::TermContext*) const;
 };
 
 } // namespace llm2smt

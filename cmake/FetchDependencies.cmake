@@ -45,3 +45,28 @@ FetchContent_Declare(
 )
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
+
+# ── CaDiCaL SAT solver (IPASIR-UP) ──────────────────────────────────────────
+# CaDiCaL uses its own configure/make system; we drive it via ExternalProject.
+# The source is vendored in third_party/cadical/ — no network access required.
+include(ExternalProject)
+
+set(CADICAL_SOURCE_DIR "${CMAKE_SOURCE_DIR}/third_party/cadical" CACHE INTERNAL "CaDiCaL source dir")
+set(CADICAL_LIB       "${CADICAL_SOURCE_DIR}/build/libcadical.a"  CACHE INTERNAL "CaDiCaL library")
+
+ExternalProject_Add(
+  cadical_external
+  SOURCE_DIR       "${CADICAL_SOURCE_DIR}"
+  BUILD_IN_SOURCE  TRUE
+  CONFIGURE_COMMAND "${CADICAL_SOURCE_DIR}/configure"
+  BUILD_COMMAND     make -C "${CADICAL_SOURCE_DIR}/build" libcadical.a -j
+  INSTALL_COMMAND   ""
+  BUILD_BYPRODUCTS  "${CADICAL_LIB}"
+)
+
+add_library(cadical STATIC IMPORTED GLOBAL)
+set_target_properties(cadical PROPERTIES
+  IMPORTED_LOCATION         "${CADICAL_LIB}"
+  INTERFACE_INCLUDE_DIRECTORIES "${CADICAL_SOURCE_DIR}/src"
+)
+add_dependencies(cadical cadical_external)

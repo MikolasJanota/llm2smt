@@ -3,6 +3,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace llm2smt {
@@ -36,6 +37,27 @@ int Smt2Visitor::get_true_lit()
     std::array<int, 1> cl = {true_lit_};
     ctx_.sat.add_clause(std::span<const int>(cl));
     return true_lit_;
+}
+
+// ============================================================================
+// Sort detection helper
+// ============================================================================
+
+bool Smt2Visitor::is_bool_sorted(
+    smt2parser::SMTLIBv2Parser::TermContext* ctx) const
+{
+    if (ctx->GRW_Exclamation()) return is_bool_sorted(ctx->term()[0]);
+    if (ctx->qual_identifier() == nullptr) return false;
+    std::string name = identifier_name(ctx->qual_identifier()->identifier());
+    // ite is polymorphic (Bool × α × α → α); check the branch sort.
+    if (name == "ite" && ctx->term().size() == 3)
+        return is_bool_sorted(ctx->term()[1]);
+    static const std::unordered_set<std::string> bool_ops = {
+        "not", "and", "or", "=>", "xor", "true", "false", "=", "distinct"
+    };
+    if (bool_ops.count(name)) return true;
+    auto fit = ctx_.declared_fns.find(name);
+    return fit != ctx_.declared_fns.end() && ctx_.bool_fns.count(fit->second);
 }
 
 // ============================================================================
@@ -104,6 +126,9 @@ std::any Smt2Visitor::visitCommand(
 NodeId Smt2Visitor::visit_term(
     smt2parser::SMTLIBv2Parser::TermContext* ctx)
 {
+    // (! term :attr...) — strip annotation
+    if (ctx->GRW_Exclamation()) return visit_term(ctx->term()[0]);
+
     // Let expression
     if (ctx->GRW_Let()) {
         let_env_.emplace_back();
@@ -125,6 +150,25 @@ NodeId Smt2Visitor::visit_term(
             auto jt = it->find(name);
             if (jt != it->end()) return visit_term(jt->second);
         }
+    }
+
+    // U-sorted (ite cond t-then t-else): introduce a fresh EUF constant r with
+    // conditional equalities  cond→r=then  and  ¬cond→r=else.
+    if (name == "ite" && ctx->term().size() == 3) {
+        auto cit = ite_node_cache_.find(ctx);
+        if (cit != ite_node_cache_.end()) return cit->second;
+        int cond_lit    = eval_lit(ctx->term()[0]);
+        NodeId then_node = visit_term(ctx->term()[1]);
+        NodeId else_node = visit_term(ctx->term()[2]);
+        SymbolId fresh = ctx_.nm.declare_symbol(
+            "__ite_" + std::to_string(ite_counter_++), 0);
+        NodeId result = ctx_.nm.mk_const(fresh);
+        ite_node_cache_[ctx] = result;
+        int eq_then = ctx_.euf.register_equality(result, then_node);
+        { std::array<int,2> cl = {-cond_lit, eq_then}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        int eq_else = ctx_.euf.register_equality(result, else_node);
+        { std::array<int,2> cl = { cond_lit, eq_else}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        return result;
     }
 
     auto fit = ctx_.declared_fns.find(name);
@@ -149,6 +193,9 @@ NodeId Smt2Visitor::visit_term(
 void Smt2Visitor::assert_formula(
     smt2parser::SMTLIBv2Parser::TermContext* ctx)
 {
+    // (! term :attr...) — strip annotation
+    if (ctx->GRW_Exclamation()) { assert_formula(ctx->term()[0]); return; }
+
     // Let expression: push bindings, recurse on body, pop.
     if (ctx->GRW_Let()) {
         let_env_.emplace_back();
@@ -212,6 +259,18 @@ void Smt2Visitor::assert_formula(
             return;
         }
 
+        // (= Bool Bool) — propositional biconditional: (p→q) ∧ (q→p)
+        if (op == "=" && ctx->term().size() == 2 &&
+            (is_bool_sorted(ctx->term()[0]) || is_bool_sorted(ctx->term()[1]))) {
+            int p = eval_lit(ctx->term()[0]);
+            int q = eval_lit(ctx->term()[1]);
+            std::array<int, 2> c1 = {-p,  q};
+            std::array<int, 2> c2 = { p, -q};
+            ctx_.sat.add_clause(std::span<const int>(c1));
+            ctx_.sat.add_clause(std::span<const int>(c2));
+            return;
+        }
+
         // (distinct t1 t2 ... tn) — pairwise disequalities as unit clauses
         if (op == "distinct") {
             auto terms = ctx->term();
@@ -240,6 +299,9 @@ void Smt2Visitor::collect_clause_lits(
     smt2parser::SMTLIBv2Parser::TermContext* ctx,
     std::vector<int>& lits)
 {
+    // (! term :attr...) — strip annotation
+    if (ctx->GRW_Exclamation()) { collect_clause_lits(ctx->term()[0], lits); return; }
+
     // Let expression: push, collect from body, pop.
     if (ctx->GRW_Let()) {
         let_env_.emplace_back();
@@ -266,6 +328,9 @@ void Smt2Visitor::collect_clause_lits(
 int Smt2Visitor::eval_lit(
     smt2parser::SMTLIBv2Parser::TermContext* ctx)
 {
+    // (! term :attr...) — strip annotation
+    if (ctx->GRW_Exclamation()) return eval_lit(ctx->term()[0]);
+
     // Let expression
     if (ctx->GRW_Let()) {
         let_env_.emplace_back();
@@ -287,6 +352,21 @@ int Smt2Visitor::eval_lit(
 
     // (= t1 t2)
     if (op == "=" && ctx->term().size() == 2) {
+        // Bool-Bool equality is propositional biconditional, not a theory atom.
+        if (is_bool_sorted(ctx->term()[0]) || is_bool_sorted(ctx->term()[1])) {
+            auto cit = tseitin_cache_.find(ctx);
+            if (cit != tseitin_cache_.end()) return cit->second;
+            int x = ctx_.euf.new_var();
+            tseitin_cache_[ctx] = x;
+            int p = eval_lit(ctx->term()[0]);
+            int q = eval_lit(ctx->term()[1]);
+            // x ↔ (p ↔ q)
+            { std::array<int,3> cl = {-x, -p,  q}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            { std::array<int,3> cl = {-x,  p, -q}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            { std::array<int,3> cl = {-p, -q,  x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            { std::array<int,3> cl = { p,  q,  x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            return x;
+        }
         NodeId lhs = visit_term(ctx->term()[0]);
         NodeId rhs = visit_term(ctx->term()[1]);
         return ctx_.euf.register_equality(lhs, rhs);

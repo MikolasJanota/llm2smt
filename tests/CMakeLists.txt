@@ -53,6 +53,20 @@ add_smt2_test(ite_unsat               t15_ite.smt2                   unsat)
 # t16: ite(false, P, true) = true             →  sat
 add_smt2_test(ite_sat                 t16_ite_sat.smt2               sat)
 
+# Parsing regressions — annotation syntax, Bool equality, U-sorted ite
+# t17: (! term :named label) annotation stripped correctly → unsat
+add_smt2_test(named_annotation_unsat  t17_named_annotation.smt2      unsat)
+# t18: (! term :named label) annotation — sat case
+add_smt2_test(named_annotation_sat    t18_named_annotation_sat.smt2  sat)
+# t19: (= Bool Bool) biconditional — p=(not p) → unsat
+add_smt2_test(bool_eq_unsat           t19_bool_eq_biconditional.smt2 unsat)
+# t20: (= Bool Bool) biconditional — p=q ∧ p → sat
+add_smt2_test(bool_eq_sat             t20_bool_eq_sat.smt2           sat)
+# t21: U-sorted ite encoded as conditional EUF equality → unsat
+add_smt2_test(ite_usort_unsat         t21_ite_usort.smt2             unsat)
+# t22: U-sorted ite — satisfiable case
+add_smt2_test(ite_usort_sat           t22_ite_usort_sat.smt2         sat)
+
 # ── Unit test binaries ────────────────────────────────────────────────────────
 add_executable(test_node_manager test_node_manager.cpp)
 target_link_libraries(test_node_manager PRIVATE core GTest::gtest_main)
