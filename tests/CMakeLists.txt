@@ -76,6 +76,8 @@ add_smt2_test(bool_uf_mutual_excl     t25_bool_uf_mutual_exclusivity.smt2  sat)
 add_smt2_test(explain_via_repr        t26_explain_via_representative.smt2  sat)
 # t27: Regression: heap-use-after-free in Flattener::do_flatten (NodeData ref invalidated by nm_.mk_const)
 add_smt2_test(flatten_uaf             t27_flatten_uaf.smt2                 sat)
+# t28: Regression: Bool-UF result nodes not registered in EUF when only in Bool-eq context (eval_lit path)
+add_smt2_test(bool_uf_result_cong     t28_bool_uf_result_congruence.smt2   unsat)
 
 # ── Unit test binaries ────────────────────────────────────────────────────────
 add_executable(test_node_manager test_node_manager.cpp)

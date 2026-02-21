@@ -542,6 +542,7 @@ int Smt2Visitor::eval_lit(
         if (fit != ctx_.declared_fns.end()
             && ctx_.bool_fns.count(fit->second)) {
             NodeId n = ctx_.nm.mk_const(fit->second);
+            link_bool_term_to_euf(n);
             return ctx_.lit_for_node(n);
         }
         throw std::runtime_error("Unknown Bool variable: " + op);
@@ -555,6 +556,7 @@ int Smt2Visitor::eval_lit(
         for (auto* sub : ctx->term())
             args.push_back(visit_term(sub));
         NodeId n = ctx_.nm.mk_app(fit->second, std::span<const NodeId>(args));
+        link_bool_term_to_euf(n);
         return ctx_.lit_for_node(n);
     }
 
