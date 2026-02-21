@@ -150,7 +150,16 @@ void CC::propagate() {
         // because repr_[entry.a] still holds the pre-chase intermediate value.
         NodeId proof_from = rb;
         NodeId proof_to   = swapped ? entry.b : entry.a;
-        set_proof_edge(proof_from, proof_to, entry.label);
+        // from_node: the original pending-entry node that was in proof_from's (rb's)
+        // class.  When from_node != proof_from, explain must also resolve
+        // (proof_from, from_node) to obtain a complete justification.
+        NodeId from_node  = swapped ? entry.a : entry.b;
+        EdgeLabel edge_label = entry.label;
+        if (auto* dl = std::get_if<DirectLabel>(&edge_label))
+            dl->from_node = from_node;
+        else if (auto* cl = std::get_if<CongruenceLabel>(&edge_label))
+            cl->from_node = from_node;
+        set_proof_edge(proof_from, proof_to, edge_label);
 
         do_merge(ra, rb);
     }
@@ -360,9 +369,11 @@ void CC::explain_path(NodeId a, NodeId lca,
 
         const EdgeLabel& label = proof_label_[cur];
 
+        NodeId from_node = NULL_NODE;
         if (std::holds_alternative<DirectLabel>(label)) {
-            EqId eq = std::get<DirectLabel>(label).eq;
-            if (eq != NULL_EQ) result.push_back(eq);
+            const auto& dl = std::get<DirectLabel>(label);
+            if (dl.eq != NULL_EQ) result.push_back(dl.eq);
+            from_node = dl.from_node;
         } else {
             const auto& cl = std::get<CongruenceLabel>(label);
             EqId eq1 = cl.eq1;
@@ -378,7 +389,14 @@ void CC::explain_path(NodeId a, NodeId lca,
                 if (e1.app_arg != e2.app_arg)
                     pending_pairs.push_back({e1.app_arg, e2.app_arg});
             }
+            from_node = cl.from_node;
         }
+        // If from_node != cur, we also need to explain why cur ≡ from_node.
+        // This arises when the pending entry's node in the merged class was not
+        // the class representative (entry.b or entry.a != rb), so the proof edge
+        // skips over the intermediate justification.
+        if (from_node != NULL_NODE && from_node != cur)
+            pending_pairs.push_back({cur, from_node});
 
         uf.unite(cur, par);
         cur = par;

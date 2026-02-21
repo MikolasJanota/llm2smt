@@ -70,6 +70,12 @@ add_smt2_test(ite_usort_sat           t22_ite_usort_sat.smt2         sat)
 add_smt2_test(bool_uf_arg_unsat       t23_bool_uf_arg_unsat.smt2     unsat)
 # t24: Bool-sorted UF argument — satisfiable case (p=true, q=false → f(p)≠f(q))
 add_smt2_test(bool_uf_arg_sat         t24_bool_uf_arg_sat.smt2       sat)
+# t25: Regression: Bool-as-UF-arg mutual exclusivity (link_bool_term_to_euf fix)
+add_smt2_test(bool_uf_mutual_excl     t25_bool_uf_mutual_exclusivity.smt2  sat)
+# t26: Regression: proof-forest incomplete explanation via representative (from_node fix)
+add_smt2_test(explain_via_repr        t26_explain_via_representative.smt2  sat)
+# t27: Regression: heap-use-after-free in Flattener::do_flatten (NodeData ref invalidated by nm_.mk_const)
+add_smt2_test(flatten_uaf             t27_flatten_uaf.smt2                 sat)
 
 # ── Unit test binaries ────────────────────────────────────────────────────────
 add_executable(test_node_manager test_node_manager.cpp)

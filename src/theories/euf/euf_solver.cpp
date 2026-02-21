@@ -24,11 +24,15 @@ int EufSolver::register_equality(NodeId lhs, NodeId rhs) {
     NodeId flat_lhs = flattener_.flatten_and_register(lhs);
     NodeId flat_rhs = flattener_.flatten_and_register(rhs);
 
+
     int var = next_var_++;
     EqAtom atom{lhs, rhs, flat_lhs, flat_rhs};
     lit_to_atom_[var]  = atom;
     lit_to_atom_[-var] = atom;
     atom_to_lit_[key]  = var;
+    // Also index by flat node ids so build_conflict can find equations whose
+    // lhs/rhs are the flat representatives (not the original NodeIds).
+    flat_atom_to_lit_[atom_key(flat_lhs, flat_rhs)] = var;
     return var;
 }
 
@@ -80,7 +84,6 @@ void EufSolver::notify_backtrack(size_t new_level) {
 bool EufSolver::cb_check_found_model(const std::vector<int>& /*model*/) {
     for (const Disequality& d : active_diseqs_) {
         if (cc_.are_congruent(d.flat_lhs, d.flat_rhs)) {
-            // Conflict: a≠b but CC says a≡b
             std::vector<EqId> expl = cc_.explain(d.flat_lhs, d.flat_rhs);
             build_conflict(expl, d.orig_lit);
             return false;
@@ -101,11 +104,12 @@ void EufSolver::build_conflict(const std::vector<EqId>& explanation, int diseq_l
         // Atomic equations (rhs != NULL_NODE).  App equations only appear in
         // CongruenceLabel edges and are never surfaced in the explanation set.
         assert(e.kind == EqKind::Atomic && e.rhs != NULL_NODE);
+        // CC stores flat node ids in e.lhs/e.rhs; flat_atom_to_lit_ is keyed
+        // by those same flat ids, so the lookup is always correct.
         uint64_t key = atom_key(e.lhs, e.rhs);
-        auto it = atom_to_lit_.find(key);
-        if (it != atom_to_lit_.end()) {
-            conflict_clause_.push_back(-(it->second));  // negate positive literal
-        }
+        auto it = flat_atom_to_lit_.find(key);
+        assert(it != flat_atom_to_lit_.end() && "equation in explanation has no SAT literal");
+        conflict_clause_.push_back(-(it->second));  // negate positive literal
     }
     has_conflict_     = true;
     conflict_lit_idx_ = 0;

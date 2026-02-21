@@ -21,7 +21,9 @@ NodeId Flattener::do_flatten(NodeId term, std::vector<FlatEq>& eqs) {
     auto it = node_to_cc_.find(term);
     if (it != node_to_cc_.end()) return it->second;
 
-    const NodeData& data = nm_.get(term);
+    // Copy the NodeData before any nm_.mk_const / nm_.mk_app calls that could
+    // push_back into nodes_ and invalidate a reference into the vector.
+    NodeData data = nm_.get(term);
 
     if (data.children.empty()) {
         // Constant: register directly in CC

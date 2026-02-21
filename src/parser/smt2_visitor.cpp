@@ -68,8 +68,13 @@ void Smt2Visitor::link_bool_term_to_euf(NodeId node)
     int lit      = ctx_.lit_for_node(node);
     int eq_true  = ctx_.euf.register_equality(node, true_n);
     int eq_false = ctx_.euf.register_equality(node, false_n);
+    // Forward implications: SAT value of node drives EUF equalities.
     { std::array<int,2> cl = {-lit,  eq_true};  ctx_.sat.add_clause(std::span<const int>(cl)); }
     { std::array<int,2> cl = { lit,  eq_false}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+    // Mutual exclusivity: SAT solver must not assert both equalities simultaneously.
+    // Without this, the solver can freely set both eq_true and eq_false to TRUE,
+    // causing CC to merge __bool_true with __bool_false and producing false conflicts.
+    { std::array<int,2> cl = {-eq_true, -eq_false}; ctx_.sat.add_clause(std::span<const int>(cl)); }
 }
 
 // ============================================================================

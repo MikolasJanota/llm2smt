@@ -58,6 +58,9 @@ private:
     std::unordered_map<int, EqAtom>            lit_to_atom_;
     // Reverse: atom → literal (keyed by ordered pair min(lhs,rhs), max(lhs,rhs))
     std::unordered_map<uint64_t, int>          atom_to_lit_;
+    // Same as atom_to_lit_ but keyed by the FLAT node ids (as stored in CC equations).
+    // Used in build_conflict where the CC returns flat-node equation records.
+    std::unordered_map<uint64_t, int>          flat_atom_to_lit_;
 
     // Next SAT variable to allocate (external to a real SAT solver, so we manage here)
     int next_var_ = 1;

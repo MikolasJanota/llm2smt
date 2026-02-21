@@ -2,31 +2,26 @@
 
 ## Running the solver
 
-**ALWAYS run the solver with a timeout.** Solver inputs can trigger exponential search behaviour.
-Never invoke the binary without a `timeout` prefix:
+Running the solver directly on a file is fine for debugging:
 
 ```bash
-# correct
 timeout 5 build-dbg/bin/llm2smt file.smt2
-
-# correct – batch loop
-for f in benchmarks/*.smt2; do
-    timeout 5 build-dbg/bin/llm2smt "$f" && echo "ok: $f" || echo "fail/timeout: $f"
-done
-
-# WRONG – never do this
-build-dbg/bin/llm2smt file.smt2
 ```
 
-A 5-second timeout (`timeout 5`) is the default for interactive testing.
-Use a longer timeout (e.g. 60 s) only for deliberate performance benchmarking runs.
+**ALWAYS use a `timeout` prefix.** Solver inputs can trigger exponential search behaviour.
+
+A 5-second timeout is the default. Use a longer timeout (e.g. 60 s) only for deliberate
+performance benchmarking.
 
 ## Building
 
 ```bash
-cmake --build build-dbg   # debug build (assertions enabled)
+cmake --build build-dbg   # debug build (assertions + ASAN/UBSan enabled)
 cmake --build build-rel   # release build
 ```
+
+The debug build enables AddressSanitizer and UBSan by default (`LLM2SMT_ASAN=ON`).
+Disable with `-DLLM2SMT_ASAN=OFF` if a clean Debug build is needed (e.g. valgrind).
 
 Always prefer `build-dbg` for correctness work; `build-rel` only for throughput measurement.
 
@@ -36,7 +31,14 @@ Always prefer `build-dbg` for correctness work; `build-rel` only for throughput 
 ctest --test-dir build-dbg --output-on-failure
 ```
 
-All 51+ unit tests must pass before committing.
+All 60+ unit tests must pass before committing.
+
+## Testing policy
+
+**For every bug found, add a regression test before closing the investigation.**
+- Unit test in `tests/test_cc.cpp` for CC-level bugs (use the `CCFixture` helper).
+- SMT2 test in `tests/smt2/tNN_*.smt2` + entry in `tests/CMakeLists.txt` for end-to-end bugs.
+- The test must FAIL on the buggy code and PASS after the fix.
 
 ## Architecture notes
 

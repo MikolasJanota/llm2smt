@@ -39,10 +39,15 @@ struct PairHash {
 };
 
 // Edge label in the proof forest:
-//   Direct(eq)           — equation eq directly justifies this edge
-//   Congruence(eq1,eq2)  — two app equations with same-class arguments
-struct DirectLabel   { EqId eq; };
-struct CongruenceLabel { EqId eq1; EqId eq2; };
+//   Direct(eq, from_node)      — equation eq justifies this edge;
+//                                from_node is the pending-entry node that was
+//                                in the merged (proof_from) class.  When
+//                                from_node != proof_from we must also explain
+//                                why proof_from ≡ from_node.
+//   Congruence(eq1,eq2,from_node) — two app equations with same-class args;
+//                                from_node has the same role as above.
+struct DirectLabel     { EqId eq;       NodeId from_node = NULL_NODE; };
+struct CongruenceLabel { EqId eq1, eq2; NodeId from_node = NULL_NODE; };
 using EdgeLabel = std::variant<DirectLabel, CongruenceLabel>;
 
 // Pending entry: two nodes to merge, plus how to justify the merge

@@ -8,6 +8,19 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Export compile_commands.json for IDE/tooling support
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# AddressSanitizer + UBSan: enabled by default for Debug builds.
+# Override with -DLLM2SMT_ASAN=OFF if you need a clean Debug build.
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    option(LLM2SMT_ASAN "Enable AddressSanitizer + UBSan" ON)
+else()
+    option(LLM2SMT_ASAN "Enable AddressSanitizer + UBSan" OFF)
+endif()
+if(LLM2SMT_ASAN)
+    message(STATUS "AddressSanitizer + UBSan: ON")
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+endif()
+
 # Place all executables under <build>/bin/
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 

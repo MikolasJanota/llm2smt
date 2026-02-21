@@ -480,3 +480,52 @@ TEST(CC, RepeatedPushPopCycles) {
     f.cc.add_equation(a, b);
     EXPECT_TRUE(f.cc.are_congruent(a, b));
 }
+
+// ExplainTransitiveViaRepresentative: regression for incomplete proof-forest
+// explanation when the pending-entry node in the merged class differs from its
+// class representative.
+//
+// Setup (two equal-sized classes at level 1, merged at level 2):
+//   Level 1: (a=ext) — grows a's class to size 2
+//   Level 1: (b=mid) — grows b's class to size 2 (repr[mid]=b)
+//   Level 2: (a=mid) — merges the two size-2 classes.
+//
+// When (a=mid) is processed, repr[mid] = b (chased), so the proof edge goes
+// from b (proof_from = smaller/equal class representative of mid's class) to a
+// (proof_to = entry.a), labeled with the (a=mid) equation.  The key: from_node
+// = mid (the original pending-entry node in b's class) ≠ b (proof_from).
+//
+// Bug: explain(a, b) only returned {a=mid}, missing {b=mid}.
+// Fix: the proof edge now stores from_node=mid; explain adds (b, mid) to its
+//      worklist, collecting the (b=mid) equation too.
+TEST(CC, ExplainTransitiveViaRepresentative) {
+    CCFixture f;
+    NodeId a   = f.make_const("a");
+    NodeId b   = f.make_const("b");
+    NodeId mid = f.make_const("mid");
+    NodeId ext = f.make_const("ext");  // extra node to grow a's class
+
+    f.cc.push_level();  // level 1
+    // Grow a's class to size 2 so that the merge below won't swap.
+    f.cc.add_equation(a, ext);
+    // Grow b's class to size 2 and merge mid into it: repr[mid] = b.
+    EqId eq_b_mid = f.cc.add_equation(b, mid);
+
+    f.cc.push_level();  // level 2
+    // Add (a = mid).  repr[mid] is b's representative (size 2, same as a's
+    // class size), so with equal sizes there is no swap.  The proof edge goes
+    // from b (proof_from) to a (proof_to=entry.a), labeled with this equation.
+    // from_node = mid ≠ b, so without the fix explain(a, b) would omit eq_b_mid.
+    EqId eq_a_mid = f.cc.add_equation(a, mid);
+
+    ASSERT_TRUE(f.cc.are_congruent(a, b));
+
+    auto expl = f.cc.explain(a, b);
+
+    // Both equations are needed to prove a ≡ b transitively via mid.
+    EXPECT_EQ(expl.size(), 2u);
+    EXPECT_TRUE(std::find(expl.begin(), expl.end(), eq_a_mid) != expl.end())
+        << "explain(a,b) must include eq(a=mid)";
+    EXPECT_TRUE(std::find(expl.begin(), expl.end(), eq_b_mid) != expl.end())
+        << "explain(a,b) must include eq(b=mid)";
+}
