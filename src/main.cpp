@@ -1,8 +1,10 @@
+#include <csignal>
 #include <fstream>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unistd.h>
 
 #include "antlr4-runtime.h"
 #include "SMTLIBv2Lexer.h"
@@ -14,7 +16,15 @@
 #include "parser/smt2_visitor.h"
 #include "sat/cadical_solver.h"
 
+static void sigterm_handler(int) {
+    // write() is async-signal-safe; std::cout is not (buffered, not safe in handlers).
+    // _Exit skips destructors and stdio flushing, but write() bypasses the buffer.
+    write(STDOUT_FILENO, "unknown\n", 8);
+    _Exit(0);
+}
+
 int main(int argc, char** argv) {
+    std::signal(SIGTERM, sigterm_handler);
     using namespace llm2smt;
     using namespace smt2parser;
 
