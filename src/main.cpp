@@ -29,8 +29,8 @@ int main(int argc, char** argv) {
     }
 
     try {
-        antlr4::ANTLRInputStream* input_stream = nullptr;
         std::ifstream file;
+        std::unique_ptr<antlr4::ANTLRInputStream> input_stream;
 
         if (argc >= 2) {
             file.open(argv[1]);
@@ -38,9 +38,9 @@ int main(int argc, char** argv) {
                 std::cerr << "Error: cannot open file " << argv[1] << "\n";
                 return 1;
             }
-            input_stream = new antlr4::ANTLRInputStream(file);
+            input_stream = std::make_unique<antlr4::ANTLRInputStream>(file);
         } else {
-            input_stream = new antlr4::ANTLRInputStream(std::cin);
+            input_stream = std::make_unique<antlr4::ANTLRInputStream>(std::cin);
         }
 
         NodeManager    nm;
@@ -50,7 +50,7 @@ int main(int argc, char** argv) {
 
         SmtContext ctx(nm, euf, sat);
 
-        SMTLIBv2Lexer  lexer(input_stream);
+        SMTLIBv2Lexer  lexer(input_stream.get());
         antlr4::CommonTokenStream tokens(&lexer);
         SMTLIBv2Parser parser(&tokens);
 
@@ -58,7 +58,6 @@ int main(int argc, char** argv) {
         Smt2Visitor visitor(ctx);
         visitor.visitStart(tree);
 
-        delete input_stream;
         return 0;
 
     } catch (const std::exception& e) {

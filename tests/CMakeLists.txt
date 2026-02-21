@@ -66,6 +66,10 @@ add_smt2_test(bool_eq_sat             t20_bool_eq_sat.smt2           sat)
 add_smt2_test(ite_usort_unsat         t21_ite_usort.smt2             unsat)
 # t22: U-sorted ite — satisfiable case
 add_smt2_test(ite_usort_sat           t22_ite_usort_sat.smt2         sat)
+# t23: Bool-sorted UF argument — SAT assignment must be bridged to EUF → unsat
+add_smt2_test(bool_uf_arg_unsat       t23_bool_uf_arg_unsat.smt2     unsat)
+# t24: Bool-sorted UF argument — satisfiable case (p=true, q=false → f(p)≠f(q))
+add_smt2_test(bool_uf_arg_sat         t24_bool_uf_arg_sat.smt2       sat)
 
 # ── Unit test binaries ────────────────────────────────────────────────────────
 add_executable(test_node_manager test_node_manager.cpp)

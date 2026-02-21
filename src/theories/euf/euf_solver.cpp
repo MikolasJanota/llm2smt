@@ -97,8 +97,11 @@ void EufSolver::build_conflict(const std::vector<EqId>& explanation, int diseq_l
     conflict_clause_.push_back(-diseq_lit);  // negate the disequality literal
     for (EqId eq : explanation) {
         const Equation& e = cc_.get_equation(eq);
-        // Find the SAT literal for this equation
-        uint64_t key = atom_key(e.lhs, e.rhs != NULL_NODE ? e.rhs : e.lhs);
+        // explain() only returns EqIds from DirectLabel edges, which are always
+        // Atomic equations (rhs != NULL_NODE).  App equations only appear in
+        // CongruenceLabel edges and are never surfaced in the explanation set.
+        assert(e.kind == EqKind::Atomic && e.rhs != NULL_NODE);
+        uint64_t key = atom_key(e.lhs, e.rhs);
         auto it = atom_to_lit_.find(key);
         if (it != atom_to_lit_.end()) {
             conflict_clause_.push_back(-(it->second));  // negate positive literal

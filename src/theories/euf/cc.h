@@ -137,7 +137,9 @@ private:
     void record_proof_edge(NodeId node);
 
     // ── Explain helpers ────────────────────────────────────────────────────
-    // Simple union-find used only inside explain()
+    // Simple union-find used only inside explain().
+    // Kept as a persistent member so its backing vector is reused across
+    // calls, avoiding repeated heap allocation.
     struct PathUF {
         std::vector<NodeId> parent;
         NodeId find(NodeId x) {
@@ -153,6 +155,7 @@ private:
             std::iota(parent.begin(), parent.end(), NodeId(0));
         }
     };
+    PathUF explain_uf_;  // reused across explain() calls; re-init()ed each time
 
     // Find LCA of a and b in the proof forest.
     NodeId find_lca(NodeId a, NodeId b);

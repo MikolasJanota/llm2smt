@@ -72,7 +72,6 @@ NodeId Flattener::do_flatten(NodeId term, std::vector<FlatEq>& eqs) {
 
 FlatResult Flattener::flatten(NodeId term) {
     FlatResult result;
-    result.equations.clear();
     result.flat_node = do_flatten(term, result.equations);
     return result;
 }

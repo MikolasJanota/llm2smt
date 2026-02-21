@@ -173,10 +173,12 @@ void CC::do_merge(NodeId ra, NodeId rb) {
     class_list_[rb].clear();
     record_class_list_merge(ra, rb, count);
 
-    // Scan use_list of rb, checking lookup with updated reprs
+    // Scan use_list of rb, checking lookup with updated reprs.
+    // use_lists are populated exclusively by add_app_equation and the use_list
+    // transfer inside do_merge itself — both always store App equations.
     for (EqId eq_id : use_list_[rb]) {
         const Equation& eq = equations_[eq_id];
-        if (eq.kind != EqKind::App) continue;
+        assert(eq.kind == EqKind::App && "use_list must contain only App equations");
 
         NodeId fn_r  = repr_[eq.app_fn];
         NodeId arg_r = repr_[eq.app_arg];
@@ -258,6 +260,10 @@ void CC::pop_level(size_t target_level) {
     }
     // Clear any pending entries (they belong to the popped level)
     pending_.clear();
+    // Trim: each push_level appends to trail_ but pop_level never shrinks it,
+    // so trail_ grows monotonically (O(total_pushes)).  Resize here to prevent
+    // unbounded growth; the next push_level will emplace_back as usual.
+    trail_.resize(current_level_ + 1);
 }
 
 // ============================================================================
@@ -385,8 +391,9 @@ std::vector<EqId> CC::explain(NodeId a, NodeId b) {
     std::vector<EqId> result;
     if (a == b) return result;
 
-    PathUF uf;
-    uf.init(proof_parent_.size());
+    // Re-initialise the persistent PathUF; resize() reuses the existing
+    // allocation when proof_parent_ hasn't grown since the last call.
+    explain_uf_.init(proof_parent_.size());
 
     std::deque<std::pair<NodeId,NodeId>> worklist;
     worklist.push_back({a, b});
@@ -395,13 +402,13 @@ std::vector<EqId> CC::explain(NodeId a, NodeId b) {
         auto [x, y] = worklist.front();
         worklist.pop_front();
 
-        if (uf.find(x) == uf.find(y)) continue;
+        if (explain_uf_.find(x) == explain_uf_.find(y)) continue;
 
         NodeId lca = find_lca(x, y);
         assert(lca != NULL_NODE && "no LCA found — nodes must be congruent");
 
-        explain_path(x, lca, uf, worklist, result);
-        explain_path(y, lca, uf, worklist, result);
+        explain_path(x, lca, explain_uf_, worklist, result);
+        explain_path(y, lca, explain_uf_, worklist, result);
     }
 
     // Deduplicate

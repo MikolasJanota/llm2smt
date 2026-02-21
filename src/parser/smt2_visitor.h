@@ -3,6 +3,7 @@
 #include <any>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "SMTLIBv2BaseVisitor.h"
@@ -48,6 +49,11 @@ private:
     NodeId true_node_  = NULL_NODE;
     NodeId false_node_ = NULL_NODE;
     NodeId get_bool_term_node(bool val);  // allocates both on first call
+
+    // Bool-sorted EUF nodes that have already had bridging clauses added.
+    // Bridging: lit → (node=true_n) and ¬lit → (node=false_n).
+    std::unordered_set<NodeId> linked_bool_terms_;
+    void link_bool_term_to_euf(NodeId node);  // idempotent
 
     static std::string symbol_name(smt2parser::SMTLIBv2Parser::SymbolContext*);
     static std::string identifier_name(smt2parser::SMTLIBv2Parser::IdentifierContext*);

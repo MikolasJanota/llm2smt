@@ -55,6 +55,23 @@ NodeId Smt2Visitor::get_bool_term_node(bool val)
     return val ? true_node_ : false_node_;
 }
 
+// Add SAT clauses that bridge a Bool-sorted EUF node to __bool_true/__bool_false:
+//   lit → (node = true_n)    as  {-lit, eq_true}
+//   ¬lit → (node = false_n)  as  { lit, eq_false}
+// This is what lets the EUF theory "see" the SAT assignment for Bool-sorted
+// symbols that appear as arguments to uninterpreted functions.
+void Smt2Visitor::link_bool_term_to_euf(NodeId node)
+{
+    if (!linked_bool_terms_.insert(node).second) return;  // already linked
+    NodeId true_n  = get_bool_term_node(true);
+    NodeId false_n = get_bool_term_node(false);
+    int lit      = ctx_.lit_for_node(node);
+    int eq_true  = ctx_.euf.register_equality(node, true_n);
+    int eq_false = ctx_.euf.register_equality(node, false_n);
+    { std::array<int,2> cl = {-lit,  eq_true};  ctx_.sat.add_clause(std::span<const int>(cl)); }
+    { std::array<int,2> cl = { lit,  eq_false}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+}
+
 // ============================================================================
 // Sort detection helper
 // ============================================================================
@@ -196,13 +213,18 @@ NodeId Smt2Visitor::visit_term(
         throw std::runtime_error("Undeclared symbol: " + name);
     SymbolId sym = fit->second;
 
-    if (ctx->term().empty())
-        return ctx_.nm.mk_const(sym);
+    if (ctx->term().empty()) {
+        NodeId node = ctx_.nm.mk_const(sym);
+        if (ctx_.bool_fns.count(sym)) link_bool_term_to_euf(node);
+        return node;
+    }
 
     std::vector<NodeId> args;
     for (auto* sub : ctx->term())
         args.push_back(visit_term(sub));
-    return ctx_.nm.mk_app(sym, std::span<const NodeId>(args));
+    NodeId node = ctx_.nm.mk_app(sym, std::span<const NodeId>(args));
+    if (ctx_.bool_fns.count(sym)) link_bool_term_to_euf(node);
+    return node;
 }
 
 // ============================================================================
