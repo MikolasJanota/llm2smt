@@ -44,8 +44,12 @@ int main(int argc, char** argv) {
         }
 
         NodeManager    nm;
-        CaDiCaLSolver  sat;
+        // euf must be declared before sat so that sat is destroyed first.
+        // CaDiCaL's destructor calls disconnect_external_propagator() which
+        // triggers notify_backtrack() callbacks; if euf were already destroyed
+        // at that point the callbacks would access freed memory.
         EufSolver      euf(nm);
+        CaDiCaLSolver  sat;
         sat.connect_propagator(euf);
 
         SmtContext ctx(nm, euf, sat);

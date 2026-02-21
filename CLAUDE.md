@@ -16,12 +16,17 @@ performance benchmarking.
 ## Building
 
 ```bash
-cmake --build build-dbg   # debug build (assertions + ASAN/UBSan enabled)
-cmake --build build-rel   # release build
+cmake --build build-dbg        # debug + ASAN/UBSan (default for correctness work)
+cmake --build build-dbg-noasan # debug without ASAN (e.g. for valgrind or perf)
+cmake --build build-rel        # release build (throughput measurement only)
+```
+
+Configure once:
+```bash
+cmake -B build-dbg-noasan -DCMAKE_BUILD_TYPE=Debug -DLLM2SMT_ASAN=OFF
 ```
 
 The debug build enables AddressSanitizer and UBSan by default (`LLM2SMT_ASAN=ON`).
-Disable with `-DLLM2SMT_ASAN=OFF` if a clean Debug build is needed (e.g. valgrind).
 
 Always prefer `build-dbg` for correctness work; `build-rel` only for throughput measurement.
 
