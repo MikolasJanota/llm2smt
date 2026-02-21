@@ -40,6 +40,9 @@ All 60+ unit tests must pass before committing.
 - SMT2 test in `tests/smt2/tNN_*.smt2` + entry in `tests/CMakeLists.txt` for end-to-end bugs.
 - The test must FAIL on the buggy code and PASS after the fix.
 
+**After each bug fix (with passing tests), commit immediately.**
+Do not batch multiple bug fixes into one commit.
+
 ## Architecture notes
 
 - The CC module (`src/theories/euf/cc.cpp`) must only store **flat** nodes (constants or single-level applications).
