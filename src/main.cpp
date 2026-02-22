@@ -28,8 +28,19 @@ int main(int argc, char** argv) {
     using namespace llm2smt;
     using namespace smt2parser;
 
+    int preprocess_passes = 0;
+    int file_arg = -1;
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a == "--preprocess-passes" && i + 1 < argc)
+            preprocess_passes = std::stoi(argv[++i]);
+        else if (file_arg < 0 && a[0] != '-')
+            file_arg = i;
+    }
+
     if (argc >= 2 && std::string(argv[1]) == "--version") {
-        std::cout << "llm2smt " << LLM2SMT_VERSION << "\n"
+        std::cout << "llm2smt " << LLM2SMT_VERSION
+                  << " (" << LLM2SMT_GIT_DESCRIBE << ")\n"
                   << "Build:  " << LLM2SMT_BUILD_TYPE << "\n"
                   << "SAT:    " << LLM2SMT_SAT_SOLVER << "\n";
 #ifndef NDEBUG
@@ -42,10 +53,10 @@ int main(int argc, char** argv) {
         std::ifstream file;
         std::unique_ptr<antlr4::ANTLRInputStream> input_stream;
 
-        if (argc >= 2) {
-            file.open(argv[1]);
+        if (file_arg >= 0) {
+            file.open(argv[file_arg]);
             if (!file) {
-                std::cerr << "Error: cannot open file " << argv[1] << "\n";
+                std::cerr << "Error: cannot open file " << argv[file_arg] << "\n";
                 return 1;
             }
             input_stream = std::make_unique<antlr4::ANTLRInputStream>(file);
@@ -69,7 +80,7 @@ int main(int argc, char** argv) {
         SMTLIBv2Parser parser(&tokens);
 
         auto* tree = parser.start();
-        Smt2Visitor visitor(ctx);
+        Smt2Visitor visitor(ctx, preprocess_passes);
         visitor.visitStart(tree);
 
         return 0;

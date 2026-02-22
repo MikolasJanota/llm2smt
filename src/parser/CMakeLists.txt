@@ -18,9 +18,9 @@ target_include_directories(smt_parser
 
 # antlr4-runtime target name varies by version; try both
 if(TARGET antlr4_static)
-  target_link_libraries(smt_parser PUBLIC core euf antlr4_static)
+  target_link_libraries(smt_parser PUBLIC core euf preprocessor antlr4_static)
 elseif(TARGET antlr4-runtime)
-  target_link_libraries(smt_parser PUBLIC core euf antlr4-runtime)
+  target_link_libraries(smt_parser PUBLIC core euf preprocessor antlr4-runtime)
 else()
   message(FATAL_ERROR "Could not find antlr4 runtime target")
 endif()

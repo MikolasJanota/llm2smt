@@ -11,12 +11,13 @@
 
 #include "core/node.h"
 #include "parser/smt_context.h"
+#include "preprocessor/fml.h"
 
 namespace llm2smt {
 
 class Smt2Visitor : public smt2parser::SMTLIBv2BaseVisitor {
 public:
-    explicit Smt2Visitor(SmtContext& ctx);
+    explicit Smt2Visitor(SmtContext& ctx, int preprocess_passes = 0);
 
     std::any visitStart(smt2parser::SMTLIBv2Parser::StartContext*) override;
     std::any visitCommand(smt2parser::SMTLIBv2Parser::CommandContext*) override;
@@ -77,6 +78,28 @@ private:
     // Return true if the top-level term is Bool-sorted
     // (built-in boolean op or declared Bool function).
     bool is_bool_sorted(smt2parser::SMTLIBv2Parser::TermContext*) const;
+
+    // ── Preprocessing ─────────────────────────────────────────────────────
+    int preprocess_passes_ = 0;
+
+    // FmlRef assertions accumulated during parsing (when preprocessing is on).
+    std::vector<FmlRef> pending_fmls_;
+
+    // Cache: Fml object address → Tseitin SAT literal (for lit_of_fml reuse).
+    std::unordered_map<const Fml*, int> fml_lit_cache_;
+
+    // Build a FmlRef tree from a Bool-sorted parse-tree node.
+    // Eagerly calls visit_term for U-sorted sub-terms.
+    FmlRef build_fml(smt2parser::SMTLIBv2Parser::TermContext*);
+
+    // Assert a FmlRef by adding the required SAT clauses (top-level assertion).
+    void encode_fml(FmlRef f);
+
+    // Return (or create) a SAT literal equivalent to a FmlRef sub-formula.
+    int lit_of_fml(FmlRef f);
+
+    // Encode all pending_fmls_ (run simplifier first if preprocess_passes_ > 0).
+    void flush_pending_fmls();
 
     // ── Model extraction ─────────────────────────────────────────────────
     SolveResult last_result_ = SolveResult::UNKNOWN;

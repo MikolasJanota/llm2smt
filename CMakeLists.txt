@@ -1,5 +1,21 @@
 cmake_minimum_required(VERSION 3.25)
-project(llm2smt VERSION 0.1.0 LANGUAGES CXX)
+project(llm2smt VERSION 0.2.0 LANGUAGES CXX)
+
+# Capture git description (tag + commit hash) at configure time.
+# Result: "v0.2.0" on a tagged commit, "v0.2.0-N-gHASH[-dirty]" otherwise.
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} describe --tags --always --dirty
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE LLM2SMT_GIT_DESCRIBE
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+else()
+    set(LLM2SMT_GIT_DESCRIBE "unknown")
+endif()
+message(STATUS "llm2smt version: ${PROJECT_VERSION}  git: ${LLM2SMT_GIT_DESCRIBE}")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
