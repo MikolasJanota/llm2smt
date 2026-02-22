@@ -18,19 +18,28 @@ FmlRef Simplifier::fold(FmlRef f)
         return f;
 
     case FmlKind::Not: {
-        // fml_not() already handles True/False/Not simplifications.
-        return fml_not(fold(f->children[0]));
+        FmlRef fc = fold(f->children[0]);
+        // Apply simplification rules first (True/False/double-negation).
+        if (fc->kind == FmlKind::True)  return fml_false();
+        if (fc->kind == FmlKind::False) return fml_true();
+        if (fc->kind == FmlKind::Not)   return fc->children[0];
+        // No simplification; only allocate if child actually changed.
+        if (fc.get() == f->children[0].get()) return f;
+        return fml_not(fc);
     }
 
     case FmlKind::And: {
         std::vector<FmlRef> new_ch;
         new_ch.reserve(f->children.size());
+        bool any_changed = false;
         for (auto& ch : f->children) {
             FmlRef fc = fold(ch);
             if (fc->kind == FmlKind::False) return fml_false();   // short-circuit
-            if (fc->kind == FmlKind::True)  continue;              // drop trivially-true
-            new_ch.push_back(fc);
+            if (fc->kind == FmlKind::True)  { any_changed = true; continue; }  // drop
+            if (fc.get() != ch.get()) any_changed = true;
+            new_ch.push_back(std::move(fc));
         }
+        if (!any_changed) return f;
         if (new_ch.empty())     return fml_true();
         if (new_ch.size() == 1) return new_ch[0];
         return fml_and(std::move(new_ch));
@@ -39,12 +48,15 @@ FmlRef Simplifier::fold(FmlRef f)
     case FmlKind::Or: {
         std::vector<FmlRef> new_ch;
         new_ch.reserve(f->children.size());
+        bool any_changed = false;
         for (auto& ch : f->children) {
             FmlRef fc = fold(ch);
             if (fc->kind == FmlKind::True)  return fml_true();    // short-circuit
-            if (fc->kind == FmlKind::False) continue;              // drop trivially-false
-            new_ch.push_back(fc);
+            if (fc->kind == FmlKind::False) { any_changed = true; continue; }  // drop
+            if (fc.get() != ch.get()) any_changed = true;
+            new_ch.push_back(std::move(fc));
         }
+        if (!any_changed) return f;
         if (new_ch.empty())     return fml_false();
         if (new_ch.size() == 1) return new_ch[0];
         return fml_or(std::move(new_ch));
@@ -61,6 +73,9 @@ FmlRef Simplifier::fold(FmlRef f)
         if (t->kind == FmlKind::False && el->kind == FmlKind::False) return fml_false();
         if (t->kind == FmlKind::True  && el->kind == FmlKind::False) return c;
         if (t->kind == FmlKind::False && el->kind == FmlKind::True)  return fml_not(c);
+        if (c.get() == f->children[0].get() &&
+            t.get() == f->children[1].get() &&
+            el.get() == f->children[2].get()) return f;
         return fml_ite(c, t, el);
     }
 
@@ -72,6 +87,7 @@ FmlRef Simplifier::fold(FmlRef f)
         if (a->kind == FmlKind::True)  return b;             // ⊤→b = b
         if (b->kind == FmlKind::True)  return fml_true();   // a→⊤ = ⊤
         if (b->kind == FmlKind::False) return fml_not(a);   // a→⊥ = ¬a
+        if (a.get() == f->children[0].get() && b.get() == f->children[1].get()) return f;
         return fml_implies(a, b);
     }
 
@@ -87,6 +103,7 @@ FmlRef Simplifier::fold(FmlRef f)
         if (a->kind == FmlKind::False) return b;
         if (b->kind == FmlKind::True)  return fml_not(a);
         if (b->kind == FmlKind::False) return a;
+        if (a.get() == f->children[0].get() && b.get() == f->children[1].get()) return f;
         return fml_xor(a, b);
     }
 
@@ -98,6 +115,7 @@ FmlRef Simplifier::fold(FmlRef f)
         if (a->kind == FmlKind::False) return fml_not(b);   // ⊥↔b = ¬b
         if (b->kind == FmlKind::True)  return a;             // a↔⊤ = a
         if (b->kind == FmlKind::False) return fml_not(a);   // a↔⊥ = ¬a
+        if (a.get() == f->children[0].get() && b.get() == f->children[1].get()) return f;
         return fml_booleq(a, b);
     }
     }
@@ -131,15 +149,22 @@ FmlRef Simplifier::subst_and_fold(FmlRef f, const Fml& atom, bool forced_positiv
         return f;  // different atom, leave it
 
     default: {
-        // Recurse into all children, then fold the resulting node.
+        // Recurse into all children; only allocate a new node if something changed.
+        bool any_changed = false;
+        std::vector<FmlRef> new_children;
+        new_children.reserve(f->children.size());
+        for (auto& ch : f->children) {
+            FmlRef new_ch = subst_and_fold(ch, atom, forced_positive);
+            if (new_ch.get() != ch.get()) any_changed = true;
+            new_children.push_back(std::move(new_ch));
+        }
+        if (!any_changed) return fold(f);
         auto new_f = std::make_shared<Fml>();
-        new_f->kind   = f->kind;
-        new_f->eq_lhs = f->eq_lhs;
-        new_f->eq_rhs = f->eq_rhs;
-        new_f->pred   = f->pred;
-        new_f->children.reserve(f->children.size());
-        for (auto& ch : f->children)
-            new_f->children.push_back(subst_and_fold(ch, atom, forced_positive));
+        new_f->kind     = f->kind;
+        new_f->eq_lhs   = f->eq_lhs;
+        new_f->eq_rhs   = f->eq_rhs;
+        new_f->pred     = f->pred;
+        new_f->children = std::move(new_children);
         return fold(new_f);
     }
     }
