@@ -660,7 +660,15 @@ void Smt2Visitor::print_model()
             auto cond_for = [&](const AppRecord& app) -> std::string {
                 auto arg_val = [&](size_t i) -> std::string {
                     bool arg_bool = (decl.param_sorts[i] == "Bool");
-                    if (arg_bool) return bool_for(app.args[i]);
+                    if (arg_bool) {
+                        // true_node_ / false_node_ are U-sorted EUF constants used
+                        // as stand-ins for the Bool literals true/false when they
+                        // appear as UF arguments.  They are NOT in node_to_lit, so
+                        // bool_for() would return "false" for both — wrong.
+                        if (app.args[i] == true_node_)  return "true";
+                        if (app.args[i] == false_node_) return "false";
+                        return bool_for(app.args[i]);  // user-declared Bool node
+                    }
                     return as_val(abstract_for(app.args[i]), decl.param_sorts[i]);
                 };
                 if (arity == 1) {
