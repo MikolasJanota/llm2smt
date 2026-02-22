@@ -140,6 +140,15 @@ std::any Smt2Visitor::visitCommand(
         if (!sorts.empty() && sorts.back()->getText() == "Bool") {
             ctx_.bool_fns.insert(sym);
         }
+        // Record declaration order and sort info for get-model
+        FnDecl decl;
+        decl.sym = sym;
+        if (!sorts.empty()) {
+            decl.return_sort = sorts.back()->getText();
+            for (size_t i = 0; i + 1 < sorts.size(); ++i)
+                decl.param_sorts.push_back(sorts[i]->getText());
+        }
+        ctx_.declared_fn_order.push_back(std::move(decl));
     }
     else if (ctx->cmd_assert()) {
         auto terms = ctx->term();
@@ -147,12 +156,18 @@ std::any Smt2Visitor::visitCommand(
         assert_formula(terms[0]);
     }
     else if (ctx->cmd_checkSat()) {
-        SolveResult result = ctx_.sat.solve();
-        switch (result) {
+        last_result_ = ctx_.sat.solve();
+        switch (last_result_) {
         case SolveResult::SAT:     std::cout << "sat\n";     break;
         case SolveResult::UNSAT:   std::cout << "unsat\n";   break;
         case SolveResult::UNKNOWN: std::cout << "unknown\n"; break;
         }
+    }
+    else if (ctx->cmd_getModel()) {
+        if (last_result_ == SolveResult::SAT)
+            print_model();
+        else
+            std::cerr << "(error \"get-model called before a satisfying check-sat\")\n";
     }
     return nullptr;
 }
@@ -229,6 +244,9 @@ NodeId Smt2Visitor::visit_term(
         args.push_back(visit_term(sub));
     NodeId node = ctx_.nm.mk_app(sym, std::span<const NodeId>(args));
     if (ctx_.bool_fns.count(sym)) link_bool_term_to_euf(node);
+    // Record for get-model (dedup via hash-consed NodeId)
+    if (seen_app_nodes_.insert(node).second)
+        fn_applications_[sym].push_back({args, node});
     return node;
 }
 
@@ -557,12 +575,137 @@ int Smt2Visitor::eval_lit(
             args.push_back(visit_term(sub));
         NodeId n = ctx_.nm.mk_app(fit->second, std::span<const NodeId>(args));
         link_bool_term_to_euf(n);
+        // Record for get-model (dedup via hash-consed NodeId)
+        if (seen_app_nodes_.insert(n).second)
+            fn_applications_[fit->second].push_back({args, n});
         return ctx_.lit_for_node(n);
     }
 
     throw std::runtime_error(
         "Unsupported formula: " + op
         + " (supported: true, false, not, =>, and, or, xor, ite, =, distinct, predicates)");
+}
+
+// ============================================================================
+// Model printing
+// ============================================================================
+
+void Smt2Visitor::print_model()
+{
+    Flattener& flattener = ctx_.euf.flattener();
+    CC&        cc        = ctx_.euf.cc();
+
+    // Map CC representative → abstract value index (assigned lazily).
+    std::unordered_map<NodeId, int> repr_to_idx;
+    int next_abstract = 0;
+
+    // Return (or assign) the abstract value index for an original node.
+    auto abstract_for = [&](NodeId original) -> int {
+        NodeId flat = flattener.get_flat(original);
+        NodeId repr = (flat != NULL_NODE) ? cc.find(flat) : original;
+        auto [it, inserted] = repr_to_idx.emplace(repr, 0);
+        if (inserted) it->second = next_abstract++;
+        return it->second;
+    };
+
+    // Return "true" or "false" for a Bool-valued node using the SAT model.
+    auto bool_for = [&](NodeId node) -> std::string {
+        auto it = ctx_.node_to_lit.find(node);
+        if (it == ctx_.node_to_lit.end()) return "false";
+        int v = ctx_.sat.val(it->second);
+        return (v > 0) ? "true" : "false";
+    };
+
+    // Format an abstract value with sort annotation.
+    auto as_val = [](int idx, const std::string& sort) -> std::string {
+        return "(as @" + std::to_string(idx) + " " + sort + ")";
+    };
+
+    std::cout << "(model\n";
+
+    for (const auto& decl : ctx_.declared_fn_order) {
+        SymbolId           sym      = decl.sym;
+        const std::string& ret_sort = decl.return_sort;
+        bool               ret_bool = (ret_sort == "Bool");
+        size_t             arity    = decl.param_sorts.size();
+        const std::string  sym_name = ctx_.nm.symbol_table().get(sym).name;
+
+        // Print function header: (define-fun name (params) return-sort
+        std::cout << "  (define-fun " << sym_name << " (";
+        for (size_t i = 0; i < arity; ++i) {
+            if (i > 0) std::cout << " ";
+            std::cout << "(x!" << i << " " << decl.param_sorts[i] << ")";
+        }
+        std::cout << ") " << ret_sort << "\n";
+
+        if (arity == 0) {
+            // Constant: look up its model value directly.
+            NodeId node = ctx_.nm.mk_const(sym);
+            if (ret_bool) {
+                std::cout << "    " << bool_for(node) << ")\n";
+            } else {
+                std::cout << "    " << as_val(abstract_for(node), ret_sort) << ")\n";
+            }
+        } else {
+            // Function: build ite-chain over seen applications.
+
+            // Helper: format result value for an application node.
+            auto ret_val_for = [&](NodeId app_node) -> std::string {
+                if (ret_bool) return bool_for(app_node);
+                return as_val(abstract_for(app_node), ret_sort);
+            };
+
+            // Helper: build the condition string "(= x!i <abstract-val-of-arg>)"
+            //         or "(and (= x!0 ...) (= x!1 ...) ...)" for multiple args.
+            auto cond_for = [&](const AppRecord& app) -> std::string {
+                auto arg_val = [&](size_t i) -> std::string {
+                    bool arg_bool = (decl.param_sorts[i] == "Bool");
+                    if (arg_bool) return bool_for(app.args[i]);
+                    return as_val(abstract_for(app.args[i]), decl.param_sorts[i]);
+                };
+                if (arity == 1) {
+                    return "(= x!0 " + arg_val(0) + ")";
+                }
+                std::string cond = "(and";
+                for (size_t i = 0; i < arity; ++i)
+                    cond += " (= x!" + std::to_string(i) + " " + arg_val(i) + ")";
+                cond += ")";
+                return cond;
+            };
+
+            auto apps_it = fn_applications_.find(sym);
+            if (apps_it == fn_applications_.end() || apps_it->second.empty()) {
+                // No applications seen — output a constant default value.
+                if (ret_bool)
+                    std::cout << "    false)\n";
+                else
+                    std::cout << "    " << as_val(next_abstract++, ret_sort) << ")\n";
+            } else {
+                const auto& apps = apps_it->second;
+
+                // Collect (condition, value) pairs, deduplicating by condition string.
+                struct Entry { std::string cond, val; };
+                std::vector<Entry>              entries;
+                std::unordered_set<std::string> seen_conds;
+                for (const auto& app : apps) {
+                    std::string cond = cond_for(app);
+                    if (!seen_conds.insert(cond).second) continue;
+                    entries.push_back({cond, ret_val_for(app.app_node)});
+                }
+
+                // Build nested ite-chain; the first entry's value is the default.
+                // entries is always non-empty when apps is non-empty.
+                std::string body = entries[0].val;
+                for (int i = (int)entries.size() - 1; i >= 1; --i) {
+                    body = "(ite " + entries[i].cond + "\n        "
+                         + entries[i].val + "\n        " + body + ")";
+                }
+                std::cout << "    " << body << ")\n";
+            }
+        }
+    }
+
+    std::cout << ")\n";
 }
 
 } // namespace llm2smt

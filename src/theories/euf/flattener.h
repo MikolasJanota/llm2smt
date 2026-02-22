@@ -34,6 +34,12 @@ public:
     // Convenience: flatten and immediately register equations in CC.
     NodeId flatten_and_register(NodeId term);
 
+    // Look up the flat CC node for an original NodeId (NULL_NODE if not cached).
+    NodeId get_flat(NodeId n) const {
+        auto it = node_to_cc_.find(n);
+        return (it != node_to_cc_.end()) ? it->second : NULL_NODE;
+    }
+
 private:
     NodeManager& nm_;
     CC&          cc_;

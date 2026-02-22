@@ -77,6 +77,22 @@ private:
     // Return true if the top-level term is Bool-sorted
     // (built-in boolean op or declared Bool function).
     bool is_bool_sorted(smt2parser::SMTLIBv2Parser::TermContext*) const;
+
+    // ── Model extraction ─────────────────────────────────────────────────
+    SolveResult last_result_ = SolveResult::UNKNOWN;
+
+    // Record of one function application seen during parsing (for get-model).
+    struct AppRecord {
+        std::vector<NodeId> args;     // original (unflattened) NodeIds
+        NodeId              app_node; // original (unflattened) NodeId of the application
+    };
+    // Per user-declared symbol: all distinct applications seen during parsing.
+    std::unordered_map<SymbolId, std::vector<AppRecord>> fn_applications_;
+    // Deduplication set: NodeIds already recorded in fn_applications_.
+    std::unordered_set<NodeId> seen_app_nodes_;
+
+    // Print (model ...) to stdout using CC representatives and SAT model values.
+    void print_model();
 };
 
 } // namespace llm2smt

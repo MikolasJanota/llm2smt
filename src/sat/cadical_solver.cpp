@@ -98,4 +98,8 @@ SolveResult CaDiCaLSolver::solve() {
     return SolveResult::UNKNOWN;
 }
 
+int CaDiCaLSolver::val(int lit) const {
+    return solver_->val(lit);
+}
+
 } // namespace llm2smt

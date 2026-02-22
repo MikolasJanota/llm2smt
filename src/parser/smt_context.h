@@ -12,6 +12,13 @@
 
 namespace llm2smt {
 
+// Information about a user-declared function, for get-model output.
+struct FnDecl {
+    SymbolId                 sym;
+    std::string              return_sort;
+    std::vector<std::string> param_sorts;
+};
+
 // Holds the global state for one SMT-LIB2 parse session.
 struct SmtContext {
     NodeManager& nm;
@@ -24,6 +31,8 @@ struct SmtContext {
     std::unordered_set<SymbolId>               bool_fns;
     // Bool-valued node → SAT literal (for predicate applications)
     std::unordered_map<NodeId, int>            node_to_lit;
+    // User-declared functions in declaration order (for deterministic get-model output)
+    std::vector<FnDecl>                        declared_fn_order;
 
     std::vector<int> assertions;
     std::string      logic;

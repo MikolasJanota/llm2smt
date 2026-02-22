@@ -27,6 +27,7 @@ public:
     void        add_clause(std::span<const int> lits) override;
     void        connect_propagator(ExternalPropagator& prop) override;
     SolveResult solve() override;
+    int         val(int lit) const override;
 
 private:
     struct Adapter;  // defined in cadical_solver.cpp

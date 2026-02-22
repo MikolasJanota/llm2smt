@@ -63,6 +63,10 @@ public:
 
     // Run the solver.
     virtual SolveResult solve() = 0;
+
+    // Query the value of a literal in the last SAT model.
+    // Returns a positive value if lit is true, negative if false, 0 if unknown.
+    virtual int val(int lit) const { return 0; }
 };
 
 } // namespace llm2smt
