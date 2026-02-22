@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
 Fuzzer: generates random QF_UF problems and compares llm2smt against a reference solver.
+Optionally verifies the model produced by our solver when it returns SAT.
 
 Usage:
-    python fuzz.py [options]
-    python fuzz.py --ref cvc5 --count 1000 --seed 42
-    python fuzz.py --ref z3 --n-consts 6 --n-assert 10
+    python scripts/fuzz.py [options]
+    python scripts/fuzz.py --ref cvc5 --count 1000 --seed 42
+    python scripts/fuzz.py --ref cvc5 --check-model --count 500
+
+    # Model checking only (skip result-comparison, just verify models)
+    python scripts/fuzz.py --check-model --count 200
 
 The reference solver (--ref) must accept an SMT-LIB2 file as its last argument and
 print "sat" or "unsat" on stdout.  Both cvc5 and z3 work out of the box.
@@ -21,6 +25,9 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(__file__))
+from _model_check import check_model_correct
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +128,7 @@ def run_solver(cmd: list[str], filepath: str, timeout: float) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="QF_UF differential fuzzer",
+        description="QF_UF differential fuzzer with optional model checking",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--our-solver", default="build-dbg/bin/llm2smt",
@@ -147,7 +154,11 @@ def main() -> int:
     parser.add_argument("--diseq-prob", type=float, default=0.3,
                         help="Probability of each assertion being a disequality")
     parser.add_argument("--stop-on-first-fail", action="store_true",
-                        help="Stop after the first mismatch")
+                        help="Stop after the first mismatch or model failure")
+    parser.add_argument("--check-model", action="store_true",
+                        help="When our solver says SAT, verify the model is correct "
+                             "by injecting it into the problem and re-checking with "
+                             "the reference solver")
     args = parser.parse_args()
 
     our_cmd = [args.our_solver]
@@ -158,14 +169,15 @@ def main() -> int:
 
     rng = random.Random(args.seed)
 
-    n_ok = n_mismatch = n_our_err = n_ref_err = 0
+    n_ok = n_mismatch = n_our_err = n_ref_err = n_model_fail = 0
 
     print(f"Fuzzing {args.count} random QF_UF problems "
           f"(seed={args.seed}, timeout={args.timeout}s)")
-    print(f"  Our solver : {args.our_solver}")
-    print(f"  Reference  : {args.ref}")
-    print(f"  Size       : consts={args.n_consts} unary={args.n_unary} "
+    print(f"  Our solver  : {args.our_solver}")
+    print(f"  Reference   : {args.ref}")
+    print(f"  Size        : consts={args.n_consts} unary={args.n_unary} "
           f"binary={args.n_binary} assert={args.n_assert}")
+    print(f"  Check model : {'yes' if args.check_model else 'no'}")
     print()
 
     try:
@@ -189,6 +201,8 @@ def main() -> int:
             finally:
                 os.unlink(tmpfile)
 
+            stop = False
+
             if our == "error":
                 n_our_err += 1
             elif ref in ("error", "timeout"):
@@ -199,24 +213,39 @@ def main() -> int:
                 fail_path.write_text(smt2)
                 print(f"[MISMATCH #{n_mismatch}] test {i}: "
                       f"ours={our} ref={ref}  saved → {fail_path}")
-                if args.stop_on_first_fail:
-                    break
+                stop = args.stop_on_first_fail
             else:
                 n_ok += 1
+                # Model checking: when our solver says SAT, verify the model.
+                if args.check_model and our == "sat":
+                    ok, reason = check_model_correct(smt2, our_cmd, ref_cmd,
+                                                     args.timeout)
+                    if not ok:
+                        n_model_fail += 1
+                        fail_path = save_dir / f"model_fail_{i:06d}.smt2"
+                        fail_path.write_text(smt2)
+                        print(f"[MODEL FAIL #{n_model_fail}] test {i}: "
+                              f"{reason}  saved → {fail_path}")
+                        stop = args.stop_on_first_fail
+
                 if (i + 1) % 100 == 0:
                     print(f"  {i+1:5d}/{args.count}  "
                           f"ok={n_ok}  mismatch={n_mismatch}  "
+                          f"model_fail={n_model_fail}  "
                           f"our_err={n_our_err}  ref_err={n_ref_err}")
+
+            if stop:
+                break
 
     except KeyboardInterrupt:
         print("\nInterrupted.")
 
     print()
-    print(f"Results: ok={n_ok}  mismatch={n_mismatch}  "
+    print(f"Results: ok={n_ok}  mismatch={n_mismatch}  model_fail={n_model_fail}  "
           f"our_err={n_our_err}  ref_err={n_ref_err}")
-    if n_mismatch:
+    if n_mismatch or n_model_fail:
         print(f"Failing cases saved in: {save_dir}/")
-    return 0 if n_mismatch == 0 else 1
+    return 0 if (n_mismatch == 0 and n_model_fail == 0) else 1
 
 
 if __name__ == "__main__":
