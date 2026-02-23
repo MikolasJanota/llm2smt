@@ -27,7 +27,7 @@ namespace llm2smt {
 // these atoms in the SAT/theory solver before the search begins.
 class Simplifier {
 public:
-    // Constant-fold a single formula.
+    // Constant-fold (and optionally flatten) a single formula.
     FmlRef fold(FmlRef f);
 
     // Substitute atom (or its negation) → True/False in f, then fold.
@@ -41,6 +41,11 @@ public:
     // Up to `passes` iterations (stops early when stable).
     void run(std::vector<FmlRef>& assertions, int passes);
 
+    // Enable/disable And-in-And / Or-in-Or flattening during fold().
+    // Default: true.
+    void set_flatten(bool v) { flatten_ = v; }
+    bool flatten() const     { return flatten_; }
+
     struct ForcedAtom { FmlRef atom; bool positive; };
     const std::vector<ForcedAtom>& forced_atoms() const { return forced_; }
 
@@ -48,6 +53,7 @@ public:
     int passes_run() const { return passes_run_; }
 
 private:
+    bool                               flatten_ = true;
     std::vector<ForcedAtom>            forced_;
     int                                passes_run_ = 0;
 

@@ -5,7 +5,7 @@
 namespace llm2smt {
 
 // ============================================================================
-// Constant folding
+// Constant folding + optional And/Or flattening
 // ============================================================================
 
 FmlRef Simplifier::fold(FmlRef f)
@@ -19,54 +19,90 @@ FmlRef Simplifier::fold(FmlRef f)
 
     case FmlKind::Not: {
         FmlRef fc = fold(f->children[0]);
-        // Apply simplification rules first (True/False/double-negation).
         if (fc->kind == FmlKind::True)  return fml_false();
         if (fc->kind == FmlKind::False) return fml_true();
         if (fc->kind == FmlKind::Not)   return fc->children[0];
-        // No simplification; only allocate if child actually changed.
         if (fc.get() == f->children[0].get()) return f;
         return fml_not(fc);
     }
 
     case FmlKind::And: {
-        std::vector<FmlRef> new_ch;
-        new_ch.reserve(f->children.size());
-        bool any_changed = false;
-        for (auto& ch : f->children) {
-            FmlRef fc = fold(ch);
-            if (fc->kind == FmlKind::False) return fml_false();   // short-circuit
-            if (fc->kind == FmlKind::True)  { any_changed = true; continue; }  // drop
-            if (fc.get() != ch.get()) any_changed = true;
-            new_ch.push_back(std::move(fc));
+        // Lazy allocation: scan for the first change; only then build new_ch.
+        // This avoids any heap allocation when the formula is already stable.
+        for (size_t i = 0; i < f->children.size(); ++i) {
+            FmlRef fc = fold(f->children[i]);
+            if (fc->kind == FmlKind::False) return fml_false();
+            const bool changed = fc->kind == FmlKind::True
+                              || (flatten_ && fc->kind == FmlKind::And)
+                              || fc.get() != f->children[i].get();
+            if (!changed) continue;
+
+            // Build output: unchanged prefix + current + fold remaining.
+            std::vector<FmlRef> new_ch;
+            new_ch.reserve(f->children.size());
+            for (size_t j = 0; j < i; ++j)
+                new_ch.push_back(f->children[j]);
+
+            auto push = [&](FmlRef c) {
+                if (c->kind == FmlKind::True) return;
+                if (flatten_ && c->kind == FmlKind::And)
+                    for (auto& sub : c->children) new_ch.push_back(sub);
+                else
+                    new_ch.push_back(std::move(c));
+            };
+            push(std::move(fc));
+            for (size_t j = i + 1; j < f->children.size(); ++j) {
+                FmlRef fj = fold(f->children[j]);
+                if (fj->kind == FmlKind::False) return fml_false();
+                push(std::move(fj));
+            }
+            if (new_ch.empty()) return fml_true();
+            if (new_ch.size() == 1) return new_ch[0];
+            return fml_and(std::move(new_ch));
         }
-        if (!any_changed) return f;
-        if (new_ch.empty())     return fml_true();
-        if (new_ch.size() == 1) return new_ch[0];
-        return fml_and(std::move(new_ch));
+        return f;
     }
 
     case FmlKind::Or: {
-        std::vector<FmlRef> new_ch;
-        new_ch.reserve(f->children.size());
-        bool any_changed = false;
-        for (auto& ch : f->children) {
-            FmlRef fc = fold(ch);
-            if (fc->kind == FmlKind::True)  return fml_true();    // short-circuit
-            if (fc->kind == FmlKind::False) { any_changed = true; continue; }  // drop
-            if (fc.get() != ch.get()) any_changed = true;
-            new_ch.push_back(std::move(fc));
+        // Symmetric to And.
+        for (size_t i = 0; i < f->children.size(); ++i) {
+            FmlRef fc = fold(f->children[i]);
+            if (fc->kind == FmlKind::True) return fml_true();
+            const bool changed = fc->kind == FmlKind::False
+                              || (flatten_ && fc->kind == FmlKind::Or)
+                              || fc.get() != f->children[i].get();
+            if (!changed) continue;
+
+            std::vector<FmlRef> new_ch;
+            new_ch.reserve(f->children.size());
+            for (size_t j = 0; j < i; ++j)
+                new_ch.push_back(f->children[j]);
+
+            auto push = [&](FmlRef c) {
+                if (c->kind == FmlKind::False) return;
+                if (flatten_ && c->kind == FmlKind::Or)
+                    for (auto& sub : c->children) new_ch.push_back(sub);
+                else
+                    new_ch.push_back(std::move(c));
+            };
+            push(std::move(fc));
+            for (size_t j = i + 1; j < f->children.size(); ++j) {
+                FmlRef fj = fold(f->children[j]);
+                if (fj->kind == FmlKind::True) return fml_true();
+                push(std::move(fj));
+            }
+            if (new_ch.empty()) return fml_false();
+            if (new_ch.size() == 1) return new_ch[0];
+            return fml_or(std::move(new_ch));
         }
-        if (!any_changed) return f;
-        if (new_ch.empty())     return fml_false();
-        if (new_ch.size() == 1) return new_ch[0];
-        return fml_or(std::move(new_ch));
+        return f;
     }
 
     case FmlKind::Ite: {
         assert(f->children.size() == 3);
         FmlRef c = fold(f->children[0]);
-        if (c->kind == FmlKind::True)  return fold(f->children[1]);  // ite(⊤,T,F) = T
-        if (c->kind == FmlKind::False) return fold(f->children[2]);  // ite(⊥,T,F) = F
+        if (c->kind == FmlKind::True)  return fold(f->children[1]);
+        if (c->kind == FmlKind::False) return fold(f->children[2]);
         FmlRef t  = fold(f->children[1]);
         FmlRef el = fold(f->children[2]);
         if (t->kind == FmlKind::True  && el->kind == FmlKind::True)  return fml_true();
@@ -83,10 +119,10 @@ FmlRef Simplifier::fold(FmlRef f)
         assert(f->children.size() == 2);
         FmlRef a = fold(f->children[0]);
         FmlRef b = fold(f->children[1]);
-        if (a->kind == FmlKind::False) return fml_true();   // ⊥→b = ⊤
-        if (a->kind == FmlKind::True)  return b;             // ⊤→b = b
-        if (b->kind == FmlKind::True)  return fml_true();   // a→⊤ = ⊤
-        if (b->kind == FmlKind::False) return fml_not(a);   // a→⊥ = ¬a
+        if (a->kind == FmlKind::False) return fml_true();
+        if (a->kind == FmlKind::True)  return b;
+        if (b->kind == FmlKind::True)  return fml_true();
+        if (b->kind == FmlKind::False) return fml_not(a);
         if (a.get() == f->children[0].get() && b.get() == f->children[1].get()) return f;
         return fml_implies(a, b);
     }
@@ -111,10 +147,10 @@ FmlRef Simplifier::fold(FmlRef f)
         assert(f->children.size() == 2);
         FmlRef a = fold(f->children[0]);
         FmlRef b = fold(f->children[1]);
-        if (a->kind == FmlKind::True)  return b;             // ⊤↔b = b
-        if (a->kind == FmlKind::False) return fml_not(b);   // ⊥↔b = ¬b
-        if (b->kind == FmlKind::True)  return a;             // a↔⊤ = a
-        if (b->kind == FmlKind::False) return fml_not(a);   // a↔⊥ = ¬a
+        if (a->kind == FmlKind::True)  return b;
+        if (a->kind == FmlKind::False) return fml_not(b);
+        if (b->kind == FmlKind::True)  return a;
+        if (b->kind == FmlKind::False) return fml_not(a);
         if (a.get() == f->children[0].get() && b.get() == f->children[1].get()) return f;
         return fml_booleq(a, b);
     }
@@ -142,30 +178,35 @@ FmlRef Simplifier::subst_and_fold(FmlRef f, const Fml& atom, bool forced_positiv
     switch (f->kind) {
     case FmlKind::True:
     case FmlKind::False:
-        return f;
-
     case FmlKind::Eq:
     case FmlKind::Pred:
         return f;  // different atom, leave it
 
     default: {
-        // Recurse into all children; only allocate a new node if something changed.
-        bool any_changed = false;
-        std::vector<FmlRef> new_children;
-        new_children.reserve(f->children.size());
-        for (auto& ch : f->children) {
-            FmlRef new_ch = subst_and_fold(ch, atom, forced_positive);
-            if (new_ch.get() != ch.get()) any_changed = true;
-            new_children.push_back(std::move(new_ch));
+        // Lazy: find first changed child; only then allocate a new node.
+        for (size_t i = 0; i < f->children.size(); ++i) {
+            FmlRef nc = subst_and_fold(f->children[i], atom, forced_positive);
+            if (nc.get() == f->children[i].get()) continue;
+
+            // First change at index i.
+            std::vector<FmlRef> new_children;
+            new_children.reserve(f->children.size());
+            for (size_t j = 0; j < i; ++j)
+                new_children.push_back(f->children[j]);
+            new_children.push_back(std::move(nc));
+            for (size_t j = i + 1; j < f->children.size(); ++j)
+                new_children.push_back(
+                    subst_and_fold(f->children[j], atom, forced_positive));
+
+            auto new_f = std::make_shared<Fml>();
+            new_f->kind     = f->kind;
+            new_f->eq_lhs   = f->eq_lhs;
+            new_f->eq_rhs   = f->eq_rhs;
+            new_f->pred     = f->pred;
+            new_f->children = std::move(new_children);
+            return fold(new_f);
         }
-        if (!any_changed) return fold(f);
-        auto new_f = std::make_shared<Fml>();
-        new_f->kind     = f->kind;
-        new_f->eq_lhs   = f->eq_lhs;
-        new_f->eq_rhs   = f->eq_rhs;
-        new_f->pred     = f->pred;
-        new_f->children = std::move(new_children);
-        return fold(new_f);
+        return fold(f);
     }
     }
 }
@@ -199,29 +240,35 @@ FmlRef Simplifier::normalize_eq_fml(FmlRef f)
         NodeId nx = uf_find(f->eq_lhs);
         NodeId ny = uf_find(f->eq_rhs);
         if (nx == ny) return fml_true();
-        // fml_atoms_equal treats Eq as symmetric; keep canonical form unchanged.
         if (nx == f->eq_lhs && ny == f->eq_rhs) return f;
         if (nx == f->eq_rhs && ny == f->eq_lhs) return f;
         return fml_eq(nx, ny);
     }
     if (f->children.empty()) return f;  // True, False, Pred — nothing to normalize
 
-    bool any_changed = false;
-    std::vector<FmlRef> new_ch;
-    new_ch.reserve(f->children.size());
-    for (auto& ch : f->children) {
-        FmlRef nc = normalize_eq_fml(ch);
-        if (nc.get() != ch.get()) any_changed = true;
+    // Lazy: find first changed child; only then allocate a new node.
+    for (size_t i = 0; i < f->children.size(); ++i) {
+        FmlRef nc = normalize_eq_fml(f->children[i]);
+        if (nc.get() == f->children[i].get()) continue;
+
+        // First change at index i.
+        std::vector<FmlRef> new_ch;
+        new_ch.reserve(f->children.size());
+        for (size_t j = 0; j < i; ++j)
+            new_ch.push_back(f->children[j]);
         new_ch.push_back(std::move(nc));
+        for (size_t j = i + 1; j < f->children.size(); ++j)
+            new_ch.push_back(normalize_eq_fml(f->children[j]));
+
+        auto new_f = std::make_shared<Fml>();
+        new_f->kind     = f->kind;
+        new_f->eq_lhs   = f->eq_lhs;
+        new_f->eq_rhs   = f->eq_rhs;
+        new_f->pred     = f->pred;
+        new_f->children = std::move(new_ch);
+        return fold(new_f);
     }
-    if (!any_changed) return f;
-    auto new_f = std::make_shared<Fml>();
-    new_f->kind     = f->kind;
-    new_f->eq_lhs   = f->eq_lhs;
-    new_f->eq_rhs   = f->eq_rhs;
-    new_f->pred     = f->pred;
-    new_f->children = std::move(new_ch);
-    return fold(new_f);  // propagate any True/False introduced by normalization
+    return f;
 }
 
 // ============================================================================
@@ -244,7 +291,7 @@ bool Simplifier::run_pass(std::vector<FmlRef>& assertions)
 {
     bool changed = false;
 
-    // Phase 1: constant-fold everything.
+    // Phase 1: constant-fold (and flatten) everything.
     for (auto& f : assertions) {
         FmlRef folded = fold(f);
         if (folded.get() != f.get()) {

@@ -15,7 +15,9 @@ static FmlRef EQ(NodeId a, NodeId b) { return fml_eq(a, b); }
 static FmlRef PR(NodeId n)           { return fml_pred(n); }
 static FmlRef NOT(FmlRef f)          { return fml_not(f); }
 static FmlRef AND(FmlRef a, FmlRef b){ return fml_and({a, b}); }
+static FmlRef AND3(FmlRef a, FmlRef b, FmlRef c){ return fml_and({a, b, c}); }
 static FmlRef OR(FmlRef a, FmlRef b) { return fml_or({a, b}); }
+static FmlRef OR3(FmlRef a, FmlRef b, FmlRef c) { return fml_or({a, b, c}); }
 static FmlRef IMP(FmlRef a, FmlRef b){ return fml_implies(a, b); }
 static FmlRef XOR(FmlRef a, FmlRef b){ return fml_xor(a, b); }
 static FmlRef IFF(FmlRef a, FmlRef b){ return fml_booleq(a, b); }
@@ -421,4 +423,80 @@ TEST(Run, ZeroPassesIsNoOp)
     s.run(assertions, 0);
     EXPECT_TRUE(s.forced_atoms().empty());
     EXPECT_EQ(assertions[1]->kind, FmlKind::And);
+}
+
+// ── And/Or flattening ─────────────────────────────────────────────────────────
+
+TEST(Fold, FlattenAndInAnd)
+{
+    // and(and(Eq(a,b), Pred(c)), Pred(d)) → and(Eq(a,b), Pred(c), Pred(d))
+    Simplifier s;
+    FmlRef inner = AND(EQ(NA,NB), PR(NC));
+    FmlRef outer = AND(inner, PR(ND));
+    FmlRef r = s.fold(outer);
+    ASSERT_EQ(r->kind, FmlKind::And);
+    EXPECT_EQ(r->children.size(), 3u);
+    EXPECT_EQ(r->children[0]->kind, FmlKind::Eq);
+    EXPECT_EQ(r->children[1]->kind, FmlKind::Pred);
+    EXPECT_EQ(r->children[2]->kind, FmlKind::Pred);
+}
+
+TEST(Fold, FlattenOrInOr)
+{
+    // or(or(Eq(a,b), Pred(c)), Pred(d)) → or(Eq(a,b), Pred(c), Pred(d))
+    Simplifier s;
+    FmlRef inner = OR(EQ(NA,NB), PR(NC));
+    FmlRef outer = OR(inner, PR(ND));
+    FmlRef r = s.fold(outer);
+    ASSERT_EQ(r->kind, FmlKind::Or);
+    EXPECT_EQ(r->children.size(), 3u);
+}
+
+TEST(Fold, FlattenAndNotCrossOr)
+{
+    // and(or(Eq(a,b), Pred(c)), Pred(d)) — Or inside And: should NOT flatten
+    Simplifier s;
+    FmlRef inner = OR(EQ(NA,NB), PR(NC));
+    FmlRef outer = AND(inner, PR(ND));
+    FmlRef r = s.fold(outer);
+    ASSERT_EQ(r->kind, FmlKind::And);
+    EXPECT_EQ(r->children.size(), 2u);  // not flattened across kinds
+}
+
+TEST(Fold, FlattenDeepAnd)
+{
+    // and(and(and(Eq(a,b), Pred(c)), Pred(d)), Pred(e)) → and of 4 children
+    Simplifier s;
+    FmlRef eq  = EQ(NA, NB);
+    FmlRef pc  = PR(NC);
+    FmlRef pd  = PR(ND);
+    FmlRef pe  = PR(10u + 4u);  // arbitrary NodeId
+    FmlRef r   = s.fold(AND(AND(AND(eq, pc), pd), pe));
+    ASSERT_EQ(r->kind, FmlKind::And);
+    EXPECT_EQ(r->children.size(), 4u);
+}
+
+TEST(Fold, FlattenDisabledKeepsNested)
+{
+    // With flatten=false, and(and(a,b),c) stays nested.
+    Simplifier s;
+    s.set_flatten(false);
+    FmlRef eq  = EQ(NA, NB);
+    FmlRef pc  = PR(NC);
+    FmlRef outer = AND(AND(eq, pc), PR(ND));
+    FmlRef r = s.fold(outer);
+    // No change: pointer identity holds
+    EXPECT_EQ(r.get(), outer.get());
+}
+
+TEST(Fold, FlattenAndWithTrueChild)
+{
+    // and(and(Eq(a,b), true), Pred(c)) → and(Eq(a,b), Pred(c))
+    // Flattening + True-dropping happen together.
+    Simplifier s;
+    FmlRef r = s.fold(AND(AND(EQ(NA,NB), T()), PR(NC)));
+    ASSERT_EQ(r->kind, FmlKind::And);
+    EXPECT_EQ(r->children.size(), 2u);
+    EXPECT_EQ(r->children[0]->kind, FmlKind::Eq);
+    EXPECT_EQ(r->children[1]->kind, FmlKind::Pred);
 }
