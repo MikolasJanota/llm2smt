@@ -1,6 +1,7 @@
 #pragma once
 
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -30,6 +31,12 @@ public:
     // Register an equality atom lhs=rhs.
     // Returns a positive SAT variable (literal). Idempotent.
     int register_equality(NodeId lhs, NodeId rhs);
+
+    // Register a permanently-true equality: merge lhs and rhs in the CC
+    // directly (at level 0) without creating any SAT variable.
+    // Called for equalities that were forced true by the preprocessor;
+    // they never need to be decided by the SAT solver.
+    void register_permanent_equality(NodeId lhs, NodeId rhs);
 
     // ── ExternalPropagator callbacks ─────────────────────────────────────
 
@@ -62,6 +69,9 @@ private:
     // Same as atom_to_lit_ but keyed by the FLAT node ids (as stored in CC equations).
     // Used in build_conflict where the CC returns flat-node equation records.
     std::unordered_map<uint64_t, int>          flat_atom_to_lit_;
+    // Flat-node pairs for equalities that were permanently merged in the CC
+    // without a SAT variable (registered via register_permanent_equality).
+    std::unordered_set<uint64_t>               permanent_flat_eqs_;
 
     // Next SAT variable to allocate (external to a real SAT solver, so we manage here)
     int next_var_ = 1;

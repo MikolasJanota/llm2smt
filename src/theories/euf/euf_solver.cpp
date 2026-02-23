@@ -36,6 +36,14 @@ int EufSolver::register_equality(NodeId lhs, NodeId rhs) {
     return var;
 }
 
+void EufSolver::register_permanent_equality(NodeId lhs, NodeId rhs) {
+    NodeId flat_lhs = flattener_.flatten_and_register(lhs);
+    NodeId flat_rhs = flattener_.flatten_and_register(rhs);
+    uint64_t key = atom_key(flat_lhs, flat_rhs);
+    if (!permanent_flat_eqs_.insert(key).second) return;  // already done
+    cc_.add_equation(flat_lhs, flat_rhs);
+}
+
 // ============================================================================
 // ExternalPropagator callbacks
 // ============================================================================
@@ -111,6 +119,10 @@ void EufSolver::build_conflict(const std::vector<EqId>& explanation, int diseq_l
         // CC stores flat node ids in e.lhs/e.rhs; flat_atom_to_lit_ is keyed
         // by those same flat ids, so the lookup is always correct.
         uint64_t key = atom_key(e.lhs, e.rhs);
+        // Permanent equalities are always true; their negation is vacuously
+        // false in the conflict clause, so dropping them keeps the clause valid
+        // (it becomes a subclause, hence stronger).
+        if (permanent_flat_eqs_.count(key)) continue;
         auto it = flat_atom_to_lit_.find(key);
         assert(it != flat_atom_to_lit_.end() && "equation in explanation has no SAT literal");
         conflict_clause_.push_back(-(it->second));  // negate positive literal

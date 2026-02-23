@@ -12,6 +12,18 @@ function(add_smt2_test name file expected)
     )
 endfunction()
 
+# Like add_smt2_test but runs with --preprocess-passes 1.
+function(add_smt2_test_preproc name file expected)
+    add_test(
+        NAME "smt2/${name}"
+        COMMAND $<TARGET_FILE:llm2smt> --preprocess-passes 1
+                "${CMAKE_CURRENT_SOURCE_DIR}/smt2/${file}"
+    )
+    set_tests_properties("smt2/${name}" PROPERTIES
+        PASS_REGULAR_EXPRESSION "^${expected}"
+    )
+endfunction()
+
 # t01: a=b  ∧  a≠b  →  unsat  (direct contradiction)
 add_smt2_test(unsat_direct          t01_unsat_direct.smt2          unsat)
 # t02: a=b  ∧  b=c  ∧  a≠c   →  unsat  (transitivity)
@@ -78,6 +90,10 @@ add_smt2_test(explain_via_repr        t26_explain_via_representative.smt2  sat)
 add_smt2_test(flatten_uaf             t27_flatten_uaf.smt2                 sat)
 # t28: Regression: Bool-UF result nodes not registered in EUF when only in Bool-eq context (eval_lit path)
 add_smt2_test(bool_uf_result_cong     t28_bool_uf_result_congruence.smt2   unsat)
+# t29: Regression: permanent equality optimization — forced (= a b) merged in CC without SAT variable
+add_smt2_test_preproc(preproc_perm_eq_cong   t29_preproc_perm_eq_congruence.smt2  unsat)
+# t30: Regression: permanent equality with transitivity — two forced equalities imply a third
+add_smt2_test_preproc(preproc_perm_eq_trans  t30_preproc_perm_eq_transitive.smt2  unsat)
 
 # ── Unit test binaries ────────────────────────────────────────────────────────
 add_executable(test_node_manager test_node_manager.cpp)

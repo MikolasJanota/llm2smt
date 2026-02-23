@@ -884,14 +884,22 @@ void Smt2Visitor::flush_pending_fmls()
             if (f->kind == FmlKind::False) ++stats_.preproc_fmls_false_out;
         }
 
-        // Assert every atom that was forced true by unit propagation.
+        // Assert every atom that was forced by unit propagation.
+        // Positive Eq atoms are merged directly in the CC (no SAT variable
+        // needed — the CC carries the merge permanently at level 0, and the
+        // SAT solver never has to decide or undo it).  All other forced atoms
+        // are still asserted as SAT unit clauses.
         for (auto& [atom, positive] : simp.forced_atoms()) {
-            int lit = (atom->kind == FmlKind::Eq)
-                      ? ctx_.euf.register_equality(atom->eq_lhs, atom->eq_rhs)
-                      : ctx_.lit_for_node(atom->pred);
-            int forced = positive ? lit : -lit;
-            std::array<int,1> cl = {forced};
-            ctx_.sat.add_clause(std::span<const int>(cl));
+            if (atom->kind == FmlKind::Eq && positive) {
+                ctx_.euf.register_permanent_equality(atom->eq_lhs, atom->eq_rhs);
+            } else {
+                int lit = (atom->kind == FmlKind::Eq)
+                          ? ctx_.euf.register_equality(atom->eq_lhs, atom->eq_rhs)
+                          : ctx_.lit_for_node(atom->pred);
+                int forced = positive ? lit : -lit;
+                std::array<int,1> cl = {forced};
+                ctx_.sat.add_clause(std::span<const int>(cl));
+            }
         }
     }
 
