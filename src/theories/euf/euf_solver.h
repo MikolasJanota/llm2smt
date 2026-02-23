@@ -48,6 +48,8 @@ public:
 
     bool cb_has_external_clause(bool& is_forgettable) override;
     int  cb_add_external_clause_lit() override;
+    int  cb_propagate() override;
+    int  cb_add_reason_clause_lit(int propagated_lit) override;
 
     // Allocate a fresh SAT variable (for Bool-valued atoms outside EUF).
     int new_var() { return next_var_++; }
@@ -97,6 +99,27 @@ private:
 
     Stats& stats_;
 
+    // ── Theory propagation ────────────────────────────────────────────────
+    // Queue of theory-implied literals awaiting delivery to the SAT solver.
+    std::vector<int>        prop_queue_;
+    size_t                  prop_queue_head_ = 0;
+    std::unordered_set<int> prop_enqueued_;   // guard against duplicates
+
+    // Reason clauses: propagated_lit → [plit, -e1, -e2, …]
+    std::unordered_map<int, std::vector<int>> reason_clauses_;
+    int    reason_serving_lit_ = 0;
+    size_t reason_serving_idx_ = 0;
+
+    // Per-level tracking of positive equality assignments (mirrors diseq tracking).
+    // Used so discover_propagations can skip lits already in CaDiCaL's trail.
+    std::vector<int>         active_eq_lits_;
+    std::vector<size_t>      eq_lit_level_counts_;
+    std::unordered_set<int>  cur_eq_assigned_;
+
+    // Set by notify_backtrack; consumed (and cleared) by cb_propagate.
+    // Triggers a fresh scan of all atoms against the restored CC state.
+    bool needs_rescan_ = false;
+
     // Make a 64-bit key for an unordered pair of NodeIds
     static uint64_t atom_key(NodeId a, NodeId b) {
         if (a > b) std::swap(a, b);
@@ -105,6 +128,16 @@ private:
 
     // Build conflict clause from an explanation
     void build_conflict(const std::vector<EqId>& explanation, int diseq_lit);
+
+    // Scan all registered equality atoms for theory-implied literals and
+    // enqueue them.  skip_lit (>0) is excluded — it was just assigned by
+    // the caller and is already in CaDiCaL's trail.  Pass -1 to skip nothing
+    // (used on the rescan after a backtrack).
+    void discover_propagations(int skip_lit);
+
+    // Build the reason clause [plit, -e1_lit, -e2_lit, …] for a propagated
+    // equality literal.  Permanent equalities (no SAT var) are dropped.
+    std::vector<int> build_reason_clause(int plit, const std::vector<EqId>& expl);
 };
 
 } // namespace llm2smt

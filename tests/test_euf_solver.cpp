@@ -219,3 +219,155 @@ TEST(EufSolver, BacktrackRestoresState) {
         EXPECT_FALSE(f.euf.cc().are_congruent(fa2, fb2));
     }
 }
+
+// ============================================================================
+// Theory propagation tests
+// ============================================================================
+
+// Assigning a=b and b=c should cause a=c to be theory-propagated.
+TEST(EufSolver, TheoryPropagation_Transitivity) {
+    EufFixture f;
+    NodeId a = f.make_const("a");
+    NodeId b = f.make_const("b");
+    NodeId c = f.make_const("c");
+
+    int lit_ab = f.euf.register_equality(a, b);
+    int lit_bc = f.euf.register_equality(b, c);
+    int lit_ac = f.euf.register_equality(a, c);
+
+    f.euf.notify_new_decision_level();
+    f.euf.notify_assignment(lit_ab, false);
+    f.euf.notify_assignment(lit_bc, false);
+
+    // a=c is now theory-implied; cb_propagate must return its literal.
+    int prop = f.euf.cb_propagate();
+    EXPECT_EQ(prop, lit_ac) << "Expected theory propagation of a=c";
+    EXPECT_EQ(f.euf.cb_propagate(), 0) << "Queue should be empty after a=c";
+
+    // Verify reason clause structure.
+    std::vector<int> reason;
+    int rl;
+    while ((rl = f.euf.cb_add_reason_clause_lit(lit_ac)) != 0)
+        reason.push_back(rl);
+
+    ASSERT_FALSE(reason.empty());
+    EXPECT_EQ(reason[0], lit_ac) << "Reason clause must start with propagated lit";
+    EXPECT_GE(reason.size(), 2u) << "Reason clause must contain at least one antecedent";
+    bool has_neg_ab = std::find(reason.begin(), reason.end(), -lit_ab) != reason.end();
+    bool has_neg_bc = std::find(reason.begin(), reason.end(), -lit_bc) != reason.end();
+    EXPECT_TRUE(has_neg_ab || has_neg_bc)
+        << "Reason must contain negation of at least one antecedent equality";
+}
+
+// When a disequality is assigned after the CC already merges the two nodes,
+// a conflict must be detected immediately — without waiting for cb_check_found_model.
+TEST(EufSolver, TheoryPropagation_EarlyDiseqConflict) {
+    EufFixture f;
+    NodeId a = f.make_const("a");
+    NodeId b = f.make_const("b");
+
+    int lit = f.euf.register_equality(a, b);
+
+    f.euf.notify_new_decision_level();
+    f.euf.notify_assignment(lit, false);   // a=b → CC merges a, b
+
+    // No conflict yet; disequality not yet asserted.
+    bool forgettable = false;
+    EXPECT_FALSE(f.euf.cb_has_external_clause(forgettable));
+
+    f.euf.notify_assignment(-lit, false);  // a≠b — but CC already has a≡b
+
+    // Conflict must be visible immediately.
+    EXPECT_TRUE(f.euf.cb_has_external_clause(forgettable))
+        << "Early conflict must be detected on diseq assignment without cb_check_found_model";
+
+    // Collect and validate conflict clause.
+    std::vector<int> clause;
+    int cl;
+    while ((cl = f.euf.cb_add_external_clause_lit()) != 0)
+        clause.push_back(cl);
+
+    EXPECT_FALSE(clause.empty());
+    bool has_pos = std::find(clause.begin(), clause.end(),  lit) != clause.end();
+    bool has_neg = std::find(clause.begin(), clause.end(), -lit) != clause.end();
+    EXPECT_TRUE(has_pos && has_neg)
+        << "Conflict clause must reference both polarities of the equality literal";
+}
+
+// After a backtrack, the propagation queue is cleared but surviving CC
+// implications must be re-discovered on the next cb_propagate call.
+TEST(EufSolver, TheoryPropagation_BacktrackRescan) {
+    EufFixture f;
+    NodeId a = f.make_const("a");
+    NodeId b = f.make_const("b");
+    NodeId c = f.make_const("c");
+
+    int lit_ab = f.euf.register_equality(a, b);
+    int lit_bc = f.euf.register_equality(b, c);
+    int lit_ac = f.euf.register_equality(a, c);
+
+    // First pass at level 1.
+    f.euf.notify_new_decision_level();
+    f.euf.notify_assignment(lit_ab, false);
+    f.euf.notify_assignment(lit_bc, false);
+    int prop1 = f.euf.cb_propagate();
+    EXPECT_EQ(prop1, lit_ac) << "First pass: expected propagation of a=c";
+
+    // Backtrack to level 0 (undoes the two assignments and their CC merges).
+    f.euf.notify_backtrack(0);
+
+    // Second pass at level 1.
+    f.euf.notify_new_decision_level();
+    f.euf.notify_assignment(lit_ab, false);
+    f.euf.notify_assignment(lit_bc, false);
+
+    // After backtrack the queue was cleared; cb_propagate must re-discover a=c.
+    int prop2 = f.euf.cb_propagate();
+    EXPECT_EQ(prop2, lit_ac) << "Second pass: expected re-propagation of a=c after backtrack";
+    EXPECT_EQ(f.euf.cb_propagate(), 0);
+}
+
+// Full round-trip: verify that the reason clause is structurally valid.
+TEST(EufSolver, TheoryPropagation_ReasonClauseValid) {
+    EufFixture f;
+    NodeId a = f.make_const("a");
+    NodeId b = f.make_const("b");
+    NodeId c = f.make_const("c");
+
+    int lit_ab = f.euf.register_equality(a, b);
+    int lit_bc = f.euf.register_equality(b, c);
+    int lit_ac = f.euf.register_equality(a, c);
+
+    f.euf.notify_new_decision_level();
+    f.euf.notify_assignment(lit_ab, false);
+    f.euf.notify_assignment(lit_bc, false);
+
+    int propagated = f.euf.cb_propagate();
+    ASSERT_EQ(propagated, lit_ac);
+
+    std::vector<int> reason;
+    int rl;
+    while ((rl = f.euf.cb_add_reason_clause_lit(lit_ac)) != 0)
+        reason.push_back(rl);
+
+    // First literal must be the propagated literal (positive).
+    ASSERT_FALSE(reason.empty());
+    EXPECT_EQ(reason[0], lit_ac);
+
+    // All remaining literals must be negative (negated antecedents).
+    for (size_t i = 1; i < reason.size(); ++i)
+        EXPECT_LT(reason[i], 0) << "Antecedent at index " << i << " must be negative";
+
+    // The negated antecedents must include both assigning equalities.
+    std::vector<int> negs(reason.begin() + 1, reason.end());
+    EXPECT_TRUE(std::find(negs.begin(), negs.end(), -lit_ab) != negs.end())
+        << "Reason must include -lit_ab";
+    EXPECT_TRUE(std::find(negs.begin(), negs.end(), -lit_bc) != negs.end())
+        << "Reason must include -lit_bc";
+
+    // No duplicates.
+    std::vector<int> sorted = reason;
+    std::sort(sorted.begin(), sorted.end());
+    EXPECT_EQ(std::unique(sorted.begin(), sorted.end()), sorted.end())
+        << "Reason clause must have no duplicate literals";
+}

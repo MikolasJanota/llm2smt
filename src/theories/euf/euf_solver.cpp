@@ -8,6 +8,7 @@ namespace llm2smt {
 EufSolver::EufSolver(NodeManager& nm, Stats& stats)
     : nm_(nm), cc_(), flattener_(nm, cc_), stats_(stats) {
     diseq_level_counts_.push_back(0);
+    eq_lit_level_counts_.push_back(0);
 }
 
 // ============================================================================
@@ -59,12 +60,24 @@ void EufSolver::notify_assignment(int lit, bool /*is_fixed*/) {
     if (lit > 0) {
         // Equality asserted: a = b
         ++stats_.euf_eq_assignments;
+        active_eq_lits_.push_back(lit);
+        eq_lit_level_counts_.back()++;
+        cur_eq_assigned_.insert(lit);
         cc_.add_equation(atom.flat_lhs, atom.flat_rhs);
+        // Discover any equalities now implied by the CC.
+        // Skip `lit` itself — it was just assigned, already in CaDiCaL's trail.
+        if (!has_conflict_)
+            discover_propagations(lit);
     } else {
         // Disequality asserted: a ≠ b
         ++stats_.euf_diseq_assignments;
         active_diseqs_.push_back(Disequality{atom.flat_lhs, atom.flat_rhs, lit});
         diseq_level_counts_.back()++;
+        // Early conflict: the CC may already have merged these nodes.
+        if (!has_conflict_ && cc_.are_congruent(atom.flat_lhs, atom.flat_rhs)) {
+            std::vector<EqId> expl = cc_.explain(atom.flat_lhs, atom.flat_rhs);
+            build_conflict(expl, lit);
+        }
     }
 }
 
@@ -72,22 +85,46 @@ void EufSolver::notify_new_decision_level() {
     cc_.push_level();
     current_level_++;
     diseq_level_counts_.push_back(0);
+    eq_lit_level_counts_.push_back(0);
 }
 
 void EufSolver::notify_backtrack(size_t new_level) {
     cc_.pop_level(new_level);
     current_level_ = new_level;
 
-    // Pop active disequalities introduced after new_level
+    // Pop active disequalities introduced after new_level.
     while (diseq_level_counts_.size() > new_level + 1) {
         size_t count = diseq_level_counts_.back();
         diseq_level_counts_.pop_back();
-        for (size_t i = 0; i < count; ++i) {
+        for (size_t i = 0; i < count; ++i)
             active_diseqs_.pop_back();
+    }
+
+    // Pop positive equality assignments introduced after new_level.
+    while (eq_lit_level_counts_.size() > new_level + 1) {
+        size_t count = eq_lit_level_counts_.back();
+        eq_lit_level_counts_.pop_back();
+        for (size_t i = 0; i < count; ++i) {
+            cur_eq_assigned_.erase(active_eq_lits_.back());
+            active_eq_lits_.pop_back();
         }
     }
 
-    has_conflict_    = false;
+    // Discard the propagation queue.  Reason clauses built on the undone CC
+    // state are stale and must be rebuilt on the next scan.
+    prop_queue_.clear();
+    prop_queue_head_ = 0;
+    prop_enqueued_.clear();
+    reason_clauses_.clear();
+    reason_serving_lit_ = 0;
+    reason_serving_idx_ = 0;
+
+    // Schedule a re-scan: equalities at levels <= new_level are still in
+    // CaDiCaL's trail (notify_assignment won't fire for them again), but
+    // their CC implications must be re-queued for propagation.
+    needs_rescan_ = true;
+
+    has_conflict_     = false;
     conflict_clause_.clear();
     conflict_lit_idx_ = 0;
 }
@@ -147,6 +184,80 @@ int EufSolver::cb_add_external_clause_lit() {
         return 0;  // end of clause
     }
     return conflict_clause_[conflict_lit_idx_++];
+}
+
+// ============================================================================
+// Theory propagation
+// ============================================================================
+
+int EufSolver::cb_propagate() {
+    if (needs_rescan_) {
+        needs_rescan_ = false;
+        discover_propagations(-1);
+    }
+    // Never produce propagations while a conflict is pending; let CaDiCaL
+    // consume the conflict clause first (via cb_has_external_clause).
+    if (has_conflict_) return 0;
+    while (prop_queue_head_ < prop_queue_.size())
+        return prop_queue_[prop_queue_head_++];
+    return 0;
+}
+
+int EufSolver::cb_add_reason_clause_lit(int propagated_lit) {
+    if (propagated_lit != reason_serving_lit_) {
+        reason_serving_lit_ = propagated_lit;
+        reason_serving_idx_ = 0;
+    }
+    auto it = reason_clauses_.find(propagated_lit);
+    if (it == reason_clauses_.end()) return 0;
+    const std::vector<int>& clause = it->second;
+    if (reason_serving_idx_ >= clause.size()) return 0;
+    return clause[reason_serving_idx_++];
+}
+
+void EufSolver::discover_propagations(int skip_lit) {
+    // Step 1: check for conflicts with active disequalities first.
+    // If a conflict exists, report it and skip propagation entirely.
+    for (const Disequality& d : active_diseqs_) {
+        if (cc_.are_congruent(d.flat_lhs, d.flat_rhs)) {
+            std::vector<EqId> expl = cc_.explain(d.flat_lhs, d.flat_rhs);
+            build_conflict(expl, d.orig_lit);
+            return;
+        }
+    }
+
+    // Step 2: scan all registered positive equality atoms for implied ones.
+    for (const auto& [lit, atom] : lit_to_atom_) {
+        if (lit <= 0) continue;                          // only positive literals
+        if (lit == skip_lit) continue;                   // just assigned by caller
+        if (prop_enqueued_.count(lit)) continue;         // already queued this pass
+        if (cur_eq_assigned_.count(lit)) continue;       // already in CaDiCaL's trail
+        if (!cc_.are_congruent(atom.flat_lhs, atom.flat_rhs)) continue;
+
+        std::vector<EqId> expl = cc_.explain(atom.flat_lhs, atom.flat_rhs);
+        reason_clauses_[lit] = build_reason_clause(lit, expl);
+        prop_queue_.push_back(lit);
+        prop_enqueued_.insert(lit);
+    }
+}
+
+std::vector<int> EufSolver::build_reason_clause(int plit,
+                                                  const std::vector<EqId>& expl) {
+    // Reason clause: plit ∨ ¬e1 ∨ ¬e2 ∨ …
+    // If all antecedent equalities hold, the CC derives plit.
+    std::vector<int> clause;
+    clause.push_back(plit);
+    for (EqId eq : expl) {
+        const Equation& e = cc_.get_equation(eq);
+        assert(e.kind == EqKind::Atomic && e.rhs != NULL_NODE);
+        uint64_t key = atom_key(e.lhs, e.rhs);
+        if (permanent_flat_eqs_.count(key)) continue;  // no SAT var; drop
+        auto it = flat_atom_to_lit_.find(key);
+        assert(it != flat_atom_to_lit_.end() &&
+               "explanation equation has no SAT literal");
+        clause.push_back(-(it->second));
+    }
+    return clause;
 }
 
 } // namespace llm2smt
