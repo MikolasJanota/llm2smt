@@ -18,7 +18,8 @@ namespace llm2smt {
 
 class Smt2Visitor : public smt2parser::SMTLIBv2BaseVisitor {
 public:
-    explicit Smt2Visitor(SmtContext& ctx, int preprocess_passes, Stats& stats);
+    explicit Smt2Visitor(SmtContext& ctx, int preprocess_passes, bool flatten,
+                         Stats& stats);
 
     std::any visitStart(smt2parser::SMTLIBv2Parser::StartContext*) override;
     std::any visitCommand(smt2parser::SMTLIBv2Parser::CommandContext*) override;
@@ -88,6 +89,7 @@ private:
 
     // ── Preprocessing ─────────────────────────────────────────────────────
     int     preprocess_passes_ = 0;
+    bool    flatten_           = true;
     Stats&  stats_;
 
     // FmlRef assertions accumulated during parsing (when preprocessing is on).

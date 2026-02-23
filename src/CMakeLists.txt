@@ -12,6 +12,7 @@ target_link_libraries(llm2smt
     euf
     preprocessor
     smt_parser
+    CLI11::CLI11
 )
 target_include_directories(llm2smt PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(llm2smt PRIVATE

@@ -46,6 +46,14 @@ FetchContent_Declare(
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
+# CLI11 — header-only command-line parser
+FetchContent_Declare(
+  cli11
+  GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
+  GIT_TAG        v2.4.2
+)
+FetchContent_MakeAvailable(cli11)
+
 # ── CaDiCaL SAT solver (IPASIR-UP) ──────────────────────────────────────────
 # CaDiCaL uses its own configure/make system; we drive it via ExternalProject.
 # The source is vendored in third_party/cadical/ — no network access required.

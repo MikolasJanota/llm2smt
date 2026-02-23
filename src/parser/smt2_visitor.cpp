@@ -10,8 +10,10 @@
 
 namespace llm2smt {
 
-Smt2Visitor::Smt2Visitor(SmtContext& ctx, int preprocess_passes, Stats& stats)
-    : ctx_(ctx), preprocess_passes_(preprocess_passes), stats_(stats) {}
+Smt2Visitor::Smt2Visitor(SmtContext& ctx, int preprocess_passes, bool flatten,
+                         Stats& stats)
+    : ctx_(ctx), preprocess_passes_(preprocess_passes), flatten_(flatten),
+      stats_(stats) {}
 
 // ============================================================================
 // Helpers
@@ -908,6 +910,7 @@ void Smt2Visitor::flush_pending_fmls()
         stats_.preproc_fmls_in += static_cast<uint64_t>(pending_fmls_.size());
 
         Simplifier simp;
+        simp.set_flatten(flatten_);
         simp.run(pending_fmls_, preprocess_passes_);
 
         stats_.preproc_passes_run    += static_cast<uint64_t>(simp.passes_run());

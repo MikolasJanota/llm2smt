@@ -6,6 +6,8 @@
 #include <string>
 #include <unistd.h>
 
+#include <CLI/CLI.hpp>
+
 #include "antlr4-runtime.h"
 #include "SMTLIBv2Lexer.h"
 #include "SMTLIBv2Parser.h"
@@ -29,38 +31,44 @@ int main(int argc, char** argv) {
     using namespace llm2smt;
     using namespace smt2parser;
 
-    int  preprocess_passes = 0;
-    int  file_arg          = -1;
-    bool print_stats       = false;
-    for (int i = 1; i < argc; ++i) {
-        std::string a = argv[i];
-        if (a == "--preprocess-passes" && i + 1 < argc)
-            preprocess_passes = std::stoi(argv[++i]);
-        else if (a == "--stats")
-            print_stats = true;
-        else if (file_arg < 0 && a[0] != '-')
-            file_arg = i;
-    }
-
-    if (argc >= 2 && std::string(argv[1]) == "--version") {
-        std::cout << "llm2smt " << LLM2SMT_VERSION
-                  << " (" << LLM2SMT_GIT_DESCRIBE << ")\n"
-                  << "Build:  " << LLM2SMT_BUILD_TYPE << "\n"
-                  << "SAT:    " << LLM2SMT_SAT_SOLVER << "\n";
+    CLI::App app{"llm2smt — QF_EUF SMT solver"};
+    app.set_version_flag("--version", []() -> std::string {
+        std::string v;
+        v += "llm2smt " LLM2SMT_VERSION " (" LLM2SMT_GIT_DESCRIBE ")\n";
+        v += "Build:  " LLM2SMT_BUILD_TYPE "\n";
+        v += "SAT:    " LLM2SMT_SAT_SOLVER;
 #ifndef NDEBUG
-        std::cout << "Assertions: enabled\n";
+        v += "\nAssertions: enabled";
 #endif
-        return 0;
-    }
+        return v;
+    }());
+
+    std::string input_file;
+    app.add_option("file", input_file, "SMT2 input file (reads stdin if omitted)")
+       ->check(CLI::ExistingFile);
+
+    int preprocess_passes = 0;
+    app.add_option("--preprocess-passes", preprocess_passes,
+                   "Number of simplifier passes (0 = disabled)")
+       ->check(CLI::NonNegativeNumber);
+
+    bool flatten = true;
+    app.add_flag("!--no-flatten", flatten,
+                 "Disable And/Or flattening in the simplifier");
+
+    bool print_stats = false;
+    app.add_flag("--stats", print_stats, "Print solver statistics to stderr after solving");
+
+    CLI11_PARSE(app, argc, argv);
 
     try {
         std::ifstream file;
         std::unique_ptr<antlr4::ANTLRInputStream> input_stream;
 
-        if (file_arg >= 0) {
-            file.open(argv[file_arg]);
+        if (!input_file.empty()) {
+            file.open(input_file);
             if (!file) {
-                std::cerr << "Error: cannot open file " << argv[file_arg] << "\n";
+                std::cerr << "Error: cannot open file " << input_file << "\n";
                 return 1;
             }
             input_stream = std::make_unique<antlr4::ANTLRInputStream>(file);
@@ -85,7 +93,7 @@ int main(int argc, char** argv) {
         SMTLIBv2Parser parser(&tokens);
 
         auto* tree = parser.start();
-        Smt2Visitor visitor(ctx, preprocess_passes, stats);
+        Smt2Visitor visitor(ctx, preprocess_passes, flatten, stats);
         visitor.visitStart(tree);
 
         if (print_stats) stats.print(std::cerr);
