@@ -10,8 +10,8 @@
 
 namespace llm2smt {
 
-Smt2Visitor::Smt2Visitor(SmtContext& ctx, int preprocess_passes)
-    : ctx_(ctx), preprocess_passes_(preprocess_passes) {}
+Smt2Visitor::Smt2Visitor(SmtContext& ctx, int preprocess_passes, Stats& stats)
+    : ctx_(ctx), preprocess_passes_(preprocess_passes), stats_(stats) {}
 
 // ============================================================================
 // Helpers
@@ -872,8 +872,18 @@ void Smt2Visitor::flush_pending_fmls()
     if (pending_fmls_.empty()) return;
 
     if (preprocess_passes_ > 0) {
+        stats_.preproc_fmls_in += static_cast<uint64_t>(pending_fmls_.size());
+
         Simplifier simp;
         simp.run(pending_fmls_, preprocess_passes_);
+
+        stats_.preproc_passes_run    += static_cast<uint64_t>(simp.passes_run());
+        stats_.preproc_forced_atoms  += static_cast<uint64_t>(simp.forced_atoms().size());
+        for (const auto& f : pending_fmls_) {
+            if (f->kind == FmlKind::True)  ++stats_.preproc_fmls_true_out;
+            if (f->kind == FmlKind::False) ++stats_.preproc_fmls_false_out;
+        }
+
         // Assert every atom that was forced true by unit propagation.
         for (auto& [atom, positive] : simp.forced_atoms()) {
             int lit = (atom->kind == FmlKind::Eq)

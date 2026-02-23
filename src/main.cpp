@@ -11,6 +11,7 @@
 #include "SMTLIBv2Parser.h"
 
 #include "core/node_manager.h"
+#include "core/stats.h"
 #include "theories/euf/euf_solver.h"
 #include "parser/smt_context.h"
 #include "parser/smt2_visitor.h"
@@ -28,12 +29,15 @@ int main(int argc, char** argv) {
     using namespace llm2smt;
     using namespace smt2parser;
 
-    int preprocess_passes = 0;
-    int file_arg = -1;
+    int  preprocess_passes = 0;
+    int  file_arg          = -1;
+    bool print_stats       = false;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--preprocess-passes" && i + 1 < argc)
             preprocess_passes = std::stoi(argv[++i]);
+        else if (a == "--stats")
+            print_stats = true;
         else if (file_arg < 0 && a[0] != '-')
             file_arg = i;
     }
@@ -64,12 +68,13 @@ int main(int argc, char** argv) {
             input_stream = std::make_unique<antlr4::ANTLRInputStream>(std::cin);
         }
 
+        Stats          stats;
         NodeManager    nm;
         // euf must be declared before sat so that sat is destroyed first.
         // CaDiCaL's destructor calls disconnect_external_propagator() which
         // triggers notify_backtrack() callbacks; if euf were already destroyed
         // at that point the callbacks would access freed memory.
-        EufSolver      euf(nm);
+        EufSolver      euf(nm, stats);
         CaDiCaLSolver  sat;
         sat.connect_propagator(euf);
 
@@ -80,8 +85,10 @@ int main(int argc, char** argv) {
         SMTLIBv2Parser parser(&tokens);
 
         auto* tree = parser.start();
-        Smt2Visitor visitor(ctx, preprocess_passes);
+        Smt2Visitor visitor(ctx, preprocess_passes, stats);
         visitor.visitStart(tree);
+
+        if (print_stats) stats.print(std::cerr);
 
         return 0;
 

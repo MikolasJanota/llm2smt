@@ -171,6 +171,60 @@ FmlRef Simplifier::subst_and_fold(FmlRef f, const Fml& atom, bool forced_positiv
 }
 
 // ============================================================================
+// Equality union-find
+// ============================================================================
+
+NodeId Simplifier::uf_find(NodeId n)
+{
+    auto it = parent_.find(n);
+    if (it == parent_.end()) return n;
+    NodeId root = uf_find(it->second);
+    it->second = root;  // path compression
+    return root;
+}
+
+void Simplifier::uf_union(NodeId a, NodeId b)
+{
+    NodeId ra = uf_find(a);
+    NodeId rb = uf_find(b);
+    if (ra != rb) parent_[ra] = rb;
+}
+
+// Rewrite Eq(x,y) → Eq(find(x), find(y)) throughout f.
+// If find(x)==find(y) the atom collapses to True.
+// Compound nodes whose children changed are re-folded.
+FmlRef Simplifier::normalize_eq_fml(FmlRef f)
+{
+    if (f->kind == FmlKind::Eq) {
+        NodeId nx = uf_find(f->eq_lhs);
+        NodeId ny = uf_find(f->eq_rhs);
+        if (nx == ny) return fml_true();
+        // fml_atoms_equal treats Eq as symmetric; keep canonical form unchanged.
+        if (nx == f->eq_lhs && ny == f->eq_rhs) return f;
+        if (nx == f->eq_rhs && ny == f->eq_lhs) return f;
+        return fml_eq(nx, ny);
+    }
+    if (f->children.empty()) return f;  // True, False, Pred — nothing to normalize
+
+    bool any_changed = false;
+    std::vector<FmlRef> new_ch;
+    new_ch.reserve(f->children.size());
+    for (auto& ch : f->children) {
+        FmlRef nc = normalize_eq_fml(ch);
+        if (nc.get() != ch.get()) any_changed = true;
+        new_ch.push_back(std::move(nc));
+    }
+    if (!any_changed) return f;
+    auto new_f = std::make_shared<Fml>();
+    new_f->kind     = f->kind;
+    new_f->eq_lhs   = f->eq_lhs;
+    new_f->eq_rhs   = f->eq_rhs;
+    new_f->pred     = f->pred;
+    new_f->children = std::move(new_ch);
+    return fold(new_f);  // propagate any True/False introduced by normalization
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
 
@@ -220,11 +274,30 @@ bool Simplifier::run_pass(std::vector<FmlRef>& assertions)
         if (already_forced(*atom)) continue;
         forced_.push_back({atom, positive});
 
+        // For positive Eq atoms, record the merge in the union-find so that
+        // Phase 4 can collapse transitive equalities (e.g. Eq(a,c) once
+        // both Eq(a,b) and Eq(b,c) are forced).
+        if (atom->kind == FmlKind::Eq && positive)
+            uf_union(atom->eq_lhs, atom->eq_rhs);
+
         for (auto& f : assertions) {
             if (f->kind == FmlKind::True || f->kind == FmlKind::False) continue;
             FmlRef new_f = subst_and_fold(f, *atom, positive);
             if (new_f.get() != f.get()) {
                 f       = new_f;
+                changed = true;
+            }
+        }
+    }
+
+    // Phase 4: normalize Eq atoms by the equality union-find.
+    // Handles transitivity: if a=b and b=c are forced, Eq(a,c) collapses to True.
+    if (!parent_.empty()) {
+        for (auto& f : assertions) {
+            if (f->kind == FmlKind::True || f->kind == FmlKind::False) continue;
+            FmlRef nf = normalize_eq_fml(f);
+            if (nf.get() != f.get()) {
+                f       = nf;
                 changed = true;
             }
         }
@@ -241,6 +314,7 @@ void Simplifier::run(std::vector<FmlRef>& assertions, int passes)
 {
     for (int i = 0; i < passes; ++i) {
         if (!run_pass(assertions)) break;
+        ++passes_run_;
     }
 }
 

@@ -10,6 +10,7 @@
 #include "SMTLIBv2Parser.h"
 
 #include "core/node.h"
+#include "core/stats.h"
 #include "parser/smt_context.h"
 #include "preprocessor/fml.h"
 
@@ -17,7 +18,7 @@ namespace llm2smt {
 
 class Smt2Visitor : public smt2parser::SMTLIBv2BaseVisitor {
 public:
-    explicit Smt2Visitor(SmtContext& ctx, int preprocess_passes = 0);
+    explicit Smt2Visitor(SmtContext& ctx, int preprocess_passes, Stats& stats);
 
     std::any visitStart(smt2parser::SMTLIBv2Parser::StartContext*) override;
     std::any visitCommand(smt2parser::SMTLIBv2Parser::CommandContext*) override;
@@ -80,7 +81,8 @@ private:
     bool is_bool_sorted(smt2parser::SMTLIBv2Parser::TermContext*) const;
 
     // ── Preprocessing ─────────────────────────────────────────────────────
-    int preprocess_passes_ = 0;
+    int     preprocess_passes_ = 0;
+    Stats&  stats_;
 
     // FmlRef assertions accumulated during parsing (when preprocessing is on).
     std::vector<FmlRef> pending_fmls_;

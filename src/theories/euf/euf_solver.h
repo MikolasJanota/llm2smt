@@ -6,6 +6,7 @@
 
 #include "core/node.h"
 #include "core/node_manager.h"
+#include "core/stats.h"
 #include "sat/ipasir_up.h"
 #include "theories/euf/cc.h"
 #include "theories/euf/flattener.h"
@@ -24,7 +25,7 @@ struct EqAtom {
 
 class EufSolver : public ExternalPropagator {
 public:
-    explicit EufSolver(NodeManager& nm);
+    explicit EufSolver(NodeManager& nm, Stats& stats);
 
     // Register an equality atom lhs=rhs.
     // Returns a positive SAT variable (literal). Idempotent.
@@ -83,6 +84,8 @@ private:
     size_t current_level_ = 0;
     // Per-level counts of active diseqs (for backtracking)
     std::vector<size_t> diseq_level_counts_;
+
+    Stats& stats_;
 
     // Make a 64-bit key for an unordered pair of NodeIds
     static uint64_t atom_key(NodeId a, NodeId b) {

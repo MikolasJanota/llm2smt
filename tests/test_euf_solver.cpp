@@ -8,7 +8,8 @@ using namespace llm2smt;
 // Helper: create NM + EufSolver
 struct EufFixture {
     NodeManager nm;
-    EufSolver   euf{nm};
+    Stats       stats;
+    EufSolver   euf{nm, stats};
 
     NodeId make_const(const std::string& name) {
         SymbolId sym = nm.declare_symbol(name, 0);

@@ -383,6 +383,36 @@ TEST(Run, StopsWhenStable)
     EXPECT_EQ(assertions[0]->kind, FmlKind::Or);
 }
 
+TEST(Run, TransitiveEqCollapses)
+{
+    Simplifier s;
+    // [Eq(a,b), Eq(b,c), And(Eq(a,c), Pred(d))]
+    // ab and bc are top-level units → forced.  UF has find(a)=find(c)=some root.
+    // Eq(a,c) is NOT a top-level unit (it's inside And), so it survives Phase 3
+    // substitution.  Phase 4 (UF normalization) collapses Eq(a,c) → True, and
+    // fold(And(True, Pred(d))) = Pred(d).
+    auto ab = EQ(NA, NB);
+    auto bc = EQ(NB, NC);
+    auto pd = PR(ND);
+    std::vector<FmlRef> assertions = {ab, bc, AND(EQ(NA, NC), pd)};
+    s.run_pass(assertions);
+    EXPECT_GE(s.forced_atoms().size(), 2u);
+    // And(Eq(a,c), Pred(d)) → And(True, Pred(d)) → Pred(d)
+    EXPECT_EQ(assertions[2].get(), pd.get());
+}
+
+TEST(Run, TransitiveEqSymmetric)
+{
+    Simplifier s;
+    // Eq(b,a) and Eq(b,c) forced.  Eq(a,c) inside compound → collapses to True.
+    auto ba = EQ(NB, NA);
+    auto bc = EQ(NB, NC);
+    auto pd = PR(ND);
+    std::vector<FmlRef> assertions = {ba, bc, AND(EQ(NA, NC), pd)};
+    s.run_pass(assertions);
+    EXPECT_EQ(assertions[2].get(), pd.get());
+}
+
 TEST(Run, ZeroPassesIsNoOp)
 {
     Simplifier s;

@@ -5,8 +5,8 @@
 
 namespace llm2smt {
 
-EufSolver::EufSolver(NodeManager& nm)
-    : nm_(nm), cc_(), flattener_(nm, cc_) {
+EufSolver::EufSolver(NodeManager& nm, Stats& stats)
+    : nm_(nm), cc_(), flattener_(nm, cc_), stats_(stats) {
     diseq_level_counts_.push_back(0);
 }
 
@@ -46,12 +46,15 @@ void EufSolver::notify_assignment(int lit, bool /*is_fixed*/) {
     if (it == lit_to_atom_.end()) return;
 
     const EqAtom& atom = it->second;
+    ++stats_.euf_assignments;
 
     if (lit > 0) {
         // Equality asserted: a = b
+        ++stats_.euf_eq_assignments;
         cc_.add_equation(atom.flat_lhs, atom.flat_rhs);
     } else {
         // Disequality asserted: a ≠ b
+        ++stats_.euf_diseq_assignments;
         active_diseqs_.push_back(Disequality{atom.flat_lhs, atom.flat_rhs, lit});
         diseq_level_counts_.back()++;
     }
@@ -82,6 +85,7 @@ void EufSolver::notify_backtrack(size_t new_level) {
 }
 
 bool EufSolver::cb_check_found_model(const std::vector<int>& /*model*/) {
+    ++stats_.euf_check_model_calls;
     for (const Disequality& d : active_diseqs_) {
         if (cc_.are_congruent(d.flat_lhs, d.flat_rhs)) {
             std::vector<EqId> expl = cc_.explain(d.flat_lhs, d.flat_rhs);
@@ -111,6 +115,8 @@ void EufSolver::build_conflict(const std::vector<EqId>& explanation, int diseq_l
         assert(it != flat_atom_to_lit_.end() && "equation in explanation has no SAT literal");
         conflict_clause_.push_back(-(it->second));  // negate positive literal
     }
+    ++stats_.euf_conflicts;
+    stats_.euf_conflict_lits_total += conflict_clause_.size();
     has_conflict_     = true;
     conflict_lit_idx_ = 0;
 }
