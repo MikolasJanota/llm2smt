@@ -97,6 +97,7 @@ bool Smt2Visitor::is_bool_sorted(
         "not", "and", "or", "=>", "xor", "true", "false", "=", "distinct"
     };
     if (bool_ops.count(name)) return true;
+    if (defined_bool_fns_.count(name)) return true;
     auto fit = ctx_.declared_fns.find(name);
     return fit != ctx_.declared_fns.end() && ctx_.bool_fns.count(fit->second);
 }
@@ -130,6 +131,15 @@ std::any Smt2Visitor::visitCommand(
         std::string name  = symbol_name(ctx->symbol(0));
         uint32_t    arity = std::stoul(ctx->numeral()->getText());
         ctx_.declared_sorts[name] = arity;
+    }
+    else if (ctx->cmd_defineFun()) {
+        auto* fdef = ctx->function_def();
+        std::string name = fdef->symbol()->getText();
+        if (!fdef->sorted_var().empty())
+            throw std::runtime_error("define-fun with parameters not supported: " + name);
+        std::string ret_sort = fdef->sort()->getText();
+        defined_fns_[name] = fdef->term();
+        if (ret_sort == "Bool") defined_bool_fns_.insert(name);
     }
     else if (ctx->cmd_declareFun()) {
         std::string name  = symbol_name(ctx->symbol(0));
@@ -357,6 +367,16 @@ void Smt2Visitor::assert_formula(
             }
             return;
         }
+
+        // 0-arity define-fun macro: expand body inline so the top-level
+        // structure (and, or, …) is handled structurally, not via Tseitin.
+        if (ctx->term().empty()) {
+            auto dit = defined_fns_.find(op);
+            if (dit != defined_fns_.end() && defined_bool_fns_.count(op)) {
+                assert_formula(dit->second);
+                return;
+            }
+        }
     }
 
     // Everything else: collect literals and add as a clause (handles or, atoms, not).
@@ -570,6 +590,12 @@ int Smt2Visitor::eval_lit(
             link_bool_term_to_euf(n);
             return ctx_.lit_for_node(n);
         }
+        // 0-arity define-fun macro expansion
+        {
+            auto dit = defined_fns_.find(op);
+            if (dit != defined_fns_.end() && defined_bool_fns_.count(op))
+                return eval_lit(dit->second);
+        }
         throw std::runtime_error("Unknown Bool variable: " + op);
     }
 
@@ -712,6 +738,13 @@ FmlRef Smt2Visitor::build_fml(
                 fn_applications_[fit->second].push_back({args, n});
             return fml_pred(n);
         }
+    }
+
+    // 0-arity define-fun macro expansion
+    if (ctx->term().empty()) {
+        auto dit = defined_fns_.find(op);
+        if (dit != defined_fns_.end() && defined_bool_fns_.count(op))
+            return build_fml(dit->second);
     }
 
     throw std::runtime_error("Unsupported formula in build_fml: " + op);

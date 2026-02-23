@@ -32,6 +32,12 @@ private:
                                         smt2parser::SMTLIBv2Parser::TermContext*>;
     std::vector<LetFrame> let_env_;
 
+    // define-fun macros (0-arity only): name → body TermContext*.
+    // Expanded inline wherever the name is referenced.
+    std::unordered_map<std::string, smt2parser::SMTLIBv2Parser::TermContext*>
+        defined_fns_;
+    std::unordered_set<std::string> defined_bool_fns_; // Bool-returning ones
+
     // Tseitin proxy cache: TermContext* → SAT literal
     // Used when a sub-formula (e.g. or/and) is used in literal position.
     std::unordered_map<smt2parser::SMTLIBv2Parser::TermContext*, int> tseitin_cache_;

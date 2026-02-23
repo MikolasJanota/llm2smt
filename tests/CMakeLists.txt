@@ -94,6 +94,10 @@ add_smt2_test(bool_uf_result_cong     t28_bool_uf_result_congruence.smt2   unsat
 add_smt2_test_preproc(preproc_perm_eq_cong   t29_preproc_perm_eq_congruence.smt2  unsat)
 # t30: Regression: permanent equality with transitivity — two forced equalities imply a third
 add_smt2_test_preproc(preproc_perm_eq_trans  t30_preproc_perm_eq_transitive.smt2  unsat)
+# t31: Regression: define-fun with quoted (space-containing) name used as assertion
+add_smt2_test(define_fun_quoted      t31_define_fun_quoted.smt2       unsat)
+# t32: Regression: define-fun with conjunction body — must be expanded structurally
+add_smt2_test(define_fun_and_body    t32_define_fun_and_body.smt2     unsat)
 
 # ── Unit test binaries ────────────────────────────────────────────────────────
 add_executable(test_node_manager test_node_manager.cpp)
