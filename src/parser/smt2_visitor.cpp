@@ -228,6 +228,29 @@ NodeId Smt2Visitor::visit_term(
     if (name == "true")  return get_bool_term_node(true);
     if (name == "false") return get_bool_term_node(false);
 
+    // Compound Bool-sorted expression (built-in operator: and, or, not, =, ite
+    // with Bool branches, etc.) used in a U-sorted position, e.g. (wrap (and p q)).
+    // Only fires for names not in declared_fns (built-in operators have no UF entry).
+    // Introduce a fresh EUF constant bridged to __bool_true/__bool_false so the EUF
+    // theory observes the SAT-level truth value of the compound formula.
+    if (ctx_.declared_fns.find(name) == ctx_.declared_fns.end() && is_bool_sorted(ctx)) {
+        auto cit = ite_node_cache_.find(ctx);
+        if (cit != ite_node_cache_.end()) return cit->second;
+        int lit = eval_lit(ctx);
+        SymbolId fresh = ctx_.nm.declare_symbol(
+            "__bool_fml_" + std::to_string(ite_counter_++), 0);
+        NodeId node = ctx_.nm.mk_const(fresh);
+        ite_node_cache_[ctx] = node;
+        NodeId true_n  = get_bool_term_node(true);
+        NodeId false_n = get_bool_term_node(false);
+        int eq_true  = ctx_.euf.register_equality(node, true_n);
+        int eq_false = ctx_.euf.register_equality(node, false_n);
+        { std::array<int,2> cl = {-lit, eq_true};  ctx_.sat.add_clause(std::span<const int>(cl)); }
+        { std::array<int,2> cl = { lit, eq_false}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        { std::array<int,2> cl = {-eq_true, -eq_false}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        return node;
+    }
+
     // U-sorted (ite cond t-then t-else): introduce a fresh EUF constant r with
     // conditional equalities  cond→r=then  and  ¬cond→r=else.
     if (name == "ite" && ctx->term().size() == 3) {

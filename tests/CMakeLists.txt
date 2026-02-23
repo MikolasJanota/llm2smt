@@ -98,6 +98,10 @@ add_smt2_test_preproc(preproc_perm_eq_trans  t30_preproc_perm_eq_transitive.smt2
 add_smt2_test(define_fun_quoted      t31_define_fun_quoted.smt2       unsat)
 # t32: Regression: define-fun with conjunction body — must be expanded structurally
 add_smt2_test(define_fun_and_body    t32_define_fun_and_body.smt2     unsat)
+# t33: Regression: compound Bool expression (and/or/not) as UF argument — unsat
+add_smt2_test(bool_compound_uf_arg_unsat  t33_bool_compound_uf_arg_unsat.smt2  unsat)
+# t34: Regression: compound Bool expression (or) as UF argument — sat case
+add_smt2_test(bool_compound_uf_arg_sat   t34_bool_compound_uf_arg_sat.smt2    sat)
 
 # ── Unit test binaries ────────────────────────────────────────────────────────
 add_executable(test_node_manager test_node_manager.cpp)
