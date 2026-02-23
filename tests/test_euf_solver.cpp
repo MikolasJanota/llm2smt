@@ -255,8 +255,8 @@ TEST(EufSolver, TheoryPropagation_Transitivity) {
     EXPECT_GE(reason.size(), 2u) << "Reason clause must contain at least one antecedent";
     bool has_neg_ab = std::find(reason.begin(), reason.end(), -lit_ab) != reason.end();
     bool has_neg_bc = std::find(reason.begin(), reason.end(), -lit_bc) != reason.end();
-    EXPECT_TRUE(has_neg_ab || has_neg_bc)
-        << "Reason must contain negation of at least one antecedent equality";
+    EXPECT_TRUE(has_neg_ab && has_neg_bc)
+        << "Reason must contain negations of both antecedent equalities";
 }
 
 // When a disequality is assigned after the CC already merges the two nodes,

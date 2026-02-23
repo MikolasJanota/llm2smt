@@ -66,8 +66,12 @@ void EufSolver::notify_assignment(int lit, bool /*is_fixed*/) {
         cc_.add_equation(atom.flat_lhs, atom.flat_rhs);
         // Discover any equalities now implied by the CC.
         // Skip `lit` itself — it was just assigned, already in CaDiCaL's trail.
-        if (!has_conflict_)
+        // Also suppress the needs_rescan_ flag: we are about to scan right now,
+        // so the lazy rescan in cb_propagate would be a redundant O(n) pass.
+        if (!has_conflict_) {
+            needs_rescan_ = false;
             discover_propagations(lit);
+        }
     } else {
         // Disequality asserted: a ≠ b
         ++stats_.euf_diseq_assignments;
@@ -110,14 +114,18 @@ void EufSolver::notify_backtrack(size_t new_level) {
         }
     }
 
-    // Discard the propagation queue.  Reason clauses built on the undone CC
-    // state are stale and must be rebuilt on the next scan.
+    // Discard the propagation queue.  Any not-yet-served items were computed
+    // against the now-undone CC state and must be recomputed.
+    // reason_clauses_ is intentionally kept: theory-propagated literals that
+    // survive the backtrack (at levels <= new_level) remain in CaDiCaL's trail
+    // and CaDiCaL may call cb_add_reason_clause_lit for them during future
+    // conflict analysis.  Stale entries for literals that were undone are
+    // harmless — CaDiCaL will not ask for their reasons after backtracking
+    // past them, and the entries are overwritten if the literals are
+    // re-propagated.
     prop_queue_.clear();
     prop_queue_head_ = 0;
     prop_enqueued_.clear();
-    reason_clauses_.clear();
-    reason_serving_lit_ = 0;
-    reason_serving_idx_ = 0;
 
     // Schedule a re-scan: equalities at levels <= new_level are still in
     // CaDiCaL's trail (notify_assignment won't fire for them again), but
@@ -198,7 +206,7 @@ int EufSolver::cb_propagate() {
     // Never produce propagations while a conflict is pending; let CaDiCaL
     // consume the conflict clause first (via cb_has_external_clause).
     if (has_conflict_) return 0;
-    while (prop_queue_head_ < prop_queue_.size())
+    if (prop_queue_head_ < prop_queue_.size())
         return prop_queue_[prop_queue_head_++];
     return 0;
 }
