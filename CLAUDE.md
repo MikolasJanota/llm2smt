@@ -48,6 +48,25 @@ All 60+ unit tests must pass before committing.
 **After each bug fix (with passing tests), commit immediately.**
 Do not batch multiple bug fixes into one commit.
 
+## Versioning
+
+The version is defined in **one place**: `CMakeLists.txt` line 2 (`project(llm2smt VERSION X.Y.Z ...)`).
+Every release commit must have a matching annotated git tag `vX.Y.Z`.
+
+**Bump + tag workflow:**
+```bash
+# 1. Edit CMakeLists.txt: increment patch (or minor/major as appropriate)
+# 2. Commit the version bump
+git commit -m "Bump to vX.Y.Z"
+# 3. Create an annotated tag on that commit
+git tag -a vX.Y.Z -m "vX.Y.Z"
+```
+
+Rules:
+- The tag name must exactly match the `VERSION` field: `v` + the three-part number.
+- Never create the tag before the bump commit; always tag the bump commit itself.
+- Patch bumps (`Z`) for bug fixes; minor bumps (`Y`) for new features; major (`X`) for breaking changes.
+
 ## Architecture notes
 
 - The CC module (`src/theories/euf/cc.cpp`) must only store **flat** nodes (constants or single-level applications).

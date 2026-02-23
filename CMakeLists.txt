@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(llm2smt VERSION 0.2.1 LANGUAGES CXX)
+project(llm2smt VERSION 0.2.2 LANGUAGES CXX)
 
 # Capture git description (tag + commit hash) at configure time.
 # Result: "v0.2.0" on a tagged commit, "v0.2.0-N-gHASH[-dirty]" otherwise.
