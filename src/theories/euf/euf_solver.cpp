@@ -126,6 +126,13 @@ void EufSolver::notify_backtrack(size_t new_level) {
     prop_queue_.clear();
     prop_queue_head_ = 0;
     prop_enqueued_.clear();
+    // Reset the reason-clause cursor.  After backtrack the same literal may be
+    // re-propagated (new reason stored in reason_clauses_[lit]).  If the cursor
+    // were left at a non-zero position from a previous iteration of the same
+    // literal's reason clause, cb_add_reason_clause_lit would resume mid-clause,
+    // skipping the mandatory propagated-literal at index 0.
+    reason_serving_lit_ = 0;
+    reason_serving_idx_ = 0;
 
     // Schedule a re-scan: equalities at levels <= new_level are still in
     // CaDiCaL's trail (notify_assignment won't fire for them again), but
