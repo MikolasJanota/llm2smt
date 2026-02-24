@@ -64,14 +64,10 @@ void EufSolver::notify_assignment(int lit, bool /*is_fixed*/) {
         eq_lit_level_counts_.back()++;
         cur_eq_assigned_.insert(lit);
         cc_.add_equation(atom.flat_lhs, atom.flat_rhs);
-        // Discover any equalities now implied by the CC.
-        // Skip `lit` itself — it was just assigned, already in CaDiCaL's trail.
-        // Also suppress the needs_rescan_ flag: we are about to scan right now,
-        // so the lazy rescan in cb_propagate would be a redundant O(n) pass.
-        if (!has_conflict_) {
-            needs_rescan_ = false;
-            discover_propagations(lit);
-        }
+        // Defer the O(|atoms|) propagation scan to cb_propagate, which is called
+        // once per BCP batch rather than once per individual assignment.
+        if (!has_conflict_)
+            needs_rescan_ = true;
     } else {
         // Disequality asserted: a ≠ b
         ++stats_.euf_diseq_assignments;
@@ -208,7 +204,7 @@ int EufSolver::cb_add_external_clause_lit() {
 int EufSolver::cb_propagate() {
     if (needs_rescan_) {
         needs_rescan_ = false;
-        discover_propagations(-1);
+        discover_propagations();
     }
     // Never produce propagations while a conflict is pending; let CaDiCaL
     // consume the conflict clause first (via cb_has_external_clause).
@@ -230,7 +226,7 @@ int EufSolver::cb_add_reason_clause_lit(int propagated_lit) {
     return clause[reason_serving_idx_++];
 }
 
-void EufSolver::discover_propagations(int skip_lit) {
+void EufSolver::discover_propagations() {
     // Step 1: check for conflicts with active disequalities first.
     // If a conflict exists, report it and skip propagation entirely.
     for (const Disequality& d : active_diseqs_) {
@@ -244,7 +240,6 @@ void EufSolver::discover_propagations(int skip_lit) {
     // Step 2: scan all registered positive equality atoms for implied ones.
     for (const auto& [lit, atom] : lit_to_atom_) {
         if (lit <= 0) continue;                          // only positive literals
-        if (lit == skip_lit) continue;                   // just assigned by caller
         if (prop_enqueued_.count(lit)) continue;         // already queued this pass
         if (cur_eq_assigned_.count(lit)) continue;       // already in CaDiCaL's trail
         if (!cc_.are_congruent(atom.flat_lhs, atom.flat_rhs)) continue;

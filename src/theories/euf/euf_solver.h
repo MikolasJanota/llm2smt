@@ -116,8 +116,10 @@ private:
     std::vector<size_t>      eq_lit_level_counts_;
     std::unordered_set<int>  cur_eq_assigned_;
 
-    // Set by notify_backtrack; consumed (and cleared) by cb_propagate.
-    // Triggers a fresh scan of all atoms against the restored CC state.
+    // Set whenever the CC state changes (new equality merged or after backtrack).
+    // Consumed (and cleared) by cb_propagate.  Defers the O(|atoms|) scan out of
+    // notify_assignment (called per assignment) into cb_propagate (called once
+    // after a full BCP batch), avoiding O(K × N) quadratic work.
     bool needs_rescan_ = false;
 
     // Make a 64-bit key for an unordered pair of NodeIds
@@ -130,10 +132,8 @@ private:
     void build_conflict(const std::vector<EqId>& explanation, int diseq_lit);
 
     // Scan all registered equality atoms for theory-implied literals and
-    // enqueue them.  skip_lit (>0) is excluded — it was just assigned by
-    // the caller and is already in CaDiCaL's trail.  Pass -1 to skip nothing
-    // (used on the rescan after a backtrack).
-    void discover_propagations(int skip_lit);
+    // enqueue them.  Already-assigned literals are excluded via cur_eq_assigned_.
+    void discover_propagations();
 
     // Build the reason clause [plit, -e1_lit, -e2_lit, …] for a propagated
     // equality literal.  Permanent equalities (no SAT var) are dropped.
