@@ -169,9 +169,13 @@ private:
     std::vector<uint32_t> lca_stamp_;
     uint32_t              lca_gen_ = 0;
 
+    // Reusable worklist for explain(); avoids a heap allocation per call.
+    // Processed as a stack (back-to-front) since explain order is irrelevant.
+    std::vector<std::pair<NodeId,NodeId>> explain_worklist_;
+
     // Walk from a up to lca, collecting justifications into result.
     void explain_path(NodeId a, NodeId lca, PathUF& uf,
-                      std::deque<std::pair<NodeId,NodeId>>& pending_pairs,
+                      std::vector<std::pair<NodeId,NodeId>>& pending_pairs,
                       std::vector<EqId>& result);
 };
 

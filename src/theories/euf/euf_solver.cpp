@@ -28,9 +28,8 @@ int EufSolver::register_equality(NodeId lhs, NodeId rhs) {
 
     int var = next_var_++;
     EqAtom atom{lhs, rhs, flat_lhs, flat_rhs};
-    lit_to_atom_[var]  = atom;
-    lit_to_atom_[-var] = atom;
-    atom_to_lit_[key]  = var;
+    lit_to_atom_[var] = atom;   // positive literal only; notify_assignment uses |lit|
+    atom_to_lit_[key] = var;
     // Also index by flat node ids so build_conflict can find equations whose
     // lhs/rhs are the flat representatives (not the original NodeIds).
     flat_atom_to_lit_[atom_key(flat_lhs, flat_rhs)] = var;
@@ -167,12 +166,14 @@ void EufSolver::build_conflict(const std::vector<EqId>& explanation, int diseq_l
         // CC stores flat node ids in e.lhs/e.rhs; flat_atom_to_lit_ is keyed
         // by those same flat ids, so the lookup is always correct.
         uint64_t key = atom_key(e.lhs, e.rhs);
-        // Permanent equalities are always true; their negation is vacuously
-        // false in the conflict clause, so dropping them keeps the clause valid
-        // (it becomes a subclause, hence stronger).
-        if (permanent_flat_eqs_.count(key)) continue;
+        // Permanent equalities have no SAT literal; skipping them keeps the
+        // clause valid (it becomes a subclause, hence stronger).
+        // Non-permanent equations must always be in flat_atom_to_lit_.
         auto it = flat_atom_to_lit_.find(key);
-        assert(it != flat_atom_to_lit_.end() && "equation in explanation has no SAT literal");
+        if (it == flat_atom_to_lit_.end()) {
+            assert(permanent_flat_eqs_.count(key) && "equation in explanation has no SAT literal");
+            continue;
+        }
         conflict_clause_.push_back(-(it->second));  // negate positive literal
     }
     ++stats_.euf_conflicts;
@@ -237,9 +238,9 @@ void EufSolver::discover_propagations() {
         }
     }
 
-    // Step 2: scan all registered positive equality atoms for implied ones.
+    // Step 2: scan all registered equality atoms for implied ones.
+    // lit_to_atom_ stores only positive literals, so no sign filter needed.
     for (const auto& [lit, atom] : lit_to_atom_) {
-        if (lit <= 0) continue;                          // only positive literals
         if (prop_enqueued_.count(lit)) continue;         // already queued this pass
         if (cur_eq_assigned_.count(lit)) continue;       // already in CaDiCaL's trail
         if (!cc_.are_congruent(atom.flat_lhs, atom.flat_rhs)) continue;
@@ -261,10 +262,11 @@ std::vector<int> EufSolver::build_reason_clause(int plit,
         const Equation& e = cc_.get_equation(eq);
         assert(e.kind == EqKind::Atomic && e.rhs != NULL_NODE);
         uint64_t key = atom_key(e.lhs, e.rhs);
-        if (permanent_flat_eqs_.count(key)) continue;  // no SAT var; drop
         auto it = flat_atom_to_lit_.find(key);
-        assert(it != flat_atom_to_lit_.end() &&
-               "explanation equation has no SAT literal");
+        if (it == flat_atom_to_lit_.end()) {
+            assert(permanent_flat_eqs_.count(key) && "explanation equation has no SAT literal");
+            continue;  // permanent equality: no SAT var, drop from reason clause
+        }
         clause.push_back(-(it->second));
     }
     return clause;

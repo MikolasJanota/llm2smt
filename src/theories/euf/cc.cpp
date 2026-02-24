@@ -359,7 +359,7 @@ NodeId CC::find_lca(NodeId a, NodeId b) {
 
 void CC::explain_path(NodeId a, NodeId lca,
                        PathUF& uf,
-                       std::deque<std::pair<NodeId,NodeId>>& pending_pairs,
+                       std::vector<std::pair<NodeId,NodeId>>& pending_pairs,
                        std::vector<EqId>& result) {
     NodeId cur = a;
     // Use node identity for termination (not PathUF reps, which change under unite).
@@ -413,20 +413,26 @@ std::vector<EqId> CC::explain(NodeId a, NodeId b) {
     // allocation when proof_parent_ hasn't grown since the last call.
     explain_uf_.init(proof_parent_.size());
 
-    std::deque<std::pair<NodeId,NodeId>> worklist;
-    worklist.push_back({a, b});
+    // Reuse the persistent worklist vector; processed as a stack (LIFO)
+    // since explain order is irrelevant for correctness.
+    explain_worklist_.clear();
+    explain_worklist_.push_back({a, b});
 
-    while (!worklist.empty()) {
-        auto [x, y] = worklist.front();
-        worklist.pop_front();
+    while (!explain_worklist_.empty()) {
+        auto [x, y] = explain_worklist_.back();
+        explain_worklist_.pop_back();
 
-        if (explain_uf_.find(x) == explain_uf_.find(y)) continue;
+        // Cache both find() results: PathUF::find does path-compression,
+        // calling it twice on the same node doubles the traversal work.
+        NodeId rx = explain_uf_.find(x);
+        NodeId ry = explain_uf_.find(y);
+        if (rx == ry) continue;
 
         NodeId lca = find_lca(x, y);
         assert(lca != NULL_NODE && "no LCA found — nodes must be congruent");
 
-        explain_path(x, lca, explain_uf_, worklist, result);
-        explain_path(y, lca, explain_uf_, worklist, result);
+        explain_path(x, lca, explain_uf_, explain_worklist_, result);
+        explain_path(y, lca, explain_uf_, explain_worklist_, result);
     }
 
     // Deduplicate
