@@ -403,7 +403,7 @@ def main() -> int:
                              "the reference solver")
     args = parser.parse_args()
 
-    our_cmd = [args.our_solver]
+    our_cmd = args.our_solver.split()
     ref_cmd = args.ref.split()
 
     save_dir = Path(args.save_fails)
@@ -419,7 +419,7 @@ def main() -> int:
 
     print(f"Fuzzing {args.count} random QF_UF problems "
           f"(seed={args.seed}, timeout={args.timeout}s, jobs={args.jobs})")
-    print(f"  Our solver  : {args.our_solver}")
+    print(f"  Our solver  : {' '.join(our_cmd)}")
     print(f"  Reference   : {args.ref}")
     print(f"  Vocabulary  : consts={args.n_consts}  bool_const={args.n_bool_const}  "
           f"unary={args.n_unary}  binary={args.n_binary}  ternary={args.n_ternary}  "
