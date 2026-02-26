@@ -102,6 +102,10 @@ add_smt2_test(define_fun_and_body    t32_define_fun_and_body.smt2     unsat)
 add_smt2_test(bool_compound_uf_arg_unsat  t33_bool_compound_uf_arg_unsat.smt2  unsat)
 # t34: Regression: compound Bool expression (or) as UF argument — sat case
 add_smt2_test(bool_compound_uf_arg_sat   t34_bool_compound_uf_arg_sat.smt2    sat)
+# t35: Regression: distinct with 3 args in formula position (eval_lit Tseitin path) — unsat
+add_smt2_test(distinct_nary_formula_unsat  t35_distinct_nary_formula_unsat.smt2  unsat)
+# t36: Regression: distinct with 3 args in formula position — sat case
+add_smt2_test(distinct_nary_formula_sat   t36_distinct_nary_formula_sat.smt2    sat)
 
 # ── Unit test binaries ────────────────────────────────────────────────────────
 add_executable(test_node_manager test_node_manager.cpp)

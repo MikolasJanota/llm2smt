@@ -496,6 +496,33 @@ int Smt2Visitor::eval_lit(
         return -ctx_.euf.register_equality(lhs, rhs);
     }
 
+    // (distinct t1 t2 ... tn) n≥3 in literal position — Tseitin proxy
+    // x ↔ ∧_{i<j} (t_i ≠ t_j)
+    if (op == "distinct") {
+        auto cit = tseitin_cache_.find(ctx);
+        if (cit != tseitin_cache_.end()) return cit->second;
+        int x = ctx_.euf.new_var();
+        tseitin_cache_[ctx] = x;
+        std::vector<NodeId> nodes;
+        for (auto* t : ctx->term()) nodes.push_back(visit_term(t));
+        std::vector<int> eq_lits;
+        for (size_t i = 0; i < nodes.size(); ++i) {
+            for (size_t j = i + 1; j < nodes.size(); ++j) {
+                int eq = ctx_.euf.register_equality(nodes[i], nodes[j]);
+                eq_lits.push_back(eq);
+                // x → (t_i ≠ t_j): ¬x ∨ ¬eq
+                std::array<int,2> cl = {-x, -eq};
+                ctx_.sat.add_clause(std::span<const int>(cl));
+            }
+        }
+        // (∀ pairs equal) → ¬x (contrapositive: x → ∃ pair distinct)
+        // Combined as: x ∨ eq₁ ∨ eq₂ ∨ … (any equality falsifies x)
+        std::vector<int> bwd = {x};
+        for (int eq : eq_lits) bwd.push_back(eq);
+        ctx_.sat.add_clause(std::span<const int>(bwd));
+        return x;
+    }
+
     // (or A B ...) in literal position — Tseitin proxy x ↔ (A ∨ B ∨ ...)
     if (op == "or") {
         auto cit = tseitin_cache_.find(ctx);
