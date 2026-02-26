@@ -29,6 +29,7 @@ The reference is invoked as: timeout <T> <ref-cmd...> <file>
 """
 
 import argparse
+import concurrent.futures
 import os
 import random
 import subprocess
@@ -295,6 +296,53 @@ def run_solver(cmd: list[str], filepath: str, timeout: float) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Per-test worker (called from thread pool)
+# ---------------------------------------------------------------------------
+
+def _run_one_test(i: int, seed: int, args, our_cmd: list, ref_cmd: list,
+                  save_dir: Path) -> dict:
+    """
+    Generate and run a single fuzz test.  Safe to call from multiple threads
+    (each invocation uses its own RNG and temp file).
+
+    Returns a dict with keys:
+      i, our, ref, smt2, model_ok (bool), model_reason (str)
+    """
+    rng = random.Random(seed)
+    smt2 = gen_qf_uf(
+        rng,
+        n_consts      = args.n_consts,
+        n_bool_const  = args.n_bool_const,
+        n_unary       = args.n_unary,
+        n_binary      = args.n_binary,
+        n_ternary     = args.n_ternary,
+        n_bool_arg    = args.n_bool_arg,
+        n_predicate   = args.n_predicate,
+        n_assert      = args.n_assert,
+        compound_prob = args.compound_prob,
+        diseq_prob    = args.diseq_prob,
+    )
+
+    fd, tmpfile = tempfile.mkstemp(suffix=".smt2")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(smt2)
+        our = run_solver(our_cmd, tmpfile, args.timeout)
+        ref = run_solver(ref_cmd, tmpfile, args.timeout)
+    finally:
+        os.unlink(tmpfile)
+
+    model_ok     = True
+    model_reason = ""
+    if our == "sat" and args.check_model:
+        model_ok, model_reason = check_model_correct(smt2, our_cmd, ref_cmd,
+                                                     args.timeout)
+
+    return dict(i=i, our=our, ref=ref, smt2=smt2,
+                model_ok=model_ok, model_reason=model_reason)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -315,6 +363,9 @@ def main() -> int:
                         help="Per-solver timeout in seconds")
     parser.add_argument("--save-fails", default="fuzz_fails",
                         help="Directory to save failing .smt2 files")
+    parser.add_argument("-j", "--jobs", type=int, default=1,
+                        metavar="N",
+                        help="Number of parallel worker threads")
 
     # ── Vocabulary size ───────────────────────────────────────────────────
     voc = parser.add_argument_group("vocabulary")
@@ -358,12 +409,16 @@ def main() -> int:
     save_dir = Path(args.save_fails)
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    rng = random.Random(args.seed)
+    # Pre-derive one seed per test from the master RNG so results are
+    # deterministic for the same --seed regardless of --jobs.
+    master_rng = random.Random(args.seed)
+    test_seeds = [master_rng.randint(0, 2**32) for _ in range(args.count)]
 
     n_ok = n_mismatch = n_our_err = n_ref_err = n_model_fail = 0
+    n_done = 0
 
     print(f"Fuzzing {args.count} random QF_UF problems "
-          f"(seed={args.seed}, timeout={args.timeout}s)")
+          f"(seed={args.seed}, timeout={args.timeout}s, jobs={args.jobs})")
     print(f"  Our solver  : {args.our_solver}")
     print(f"  Reference   : {args.ref}")
     print(f"  Vocabulary  : consts={args.n_consts}  bool_const={args.n_bool_const}  "
@@ -375,69 +430,59 @@ def main() -> int:
     print()
 
     try:
-        for i in range(args.count):
-            smt2 = gen_qf_uf(
-                rng,
-                n_consts      = args.n_consts,
-                n_bool_const  = args.n_bool_const,
-                n_unary       = args.n_unary,
-                n_binary      = args.n_binary,
-                n_ternary     = args.n_ternary,
-                n_bool_arg    = args.n_bool_arg,
-                n_predicate   = args.n_predicate,
-                n_assert      = args.n_assert,
-                compound_prob = args.compound_prob,
-                diseq_prob    = args.diseq_prob,
-            )
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=args.jobs) as executor:
+            futures = {
+                executor.submit(_run_one_test, i, test_seeds[i], args,
+                                our_cmd, ref_cmd, save_dir): i
+                for i in range(args.count)
+            }
 
-            fd, tmpfile = tempfile.mkstemp(suffix=".smt2")
-            try:
-                with os.fdopen(fd, "w") as fh:
-                    fh.write(smt2)
-                our = run_solver(our_cmd, tmpfile, args.timeout)
-                ref = run_solver(ref_cmd, tmpfile, args.timeout)
-            finally:
-                os.unlink(tmpfile)
+            for fut in concurrent.futures.as_completed(futures):
+                res = fut.result()
+                i   = res["i"]
+                our = res["our"]
+                ref = res["ref"]
+                smt2 = res["smt2"]
+                n_done += 1
+                stop = False
 
-            stop = False
-
-            if our == "error":
-                n_our_err += 1
-                fail_path = save_dir / f"error_{i:06d}.smt2"
-                fail_path.write_text(smt2)
-                print(f"[ERROR #{n_our_err}] test {i}: our solver returned error  "
-                      f"saved → {fail_path}")
-                stop = args.stop_on_first_fail
-            elif ref in ("error", "timeout"):
-                n_ref_err += 1
-            elif our != ref:
-                n_mismatch += 1
-                fail_path = save_dir / f"fail_{i:06d}_ours_{our}_ref_{ref}.smt2"
-                fail_path.write_text(smt2)
-                print(f"[MISMATCH #{n_mismatch}] test {i}: "
-                      f"ours={our} ref={ref}  saved → {fail_path}")
-                stop = args.stop_on_first_fail
-            else:
-                n_ok += 1
-                if args.check_model and our == "sat":
-                    ok, reason = check_model_correct(smt2, our_cmd, ref_cmd,
-                                                     args.timeout)
-                    if not ok:
+                if our == "error":
+                    n_our_err += 1
+                    fail_path = save_dir / f"error_{i:06d}.smt2"
+                    fail_path.write_text(smt2)
+                    print(f"[ERROR #{n_our_err}] test {i}: our solver returned error  "
+                          f"saved → {fail_path}")
+                    stop = args.stop_on_first_fail
+                elif ref in ("error", "timeout"):
+                    n_ref_err += 1
+                elif our != ref:
+                    n_mismatch += 1
+                    fail_path = save_dir / f"fail_{i:06d}_ours_{our}_ref_{ref}.smt2"
+                    fail_path.write_text(smt2)
+                    print(f"[MISMATCH #{n_mismatch}] test {i}: "
+                          f"ours={our} ref={ref}  saved → {fail_path}")
+                    stop = args.stop_on_first_fail
+                else:
+                    n_ok += 1
+                    if not res["model_ok"]:
                         n_model_fail += 1
                         fail_path = save_dir / f"model_fail_{i:06d}.smt2"
                         fail_path.write_text(smt2)
                         print(f"[MODEL FAIL #{n_model_fail}] test {i}: "
-                              f"{reason}  saved → {fail_path}")
+                              f"{res['model_reason']}  saved → {fail_path}")
                         stop = args.stop_on_first_fail
 
-            if (i + 1) % 100 == 0:
-                print(f"  {i+1:5d}/{args.count}  "
-                      f"ok={n_ok}  mismatch={n_mismatch}  "
-                      f"model_fail={n_model_fail}  "
-                      f"our_err={n_our_err}  ref_err={n_ref_err}")
+                if n_done % 100 == 0:
+                    print(f"  {n_done:5d}/{args.count}  "
+                          f"ok={n_ok}  mismatch={n_mismatch}  "
+                          f"model_fail={n_model_fail}  "
+                          f"our_err={n_our_err}  ref_err={n_ref_err}")
 
-            if stop:
-                break
+                if stop:
+                    for f in futures:
+                        f.cancel()
+                    break
 
     except KeyboardInterrupt:
         print("\nInterrupted.")
