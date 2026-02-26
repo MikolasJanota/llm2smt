@@ -17,6 +17,7 @@
 #include "theories/euf/euf_solver.h"
 #include "parser/smt_context.h"
 #include "parser/smt2_visitor.h"
+#include "preprocessor/preproc_options.h"
 #include "sat/cadical_solver.h"
 
 static void sigterm_handler(int) {
@@ -47,14 +48,14 @@ int main(int argc, char** argv) {
     app.add_option("file", input_file, "SMT2 input file (reads stdin if omitted)")
        ->check(CLI::ExistingFile);
 
-    int preprocess_passes = 0;
-    app.add_option("--preprocess-passes", preprocess_passes,
+    PreprocOptions opts;
+    app.add_option("--preprocess-passes", opts.passes,
                    "Number of simplifier passes (0 = disabled)")
        ->check(CLI::NonNegativeNumber);
-
-    bool flatten = true;
-    app.add_flag("!--no-flatten", flatten,
+    app.add_flag("!--no-flatten", opts.flatten,
                  "Disable And/Or flattening in the simplifier");
+    app.add_flag("--selectors", opts.selectors,
+                 "Use selector variable technique for Or-with-compound-disjuncts encoding");
 
     bool print_stats = false;
     app.add_flag("--stats", print_stats, "Print solver statistics to stderr after solving");
@@ -93,7 +94,7 @@ int main(int argc, char** argv) {
         SMTLIBv2Parser parser(&tokens);
 
         auto* tree = parser.start();
-        Smt2Visitor visitor(ctx, preprocess_passes, flatten, stats);
+        Smt2Visitor visitor(ctx, opts, stats);
         visitor.visitStart(tree);
 
         if (print_stats) stats.print(std::cerr);

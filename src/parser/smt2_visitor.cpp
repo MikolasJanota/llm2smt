@@ -6,14 +6,13 @@
 #include <unordered_set>
 #include <vector>
 
+#include "preprocessor/nnf.h"
 #include "preprocessor/simplifier.h"
 
 namespace llm2smt {
 
-Smt2Visitor::Smt2Visitor(SmtContext& ctx, int preprocess_passes, bool flatten,
-                         Stats& stats)
-    : ctx_(ctx), preprocess_passes_(preprocess_passes), flatten_(flatten),
-      stats_(stats) {}
+Smt2Visitor::Smt2Visitor(SmtContext& ctx, const PreprocOptions& opts, Stats& stats)
+    : ctx_(ctx), opts_(opts), stats_(stats) {}
 
 // ============================================================================
 // Helpers
@@ -168,7 +167,7 @@ std::any Smt2Visitor::visitCommand(
     else if (ctx->cmd_assert()) {
         auto terms = ctx->term();
         if (terms.empty()) throw std::runtime_error("assert: missing term");
-        if (preprocess_passes_ > 0)
+        if (opts_.passes > 0)
             pending_fmls_.push_back(build_fml(terms[0]));
         else
             assert_formula(terms[0]);
@@ -959,12 +958,19 @@ void Smt2Visitor::flush_pending_fmls()
 {
     if (pending_fmls_.empty()) return;
 
-    if (preprocess_passes_ > 0) {
+    // Step A: NNF (prerequisite for selectors; also useful for simplifier).
+    if (opts_.passes > 0 || opts_.selectors) {
+        for (auto& f : pending_fmls_)
+            f = to_nnf(f);
+    }
+
+    // Step B: Simplifier (unchanged, only if passes > 0).
+    if (opts_.passes > 0) {
         stats_.preproc_fmls_in += static_cast<uint64_t>(pending_fmls_.size());
 
         Simplifier simp;
-        simp.set_flatten(flatten_);
-        simp.run(pending_fmls_, preprocess_passes_);
+        simp.set_flatten(opts_.flatten);
+        simp.run(pending_fmls_, opts_.passes);
 
         stats_.preproc_passes_run    += static_cast<uint64_t>(simp.passes_run());
         stats_.preproc_forced_atoms  += static_cast<uint64_t>(simp.forced_atoms().size());
@@ -992,10 +998,131 @@ void Smt2Visitor::flush_pending_fmls()
         }
     }
 
-    for (auto& f : pending_fmls_)
-        encode_fml(f);
+    // Step C: Encode.
+    if (opts_.selectors) {
+        for (auto& f : pending_fmls_)
+            encode_conditioned(f, {});
+    } else {
+        for (auto& f : pending_fmls_)
+            encode_fml(f);
+    }
     pending_fmls_.clear();
     fml_lit_cache_.clear();
+}
+
+// ============================================================================
+// Selector variable encoding
+// ============================================================================
+
+bool Smt2Visitor::is_literal_fml(FmlRef f) const
+{
+    switch (f->kind) {
+    case FmlKind::True:
+    case FmlKind::False:
+    case FmlKind::Eq:
+    case FmlKind::Pred:
+        return true;
+    case FmlKind::Not: {
+        FmlKind ck = f->children[0]->kind;
+        return ck == FmlKind::Eq || ck == FmlKind::Pred;
+    }
+    default:
+        return false;
+    }
+}
+
+void Smt2Visitor::encode_conditioned(FmlRef f, const std::vector<int>& conds)
+{
+    auto add_cond_clause = [&](std::vector<int> extra) {
+        std::vector<int> cl;
+        cl.reserve(conds.size() + extra.size());
+        for (int c : conds) cl.push_back(-c);
+        for (int l : extra) cl.push_back(l);
+        ctx_.sat.add_clause(std::span<const int>(cl));
+    };
+
+    switch (f->kind) {
+    case FmlKind::True:
+        return;
+    case FmlKind::False:
+        add_cond_clause({});
+        return;
+    case FmlKind::Eq: {
+        int l = ctx_.euf.register_equality(f->eq_lhs, f->eq_rhs);
+        add_cond_clause({l});
+        return;
+    }
+    case FmlKind::Pred: {
+        int l = ctx_.lit_for_node(f->pred);
+        add_cond_clause({l});
+        return;
+    }
+    case FmlKind::Not: {
+        int l = lit_of_fml(f->children[0]);
+        add_cond_clause({-l});
+        return;
+    }
+    case FmlKind::And:
+        for (auto& ch : f->children)
+            encode_conditioned(ch, conds);
+        return;
+    case FmlKind::Or:
+        encode_or_conditioned(f->children, conds);
+        return;
+    default:
+        // Fallback: get a literal for f and add a conditioned clause.
+        add_cond_clause({lit_of_fml(f)});
+        return;
+    }
+}
+
+void Smt2Visitor::encode_or_conditioned(const std::vector<FmlRef>& children,
+                                         std::vector<int> conds)
+{
+    if (children.empty()) {
+        // False disjunction.
+        std::vector<int> cl;
+        cl.reserve(conds.size());
+        for (int c : conds) cl.push_back(-c);
+        ctx_.sat.add_clause(std::span<const int>(cl));
+        return;
+    }
+    if (children.size() == 1) {
+        encode_conditioned(children[0], conds);
+        return;
+    }
+
+    // Check if all children are literals.
+    bool all_lits = true;
+    for (auto& ch : children) {
+        if (!is_literal_fml(ch)) { all_lits = false; break; }
+    }
+
+    if (all_lits) {
+        std::vector<int> cl;
+        cl.reserve(conds.size() + children.size());
+        for (int c : conds) cl.push_back(-c);
+        for (auto& ch : children) cl.push_back(lit_of_fml(ch));
+        ctx_.sat.add_clause(std::span<const int>(cl));
+        return;
+    }
+
+    // Binary split: introduce a fresh selector variable s.
+    size_t mid = children.size() / 2;
+    std::vector<FmlRef> left(children.begin(), children.begin() + mid);
+    std::vector<FmlRef> right(children.begin() + mid, children.end());
+
+    int s = ctx_.euf.new_var();
+
+    // If s=false (i.e. -s in clause), left half must hold.
+    std::vector<int> conds_left = conds;
+    conds_left.push_back(s);       // clause will negate: add -s
+    encode_or_conditioned(left, conds_left);
+
+    // If s=true (i.e. +s in clause), right half must hold.
+    std::vector<int> conds_right = conds;
+    conds_right.push_back(-s);     // clause will negate: add +s
+    encode_or_conditioned(right, conds_right);
 }
 
 // ============================================================================

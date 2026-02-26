@@ -13,13 +13,13 @@
 #include "core/stats.h"
 #include "parser/smt_context.h"
 #include "preprocessor/fml.h"
+#include "preprocessor/preproc_options.h"
 
 namespace llm2smt {
 
 class Smt2Visitor : public smt2parser::SMTLIBv2BaseVisitor {
 public:
-    explicit Smt2Visitor(SmtContext& ctx, int preprocess_passes, bool flatten,
-                         Stats& stats);
+    explicit Smt2Visitor(SmtContext& ctx, const PreprocOptions& opts, Stats& stats);
 
     std::any visitStart(smt2parser::SMTLIBv2Parser::StartContext*) override;
     std::any visitCommand(smt2parser::SMTLIBv2Parser::CommandContext*) override;
@@ -88,9 +88,8 @@ private:
     bool is_bool_sorted(smt2parser::SMTLIBv2Parser::TermContext*) const;
 
     // ── Preprocessing ─────────────────────────────────────────────────────
-    int     preprocess_passes_ = 0;
-    bool    flatten_           = true;
-    Stats&  stats_;
+    PreprocOptions opts_;
+    Stats&         stats_;
 
     // FmlRef assertions accumulated during parsing (when preprocessing is on).
     std::vector<FmlRef> pending_fmls_;
@@ -110,6 +109,17 @@ private:
 
     // Encode all pending_fmls_ (run simplifier first if preprocess_passes_ > 0).
     void flush_pending_fmls();
+
+    // True iff f is an atom or negated atom (usable as a SAT literal directly).
+    bool is_literal_fml(FmlRef f) const;
+
+    // Assert: if all literals in conds are true, then f must hold.
+    void encode_conditioned(FmlRef f, const std::vector<int>& conds);
+
+    // Assert: if all conds hold, at least one child in children must hold.
+    // Introduces a fresh selector variable to binary-split when a child is non-literal.
+    void encode_or_conditioned(const std::vector<FmlRef>& children,
+                                std::vector<int> conds);
 
     // ── Model extraction ─────────────────────────────────────────────────
     SolveResult last_result_ = SolveResult::UNKNOWN;
