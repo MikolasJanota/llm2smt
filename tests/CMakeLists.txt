@@ -106,6 +106,9 @@ add_smt2_test(bool_compound_uf_arg_sat   t34_bool_compound_uf_arg_sat.smt2    sa
 add_smt2_test(distinct_nary_formula_unsat  t35_distinct_nary_formula_unsat.smt2  unsat)
 # t36: Regression: distinct with 3 args in formula position — sat case
 add_smt2_test(distinct_nary_formula_sat   t36_distinct_nary_formula_sat.smt2    sat)
+# t37: Regression: get-model for Bool-arg UF with compound Bool argument — model was wrong
+#      (b0 (= c1 c2)) with c1=c2 gave b0(true)=b0(false) because __bool_fml_N not in node_to_lit
+add_smt2_test(bool_compound_arg_model  t37_bool_compound_arg_model.smt2  sat)
 
 # ── Unit test binaries ────────────────────────────────────────────────────────
 add_executable(test_node_manager test_node_manager.cpp)

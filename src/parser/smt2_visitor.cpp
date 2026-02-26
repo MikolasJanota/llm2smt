@@ -241,6 +241,9 @@ NodeId Smt2Visitor::visit_term(
             "__bool_fml_" + std::to_string(ite_counter_++), 0);
         NodeId node = ctx_.nm.mk_const(fresh);
         ite_node_cache_[ctx] = node;
+        // Record lit so bool_for() can read the truth value for get-model output
+        // (the node is U-sorted but node_to_lit is NodeId→int with no sort restriction).
+        ctx_.node_to_lit[node] = lit;
         NodeId true_n  = get_bool_term_node(true);
         NodeId false_n = get_bool_term_node(false);
         int eq_true  = ctx_.euf.register_equality(node, true_n);
