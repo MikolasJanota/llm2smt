@@ -1021,11 +1021,15 @@ void Smt2Visitor::print_model()
     };
 
     // Return "true" or "false" for a Bool-valued node using the SAT model.
+    // sat.val(lit) returns lit when lit is satisfied, -lit when falsified.
+    // We check v == stored (not v > 0) to handle negative literals correctly:
+    // node_to_lit may store negative literals (e.g. -eq from binary distinct).
     auto bool_for = [&](NodeId node) -> std::string {
         auto it = ctx_.node_to_lit.find(node);
         if (it == ctx_.node_to_lit.end()) return "false";
-        int v = ctx_.sat.val(it->second);
-        return (v > 0) ? "true" : "false";
+        int stored = it->second;
+        int v = ctx_.sat.val(stored);
+        return (v == stored) ? "true" : "false";
     };
 
     // Format an abstract value with sort annotation.

@@ -109,6 +109,9 @@ add_smt2_test(distinct_nary_formula_sat   t36_distinct_nary_formula_sat.smt2    
 # t37: Regression: get-model for Bool-arg UF with compound Bool argument — model was wrong
 #      (b0 (= c1 c2)) with c1=c2 gave b0(true)=b0(false) because __bool_fml_N not in node_to_lit
 add_smt2_test(bool_compound_arg_model  t37_bool_compound_arg_model.smt2  sat)
+# t38: Regression: get-model with (distinct ...) as Bool UF arg — bool_for polarity wrong
+#      binary distinct returns -eq (negative lit); bool_for checked v>0 instead of v==stored
+add_smt2_test(bool_distinct_arg_model  t38_bool_distinct_arg_model.smt2  sat)
 
 # ── Unit test binaries ────────────────────────────────────────────────────────
 add_executable(test_node_manager test_node_manager.cpp)
