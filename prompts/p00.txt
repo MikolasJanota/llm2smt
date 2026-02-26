@@ -1,0 +1,4 @@
+make sure that the binary ends up in the bin folder, make sure that compile_commands.json is created by cmake.
+add command line options, so that --version works, which should print version of the solver, the type of build and the SAT solver used.
+If the solver is compiled in debug, this should be printed.
+

@@ -1,0 +1,8 @@
+In some cases it might be useful too introduce extra bool variables before
+solving. E.g. (A and B) or (C and D) can be represented by introducing a
+"selector" s, so that s => A and B, \lnot s => C and D. This works if there
+is no negation above. So also introduce a negation normal form (nnf) module,
+which will be run as the first thing. the selector variables technique is
+controlled by an option. Introduce selectors in the case of disjunctions over
+non-literal disjuncts. ask questions if anything unclear. Test
+thoroughly.

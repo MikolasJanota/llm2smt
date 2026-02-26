@@ -1,0 +1,2 @@
+implement the get-model command, see get-model-spec.pdf for specification
+create a sctipt to test a model, i.e. given an SMT2 file, run our solver, if SAT it add the model into the file and calls (another) solver to check it's SAT

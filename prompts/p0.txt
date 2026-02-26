@@ -1,0 +1,10 @@
+Start a project that implements an SMT solver. We need a parser, a SAT solver,
+for which we will use the ipasir-up interface hash-consing of formulas. Then
+theory specific things, like arbitrary precision library. Setup build by
+using cmake. The solver will be written in c++20. Use antlr for parsing (the
+grammar is here https://github.com/julianthome/smtlibv2-grammar).
+Set up the directory structure also testing. cmake should download the necessary dependencies as needed.
+
+We will start with QF-EUF theory solver implementing the congruence closure as
+described in Fast congruence closure and extensions by Robert Nieuwenhuis and
+Albert Oliveras (the pdf is in the folder for conveniance).

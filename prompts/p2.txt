@@ -1,0 +1,13 @@
+Feedback:
+The preprocessor is doing real work (2155 forced atoms, 2173 assertions simplified to True, 26% fewer EUF callbacks). But there are two problems:                          
+
+  1. 56% more model checks / theory lemmas — CaDiCaL is exploring more candidate models. The forced atoms may be removing unit-propagation chains that CaDiCaL would have    
+  naturally exploited to prune the search.                                                                                                                                   
+  2. 77% larger average conflict clause — the forced atoms are merged into the CC at startup, growing the union-find trees. When explain() finds the path for a disequality  
+  conflict, those larger trees produce longer paths → weaker lemmas → CaDiCaL learns less from each conflict.                                                                
+                                                                                                                                                                             
+  Both point to the same root cause: the preprocessing forces a large number of equalities into the CC before search, restructuring the union-find in a way that makes       
+  per-conflict explanations more expensive and CaDiCaL's learned clauses weaker.
+
+
+given your analysis, couldn't the preprocessor also collapse equal constants so that the CC doesn't have to deal with equalities that are there after preprocessing?
