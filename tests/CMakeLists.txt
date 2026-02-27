@@ -144,6 +144,9 @@ add_smt2_test_nnf(nnf_xor_preproc_unsat      t40_nnf_xor_preproc_unsat.smt2     
 add_smt2_test_selectors(selector_or_sat           t41_selector_or_sat.smt2            sat)
 # t42: Selector UNSAT — both alternatives require b=c, which is negated
 add_smt2_test_selectors(selector_or_unsat         t42_selector_or_unsat.smt2          unsat)
+# t43: Regression: crash in CaDiCaL analyze() when register_equality is called before
+#      register_permanent_equality for the same pair — tautological conflict/reason clause
+add_smt2_test_preproc(preproc_perm_eq_preregistered_crash  t43_preproc_perm_eq_preregistered_crash.smt2  sat)
 
 # ── Unit test binaries ────────────────────────────────────────────────────────
 add_executable(test_node_manager test_node_manager.cpp)

@@ -168,10 +168,15 @@ void EufSolver::build_conflict(const std::vector<EqId>& explanation, int diseq_l
         uint64_t key = atom_key(e.lhs, e.rhs);
         // Permanent equalities have no SAT literal; skipping them keeps the
         // clause valid (it becomes a subclause, hence stronger).
-        // Non-permanent equations must always be in flat_atom_to_lit_.
+        // An equality may be BOTH in flat_atom_to_lit_ (pre-registered before
+        // preprocessing decided it was permanent) AND in permanent_flat_eqs_.
+        // In that case treat it as permanent: including the pre-registered SAT
+        // literal would produce a tautological clause {V, ¬V} that crashes
+        // CaDiCaL's analyze().
+        if (permanent_flat_eqs_.count(key)) continue;
         auto it = flat_atom_to_lit_.find(key);
         if (it == flat_atom_to_lit_.end()) {
-            assert(permanent_flat_eqs_.count(key) && "equation in explanation has no SAT literal");
+            assert(false && "equation in explanation has no SAT literal and is not permanent");
             continue;
         }
         conflict_clause_.push_back(-(it->second));  // negate positive literal
@@ -262,10 +267,15 @@ std::vector<int> EufSolver::build_reason_clause(int plit,
         const Equation& e = cc_.get_equation(eq);
         assert(e.kind == EqKind::Atomic && e.rhs != NULL_NODE);
         uint64_t key = atom_key(e.lhs, e.rhs);
+        // Same dual-registration guard as build_conflict: an equality may be
+        // both in flat_atom_to_lit_ and permanent_flat_eqs_ if register_equality
+        // was called before the simplifier decided it was permanent.  Treat as
+        // permanent so the reason clause stays non-tautological.
+        if (permanent_flat_eqs_.count(key)) continue;
         auto it = flat_atom_to_lit_.find(key);
         if (it == flat_atom_to_lit_.end()) {
-            assert(permanent_flat_eqs_.count(key) && "explanation equation has no SAT literal");
-            continue;  // permanent equality: no SAT var, drop from reason clause
+            assert(false && "explanation equation has no SAT literal and is not permanent");
+            continue;
         }
         clause.push_back(-(it->second));
     }
