@@ -24,6 +24,9 @@ public:
     std::any visitStart(smt2parser::SMTLIBv2Parser::StartContext*) override;
     std::any visitCommand(smt2parser::SMTLIBv2Parser::CommandContext*) override;
 
+    SolveResult                last_result() const { return last_result_; }
+    const std::vector<FmlRef>& proof_fmls()  const { return proof_fmls_; }
+
 private:
     SmtContext& ctx_;
 

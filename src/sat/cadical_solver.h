@@ -3,6 +3,7 @@
 #include "sat/ipasir_up.h"
 
 #include <memory>
+#include <vector>
 
 // Forward-declare CaDiCaL types so we don't pull cadical.hpp into every
 // translation unit that includes this header.
@@ -29,6 +30,12 @@ public:
     SolveResult solve() override;
     int         val(int lit) const override;
 
+    // Clause recording (for proof minimization).
+    // Must be enabled before add_clause is called; recorded clauses are then
+    // available via recorded_clauses() after solve().
+    void enable_clause_recording();
+    const std::vector<std::vector<int>>& recorded_clauses() const;
+
 private:
     struct Adapter;  // defined in cadical_solver.cpp
 
@@ -38,6 +45,9 @@ private:
     int next_var_      = 0;   // highest variable allocated via new_var()
     int max_clause_var_ = 0;  // highest |lit| seen in add_clause()
     int last_observed_ = 0;   // highest variable registered with add_observed_var()
+
+    bool                          recording_        = false;
+    std::vector<std::vector<int>> recorded_clauses_;
 };
 
 } // namespace llm2smt

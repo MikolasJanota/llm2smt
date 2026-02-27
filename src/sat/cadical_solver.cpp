@@ -74,6 +74,15 @@ void CaDiCaLSolver::add_clause(std::span<const int> lits) {
     }
     for (int lit : lits) solver_->add(lit);
     solver_->add(0);  // terminate clause
+
+    if (recording_)
+        recorded_clauses_.emplace_back(lits.begin(), lits.end());
+}
+
+void CaDiCaLSolver::enable_clause_recording() { recording_ = true; }
+
+const std::vector<std::vector<int>>& CaDiCaLSolver::recorded_clauses() const {
+    return recorded_clauses_;
 }
 
 void CaDiCaLSolver::connect_propagator(ExternalPropagator& prop) {

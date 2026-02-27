@@ -1,6 +1,5 @@
 #include "parser/smt2_visitor.h"
 
-#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -9,7 +8,6 @@
 
 #include "preprocessor/nnf.h"
 #include "preprocessor/simplifier.h"
-#include "proof/lean_emitter.h"
 
 namespace llm2smt {
 
@@ -175,20 +173,12 @@ std::any Smt2Visitor::visitCommand(
             assert_formula(terms[0]);
     }
     else if (ctx->cmd_checkSat()) {
-        if (!opts_.proof_file.empty())
-            ctx_.euf.enable_proof_recording();
         flush_pending_fmls();
         last_result_ = ctx_.sat.solve();
         switch (last_result_) {
         case SolveResult::SAT:     std::cout << "sat\n";     break;
         case SolveResult::UNSAT:   std::cout << "unsat\n";   break;
         case SolveResult::UNKNOWN: std::cout << "unknown\n"; break;
-        }
-        if (last_result_ == SolveResult::UNSAT && !opts_.proof_file.empty()) {
-            std::ofstream proof_out(opts_.proof_file);
-            LeanEmitter emitter;
-            emitter.emit(proof_out, ctx_, proof_fmls_, ctx_.euf.proof_conflicts(),
-                         opts_.lean_project);
         }
     }
     else if (ctx->cmd_getModel()) {

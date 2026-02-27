@@ -12,6 +12,7 @@ struct PreprocOptions {
     bool        selectors  = false;  // selector variable technique (requires nnf = true)
     std::string proof_file;          // empty = no proof output
     std::string lean_project;        // if non-empty, emit "import lean_project.ConvertProp"
+    bool        proof_minimize = false; // remove unnecessary theory lemmas via UNSAT core
 };
 
 } // namespace llm2smt

@@ -18,6 +18,8 @@
 #include "parser/smt_context.h"
 #include "parser/smt2_visitor.h"
 #include "preprocessor/preproc_options.h"
+#include "proof/lean_emitter.h"
+#include "proof/proof_minimizer.h"
 #include "sat/cadical_solver.h"
 
 static void sigterm_handler(int) {
@@ -59,10 +61,13 @@ int main(int argc, char** argv) {
     app.add_flag("--selectors", opts.selectors,
                  "Use selector variable technique for Or-with-compound-disjuncts encoding")
        ->needs(nnf_flag);
-    app.add_option("--proof", opts.proof_file,
+    auto* proof_flag = app.add_option("--proof", opts.proof_file,
                    "Write Lean 4 UNSAT proof to this file (QF_UF only)");
     app.add_option("--lean-project", opts.lean_project,
                    "Lean project name; emits 'import NAME.ConvertProp' (requires --proof)");
+    app.add_flag("--proof-minimize", opts.proof_minimize,
+                 "Remove unnecessary theory lemmas via UNSAT-core extraction (requires --proof)")
+       ->needs(proof_flag);
 
     bool print_stats = false;
     app.add_flag("--stats", print_stats, "Print solver statistics to stderr after solving");
@@ -94,6 +99,13 @@ int main(int argc, char** argv) {
         CaDiCaLSolver  sat;
         sat.connect_propagator(euf);
 
+        const bool proof_mode = !opts.proof_file.empty();
+        if (proof_mode) {
+            euf.enable_proof_recording();
+            if (opts.proof_minimize)
+                sat.enable_clause_recording();
+        }
+
         SmtContext ctx(nm, euf, sat);
 
         SMTLIBv2Lexer  lexer(input_stream.get());
@@ -103,6 +115,19 @@ int main(int argc, char** argv) {
         auto* tree = parser.start();
         Smt2Visitor visitor(ctx, opts, stats);
         visitor.visitStart(tree);
+
+        if (proof_mode && visitor.last_result() == SolveResult::UNSAT) {
+            const auto& conflicts_raw = euf.proof_conflicts();
+            std::vector<std::vector<int>> conflicts;
+            if (opts.proof_minimize)
+                conflicts = minimize_proof_conflicts(sat.recorded_clauses(), conflicts_raw);
+            else
+                conflicts = conflicts_raw;
+
+            std::ofstream proof_out(opts.proof_file);
+            LeanEmitter emitter;
+            emitter.emit(proof_out, ctx, visitor.proof_fmls(), conflicts, opts.lean_project);
+        }
 
         if (print_stats) stats.print(std::cerr);
 
