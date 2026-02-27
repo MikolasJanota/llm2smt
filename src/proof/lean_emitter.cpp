@@ -14,7 +14,10 @@ namespace llm2smt {
 // ============================================================================
 
 // Convert an SMT-LIB symbol name to a valid Lean identifier.
-// Strips |...| quoting; replaces non-alphanumeric/underscore chars with '_'.
+// Strips |...| quoting.  If the resulting string is a valid plain Lean
+// identifier (letter/underscore start, then alphanumeric/underscore), it is
+// returned as-is.  Otherwise it is wrapped in «» so that any characters
+// (hyphens, '?', spaces, etc.) are accepted by Lean.
 static std::string lean_ident(const std::string& name)
 {
     std::string inner = name;
@@ -22,16 +25,24 @@ static std::string lean_ident(const std::string& name)
     if (inner.size() >= 2 && inner.front() == '|' && inner.back() == '|')
         inner = inner.substr(1, inner.size() - 2);
 
-    std::string result;
-    result.reserve(inner.size());
-    for (char c : inner)
-        result += (std::isalnum(static_cast<unsigned char>(c)) || c == '_') ? c : '_';
+    if (inner.empty()) return "x";
 
-    // Must not start with a digit
-    if (!result.empty() && std::isdigit(static_cast<unsigned char>(result[0])))
-        result = "x_" + result;
+    // Check whether the name is already a valid plain Lean identifier.
+    bool plain = std::isalpha(static_cast<unsigned char>(inner[0])) || inner[0] == '_';
+    if (plain) {
+        for (size_t i = 1; i < inner.size(); ++i) {
+            char c = inner[i];
+            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_') {
+                plain = false;
+                break;
+            }
+        }
+    }
 
-    return result.empty() ? "x" : result;
+    // Plain identifiers are used as-is; everything else is wrapped in «».
+    if (!plain)
+        return "«" + inner + "»";
+    return inner;
 }
 
 // Map an SMT-LIB sort name to its Lean type string.
@@ -49,7 +60,13 @@ static std::string sort_to_lean_type(const std::string& sort_name)
 std::string LeanEmitter::node_to_lean(NodeId n, const NodeManager& nm) const
 {
     const NodeData& d = nm.get(n);
-    std::string sanitized = lean_ident(nm.symbol_table().get(d.sym).name);
+    const std::string& raw_name = nm.symbol_table().get(d.sym).name;
+    // Map internal Bool-bridging sentinels to Lean's Prop constants so that
+    // conflict clauses involving Bool-sorted predicates stay syntactically
+    // valid (True and False are Prop values, matching `h : U → Prop`).
+    if (raw_name == "__bool_true")  return "True";
+    if (raw_name == "__bool_false") return "False";
+    std::string sanitized = lean_ident(raw_name);
     if (d.children.empty()) return sanitized;
     std::string result = "(" + sanitized;
     for (NodeId c : d.children) {
