@@ -210,7 +210,11 @@ int EufSolver::cb_add_external_clause_lit() {
 // ============================================================================
 
 int EufSolver::cb_propagate() {
-    if (needs_rescan_) {
+    // Skip rescan if there is already a conflict pending: the rescan would
+    // only duplicate that conflict (or overwrite it with the same clause).
+    // Leave needs_rescan_ set so the next call after CaDiCaL resolves the
+    // conflict (and notify_backtrack resets has_conflict_) will re-run it.
+    if (needs_rescan_ && !has_conflict_) {
         needs_rescan_ = false;
         discover_propagations();
     }
