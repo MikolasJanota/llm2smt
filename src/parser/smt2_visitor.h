@@ -94,6 +94,9 @@ private:
     // FmlRef assertions accumulated during parsing (when preprocessing is on).
     std::vector<FmlRef> pending_fmls_;
 
+    // Original (pre-NNF, pre-simplification) assertions for proof output.
+    std::vector<FmlRef> proof_fmls_;
+
     // Cache: Fml object address → Tseitin SAT literal (for lit_of_fml reuse).
     std::unordered_map<const Fml*, int> fml_lit_cache_;
 

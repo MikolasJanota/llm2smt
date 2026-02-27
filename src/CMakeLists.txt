@@ -3,6 +3,7 @@ add_subdirectory(sat)
 add_subdirectory(theories/euf)
 add_subdirectory(preprocessor)
 add_subdirectory(parser)
+add_subdirectory(proof)
 
 add_executable(llm2smt main.cpp)
 target_link_libraries(llm2smt
@@ -12,6 +13,7 @@ target_link_libraries(llm2smt
     euf
     preprocessor
     smt_parser
+    proof
     CLI11::CLI11
 )
 target_include_directories(llm2smt PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

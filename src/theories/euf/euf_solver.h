@@ -59,6 +59,17 @@ public:
     NodeManager& nm()          { return nm_; }
     Flattener&   flattener()   { return flattener_; }
 
+    // ── Proof recording ───────────────────────────────────────────────────
+    void enable_proof_recording() { record_proofs_ = true; }
+
+    const std::vector<std::vector<int>>& proof_conflicts() const {
+        return proof_conflicts_;
+    }
+
+    const std::unordered_map<int, EqAtom>& lit_to_atom() const {
+        return lit_to_atom_;
+    }
+
 private:
     NodeManager& nm_;
     CC           cc_;
@@ -96,6 +107,10 @@ private:
     size_t current_level_ = 0;
     // Per-level counts of active diseqs (for backtracking)
     std::vector<size_t> diseq_level_counts_;
+
+    // Proof recording
+    bool                          record_proofs_   = false;
+    std::vector<std::vector<int>> proof_conflicts_;
 
     Stats& stats_;
 

@@ -147,6 +147,14 @@ add_smt2_test_selectors(selector_or_unsat         t42_selector_or_unsat.smt2    
 # t43: Regression: crash in CaDiCaL analyze() when register_equality is called before
 #      register_permanent_equality for the same pair — tautological conflict/reason clause
 add_smt2_test_preproc(preproc_perm_eq_preregistered_crash  t43_preproc_perm_eq_preregistered_crash.smt2  sat)
+# t44: --proof generates a Lean file containing "by grind"
+add_test(
+    NAME "smt2/lean_proof_generates"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t44_proof.lean \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t44_lean_proof.smt2 && \
+         grep -q 'by grind' ${CMAKE_BINARY_DIR}/t44_proof.lean"
+)
 
 # ── Unit test binaries ────────────────────────────────────────────────────────
 add_executable(test_node_manager test_node_manager.cpp)

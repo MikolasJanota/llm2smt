@@ -185,6 +185,8 @@ void EufSolver::build_conflict(const std::vector<EqId>& explanation, int diseq_l
     stats_.euf_conflict_lits_total += conflict_clause_.size();
     has_conflict_     = true;
     conflict_lit_idx_ = 0;
+    if (record_proofs_)
+        proof_conflicts_.push_back(conflict_clause_);
 }
 
 bool EufSolver::cb_has_external_clause(bool& is_forgettable) {

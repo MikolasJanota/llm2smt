@@ -59,6 +59,8 @@ int main(int argc, char** argv) {
     app.add_flag("--selectors", opts.selectors,
                  "Use selector variable technique for Or-with-compound-disjuncts encoding")
        ->needs(nnf_flag);
+    app.add_option("--proof", opts.proof_file,
+                   "Write Lean 4 UNSAT proof to this file (QF_UF only)");
 
     bool print_stats = false;
     app.add_flag("--stats", print_stats, "Print solver statistics to stderr after solving");

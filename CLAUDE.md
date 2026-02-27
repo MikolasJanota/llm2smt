@@ -38,6 +38,25 @@ ctest --test-dir build-dbg --output-on-failure
 
 All 60+ unit tests must pass before committing.
 
+## Minimizing failing inputs
+
+**Always use `scripts/minimize_smt2.py` as the first step when investigating a crash or wrong answer.**
+Do not manually bisect assertions — the minimizer does it automatically.
+
+```bash
+# Crash (match on SEGV or any non-zero exit):
+python scripts/minimize_smt2.py \
+    --cmd 'build-dbg/bin/llm2smt --preprocess-passes 1' \
+    --input failing.smt2 --output minimal.smt2 --match SEGV -v
+
+# Wrong answer (match on unexpected output):
+python scripts/minimize_smt2.py \
+    --cmd 'build-dbg/bin/llm2smt' \
+    --input failing.smt2 --output minimal.smt2 --match 'wrong_string' -v
+```
+
+Use `/minimize` to invoke this as a skill.
+
 ## Testing policy
 
 **For every bug found, add a regression test before closing the investigation.**
