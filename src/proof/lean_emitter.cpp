@@ -137,11 +137,15 @@ std::string LeanEmitter::fn_type(const FnDecl& fn, bool is_pred) const
 void LeanEmitter::emit(std::ostream& out,
                        const SmtContext& ctx,
                        const std::vector<FmlRef>& proof_fmls,
-                       const std::vector<std::vector<int>>& proof_conflicts)
+                       const std::vector<std::vector<int>>& proof_conflicts,
+                       const std::string& lean_project)
 {
     const NodeManager& nm = ctx.nm;
 
-    out << "import Mathlib.Tactic\n\nexample\n";
+    if (lean_project.empty())
+        out << "import Mathlib.Tactic\n\nexample\n";
+    else
+        out << "import " << lean_project << ".ConvertProp\n\nexample\n";
 
     // ── Sorts ──────────────────────────────────────────────────────────────
     std::vector<std::string> sort_names;
@@ -152,7 +156,7 @@ void LeanEmitter::emit(std::ostream& out,
 
     for (const std::string& sname : sort_names) {
         std::string lname = lean_ident(sname);
-        out << "    (" << lname << " : Type) [DecidableEq " << lname << "]\n";
+        out << "    (" << lname << " : Type)\n";
     }
 
     // ── Categorise declared functions ──────────────────────────────────────
@@ -199,22 +203,13 @@ void LeanEmitter::emit(std::ostream& out,
     // 0-ary Bool (propositional constants)
     for (const FnDecl* decl : zerory_bool) {
         const std::string& fname = nm.symbol_table().get(decl->sym).name;
-        std::string lname = lean_ident(fname);
-        out << "    (" << lname << " : Prop) [Decidable " << lname << "]\n";
+        out << "    (" << lean_ident(fname) << " : Prop)\n";
     }
 
-    // n-ary Bool predicates + decidability instances
+    // n-ary Bool predicates
     for (const FnDecl* decl : nary_bool) {
         const std::string& fname = nm.symbol_table().get(decl->sym).name;
-        std::string lname = lean_ident(fname);
-        out << "    (" << lname << " : " << fn_type(*decl, true) << ")\n";
-        out << "    [∀";
-        for (size_t i = 0; i < decl->param_sorts.size(); ++i)
-            out << " (x" << (i + 1) << " : " << lean_ident(decl->param_sorts[i]) << ")";
-        out << ", Decidable (" << lname;
-        for (size_t i = 0; i < decl->param_sorts.size(); ++i)
-            out << " x" << (i + 1);
-        out << ")]\n";
+        out << "    (" << lean_ident(fname) << " : " << fn_type(*decl, true) << ")\n";
     }
 
     // ── Assertions ─────────────────────────────────────────────────────────

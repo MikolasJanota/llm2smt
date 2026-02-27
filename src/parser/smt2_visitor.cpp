@@ -187,7 +187,8 @@ std::any Smt2Visitor::visitCommand(
         if (last_result_ == SolveResult::UNSAT && !opts_.proof_file.empty()) {
             std::ofstream proof_out(opts_.proof_file);
             LeanEmitter emitter;
-            emitter.emit(proof_out, ctx_, proof_fmls_, ctx_.euf.proof_conflicts());
+            emitter.emit(proof_out, ctx_, proof_fmls_, ctx_.euf.proof_conflicts(),
+                         opts_.lean_project);
         }
     }
     else if (ctx->cmd_getModel()) {

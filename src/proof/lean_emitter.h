@@ -19,7 +19,8 @@ public:
     void emit(std::ostream& out,
               const SmtContext& ctx,
               const std::vector<FmlRef>& proof_fmls,
-              const std::vector<std::vector<int>>& proof_conflicts);
+              const std::vector<std::vector<int>>& proof_conflicts,
+              const std::string& lean_project = {});
 
 private:
     // NodeId → Lean expression string (handles constants and n-ary apps)

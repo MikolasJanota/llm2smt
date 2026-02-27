@@ -11,6 +11,7 @@ struct PreprocOptions {
     bool        nnf        = false;  // convert to Negation Normal Form before encoding
     bool        selectors  = false;  // selector variable technique (requires nnf = true)
     std::string proof_file;          // empty = no proof output
+    std::string lean_project;        // if non-empty, emit "import lean_project.ConvertProp"
 };
 
 } // namespace llm2smt
