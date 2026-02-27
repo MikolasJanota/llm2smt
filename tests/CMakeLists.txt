@@ -24,11 +24,23 @@ function(add_smt2_test_preproc name file expected)
     )
 endfunction()
 
-# Like add_smt2_test but runs with --preprocess-passes 1 --selectors.
+# Like add_smt2_test but runs with --preprocess-passes 1 --nnf.
+function(add_smt2_test_nnf name file expected)
+    add_test(
+        NAME "smt2/${name}"
+        COMMAND $<TARGET_FILE:llm2smt> --preprocess-passes 1 --nnf
+                "${CMAKE_CURRENT_SOURCE_DIR}/smt2/${file}"
+    )
+    set_tests_properties("smt2/${name}" PROPERTIES
+        PASS_REGULAR_EXPRESSION "^${expected}"
+    )
+endfunction()
+
+# Like add_smt2_test but runs with --preprocess-passes 1 --nnf --selectors.
 function(add_smt2_test_selectors name file expected)
     add_test(
         NAME "smt2/${name}"
-        COMMAND $<TARGET_FILE:llm2smt> --preprocess-passes 1 --selectors
+        COMMAND $<TARGET_FILE:llm2smt> --preprocess-passes 1 --nnf --selectors
                 "${CMAKE_CURRENT_SOURCE_DIR}/smt2/${file}"
     )
     set_tests_properties("smt2/${name}" PROPERTIES
@@ -125,9 +137,9 @@ add_smt2_test(bool_compound_arg_model  t37_bool_compound_arg_model.smt2  sat)
 #      binary distinct returns -eq (negative lit); bool_for checked v>0 instead of v==stored
 add_smt2_test(bool_distinct_arg_model  t38_bool_distinct_arg_model.smt2  sat)
 # t39: NNF + preproc for Implies — unsat (simplifier can unit-propagate after NNF expansion)
-add_smt2_test_preproc(nnf_implies_preproc_unsat  t39_nnf_implies_preproc_unsat.smt2  unsat)
+add_smt2_test_nnf(nnf_implies_preproc_unsat  t39_nnf_implies_preproc_unsat.smt2  unsat)
 # t40: NNF + preproc for Xor — xor(P,P) = false → unsat
-add_smt2_test_preproc(nnf_xor_preproc_unsat      t40_nnf_xor_preproc_unsat.smt2      unsat)
+add_smt2_test_nnf(nnf_xor_preproc_unsat      t40_nnf_xor_preproc_unsat.smt2      unsat)
 # t41: Selector SAT — compound Or disjuncts; right disjunct (= b c) satisfiable
 add_smt2_test_selectors(selector_or_sat           t41_selector_or_sat.smt2            sat)
 # t42: Selector UNSAT — both alternatives require b=c, which is negated

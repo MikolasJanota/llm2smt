@@ -6,7 +6,8 @@ namespace llm2smt {
 struct PreprocOptions {
     int  passes    = 0;      // number of simplifier passes (0 = disabled)
     bool flatten   = true;   // And-in-And / Or-in-Or flattening in the simplifier
-    bool selectors = false;  // selector variable technique for Or-with-compound-disjuncts
+    bool nnf       = false;  // convert to Negation Normal Form before encoding
+    bool selectors = false;  // selector variable technique (requires nnf = true)
 };
 
 } // namespace llm2smt

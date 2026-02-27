@@ -958,8 +958,8 @@ void Smt2Visitor::flush_pending_fmls()
 {
     if (pending_fmls_.empty()) return;
 
-    // Step A: NNF (prerequisite for selectors; also useful for simplifier).
-    if (opts_.passes > 0 || opts_.selectors) {
+    // Step A: NNF.
+    if (opts_.nnf) {
         for (auto& f : pending_fmls_)
             f = to_nnf(f);
     }

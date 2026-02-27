@@ -54,8 +54,11 @@ int main(int argc, char** argv) {
        ->check(CLI::NonNegativeNumber);
     app.add_flag("!--no-flatten", opts.flatten,
                  "Disable And/Or flattening in the simplifier");
+    auto* nnf_flag = app.add_flag("--nnf", opts.nnf,
+                 "Convert to Negation Normal Form before encoding");
     app.add_flag("--selectors", opts.selectors,
-                 "Use selector variable technique for Or-with-compound-disjuncts encoding");
+                 "Use selector variable technique for Or-with-compound-disjuncts encoding")
+       ->needs(nnf_flag);
 
     bool print_stats = false;
     app.add_flag("--stats", print_stats, "Print solver statistics to stderr after solving");
