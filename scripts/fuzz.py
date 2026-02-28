@@ -172,9 +172,10 @@ def _gen_fml(ctx: _Ctx, depth: int = 0) -> str:
         return f"(=> {args})"
 
     if op == "xor":
-        a = _gen_fml(ctx, depth + 1)
-        b = _gen_fml(ctx, depth + 1)
-        return f"(xor {a} {b})"
+        # occasionally generate 3-arg xor (left-assoc: (xor (xor a b) c))
+        n_xor = 3 if rng.random() < 0.20 else 2
+        args = " ".join(_gen_fml(ctx, depth + 1) for _ in range(n_xor))
+        return f"(xor {args})"
 
     if op == "ite":
         # Bool-sorted ite: (ite Bool Bool Bool)

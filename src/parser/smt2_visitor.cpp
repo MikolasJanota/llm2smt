@@ -345,7 +345,8 @@ void Smt2Visitor::assert_formula(
             return;
         }
 
-        // (xor A B): assert (A ∨ B) ∧ (¬A ∨ ¬B)
+        // (xor A B [C ...]) — left-assoc; assert the whole expression is true.
+        // For binary: directly add 2 clauses; for n-ary: use eval_lit + unit clause.
         if (op == "xor" && ctx->term().size() == 2) {
             int a = eval_lit(ctx->term()[0]);
             int b = eval_lit(ctx->term()[1]);
@@ -353,6 +354,12 @@ void Smt2Visitor::assert_formula(
             std::array<int, 2> c2 = {-a, -b};
             ctx_.sat.add_clause(std::span<const int>(c1));
             ctx_.sat.add_clause(std::span<const int>(c2));
+            return;
+        }
+        if (op == "xor" && ctx->term().size() >= 3) {
+            int lit = eval_lit(ctx);
+            std::array<int, 1> cl = {lit};
+            ctx_.sat.add_clause(std::span<const int>(cl));
             return;
         }
 
@@ -647,22 +654,26 @@ int Smt2Visitor::eval_lit(
         return x;
     }
 
-    // (xor A B) — Tseitin proxy x ↔ (A ⊕ B)
-    if (op == "xor" && ctx->term().size() == 2) {
+    // (xor A B [C ...]) — left-associative fold; each step: x ↔ (prev ⊕ arg)
+    if (op == "xor" && ctx->term().size() >= 2) {
         auto cit = tseitin_cache_.find(ctx);
         if (cit != tseitin_cache_.end()) return cit->second;
-        int x = ctx_.euf.new_var();
+        auto terms = ctx->term();
+        int x = eval_lit(terms[0]);
+        for (size_t i = 1; i < terms.size(); ++i) {
+            int a = x;
+            int b = eval_lit(terms[i]);
+            x = ctx_.euf.new_var();
+            // x → (A ∨ B):    ¬x ∨ A ∨ B
+            { std::array<int,3> cl = {-x,  a,  b}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            // x → (¬A ∨ ¬B):  ¬x ∨ ¬A ∨ ¬B
+            { std::array<int,3> cl = {-x, -a, -b}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            // (A ∧ ¬B) → x:   ¬A ∨ B ∨ x
+            { std::array<int,3> cl = {-a,  b,  x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            // (¬A ∧ B) → x:    A ∨ ¬B ∨ x
+            { std::array<int,3> cl = { a, -b,  x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        }
         tseitin_cache_[ctx] = x;
-        int a = eval_lit(ctx->term()[0]);
-        int b = eval_lit(ctx->term()[1]);
-        // x → (A ∨ B):    ¬x ∨ A ∨ B
-        { std::array<int,3> cl = {-x,  a,  b}; ctx_.sat.add_clause(std::span<const int>(cl)); }
-        // x → (¬A ∨ ¬B):  ¬x ∨ ¬A ∨ ¬B
-        { std::array<int,3> cl = {-x, -a, -b}; ctx_.sat.add_clause(std::span<const int>(cl)); }
-        // (A ∧ ¬B) → x:   ¬A ∨ B ∨ x
-        { std::array<int,3> cl = {-a,  b,  x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
-        // (¬A ∧ B) → x:    A ∨ ¬B ∨ x
-        { std::array<int,3> cl = { a, -b,  x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         return x;
     }
 
@@ -786,8 +797,13 @@ FmlRef Smt2Visitor::build_fml(
         return fml_or(std::move(disj));
     }
 
-    if (op == "xor" && ctx->term().size() == 2)
-        return fml_xor(build_fml(ctx->term()[0]), build_fml(ctx->term()[1]));
+    if (op == "xor" && ctx->term().size() >= 2) {
+        auto terms = ctx->term();
+        FmlRef result = build_fml(terms[0]);
+        for (size_t i = 1; i < terms.size(); ++i)
+            result = fml_xor(result, build_fml(terms[i]));
+        return result;
+    }
 
     if (op == "ite" && ctx->term().size() == 3 && is_bool_sorted(ctx))
         return fml_ite(build_fml(ctx->term()[0]),

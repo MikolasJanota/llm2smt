@@ -1,0 +1,10 @@
+(set-logic QF_UF)
+(declare-fun p () Bool)
+(declare-fun q () Bool)
+(declare-fun r () Bool)
+; (xor p q r) asserted; p=T, q=F, r=F -> xor(xor(T,F),F) = xor(T,F) = T — satisfiable
+(assert (xor p q r))
+(assert p)
+(assert (not q))
+(assert (not r))
+(check-sat)

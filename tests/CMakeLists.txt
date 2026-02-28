@@ -156,6 +156,10 @@ add_test(
          grep -q 'by grind' ${CMAKE_BINARY_DIR}/t44_proof.lean"
 )
 
+# t48-t49: n-ary xor (:left-assoc)
+add_smt2_test(nary_xor_unsat  t48_nary_xor_unsat.smt2  unsat)
+add_smt2_test(nary_xor_sat    t49_nary_xor_sat.smt2    sat)
+
 # t45-t47: chained equality (= t1 t2 ... tn) (:chainable)
 add_smt2_test(chained_eq_unsat         t45_chained_eq_unsat.smt2          unsat)
 add_smt2_test(chained_eq_sat           t46_chained_eq_sat.smt2            sat)
