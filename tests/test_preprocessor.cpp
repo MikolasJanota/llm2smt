@@ -216,6 +216,41 @@ TEST(Fold, BoolEqAFalse)
     EXPECT_EQ(r->kind, FmlKind::Not);
 }
 
+// ── Same-subtree identity simplifications ─────────────────────────────────────
+
+TEST(Fold, IteSameBranches)
+{
+    // ite(c, f, f) = f  (both branches identical pointer)
+    Simplifier s;
+    auto e = EQ(NA, NB);
+    FmlRef r = s.fold(ITE(PR(NA), e, e));
+    EXPECT_EQ(r.get(), e.get());
+}
+
+TEST(Fold, ImpliesSameSides)
+{
+    // p → p = true
+    Simplifier s;
+    auto e = EQ(NA, NB);
+    EXPECT_EQ(s.fold(IMP(e, e))->kind, FmlKind::True);
+}
+
+TEST(Fold, XorSameSides)
+{
+    // p ⊕ p = false
+    Simplifier s;
+    auto e = EQ(NA, NB);
+    EXPECT_EQ(s.fold(XOR(e, e))->kind, FmlKind::False);
+}
+
+TEST(Fold, BoolEqSameSides)
+{
+    // p ↔ p = true
+    Simplifier s;
+    auto e = EQ(NA, NB);
+    EXPECT_EQ(s.fold(IFF(e, e))->kind, FmlKind::True);
+}
+
 // ── Nested folding ────────────────────────────────────────────────────────────
 
 TEST(Fold, NestedAndOr)

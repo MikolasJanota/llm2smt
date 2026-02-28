@@ -105,6 +105,7 @@ FmlRef Simplifier::fold(FmlRef f)
         if (c->kind == FmlKind::False) return fold(f->children[2]);
         FmlRef t  = fold(f->children[1]);
         FmlRef el = fold(f->children[2]);
+        if (t.get() == el.get())                                      return t;  // Ite(C,F,F) ≡ F
         if (t->kind == FmlKind::True  && el->kind == FmlKind::True)  return fml_true();
         if (t->kind == FmlKind::False && el->kind == FmlKind::False) return fml_false();
         if (t->kind == FmlKind::True  && el->kind == FmlKind::False) return c;
@@ -119,6 +120,7 @@ FmlRef Simplifier::fold(FmlRef f)
         assert(f->children.size() == 2);
         FmlRef a = fold(f->children[0]);
         FmlRef b = fold(f->children[1]);
+        if (a.get() == b.get())        return fml_true();   // P → P
         if (a->kind == FmlKind::False) return fml_true();
         if (a->kind == FmlKind::True)  return b;
         if (b->kind == FmlKind::True)  return fml_true();
@@ -131,6 +133,7 @@ FmlRef Simplifier::fold(FmlRef f)
         assert(f->children.size() == 2);
         FmlRef a = fold(f->children[0]);
         FmlRef b = fold(f->children[1]);
+        if (a.get() == b.get())                                       return fml_false(); // P ⊕ P
         if (a->kind == FmlKind::True  && b->kind == FmlKind::True)  return fml_false();
         if (a->kind == FmlKind::False && b->kind == FmlKind::False) return fml_false();
         if (a->kind == FmlKind::True  && b->kind == FmlKind::False) return fml_true();
@@ -147,6 +150,7 @@ FmlRef Simplifier::fold(FmlRef f)
         assert(f->children.size() == 2);
         FmlRef a = fold(f->children[0]);
         FmlRef b = fold(f->children[1]);
+        if (a.get() == b.get())        return fml_true();   // P ↔ P
         if (a->kind == FmlKind::True)  return b;
         if (a->kind == FmlKind::False) return fml_not(b);
         if (b->kind == FmlKind::True)  return a;
