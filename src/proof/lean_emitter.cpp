@@ -112,15 +112,21 @@ std::string LeanEmitter::fml_to_lean(FmlRef f, const NodeManager& nm) const
         return "(" + fml_to_lean(f->children[0], nm) + " → "
                + fml_to_lean(f->children[1], nm) + ")";
     case FmlKind::Xor:
-        return "(Xor (" + fml_to_lean(f->children[0], nm) + ") ("
-               + fml_to_lean(f->children[1], nm) + "))";
+        // xor(a,b) ≡ ¬(a ↔ b)  — avoids non-standard Xor identifier
+        return "¬(" + fml_to_lean(f->children[0], nm) + " ↔ "
+               + fml_to_lean(f->children[1], nm) + ")";
     case FmlKind::BoolEq:
         return "(" + fml_to_lean(f->children[0], nm) + " ↔ "
                + fml_to_lean(f->children[1], nm) + ")";
-    case FmlKind::Ite:
-        return "(if " + fml_to_lean(f->children[0], nm)
-               + " then " + fml_to_lean(f->children[1], nm)
-               + " else " + fml_to_lean(f->children[2], nm) + ")";
+    case FmlKind::Ite: {
+        // ite(c,t,e) ≡ (c → t) ∧ (¬c → e)  — avoids `if` which requires Decidable c.
+        // The condition is expanded twice; parenthesise each occurrence so that
+        // negation in the else-arm binds correctly for any condition shape.
+        const std::string c = fml_to_lean(f->children[0], nm);
+        const std::string t = fml_to_lean(f->children[1], nm);
+        const std::string e = fml_to_lean(f->children[2], nm);
+        return "((" + c + " → " + t + ") ∧ (¬(" + c + ") → " + e + "))";
+    }
     }
     return "True";  // unreachable
 }
