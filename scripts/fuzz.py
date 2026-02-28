@@ -149,10 +149,10 @@ def _gen_fml(ctx: _Ctx, depth: int = 0) -> str:
             terms = " ".join(_gen_term(ctx, depth + 1) for _ in range(n))
             return f"(distinct {terms})"
 
-        # U-sorted equality atom  (= t1 t2)
-        t1 = _gen_term(ctx, depth + 1)
-        t2 = _gen_term(ctx, depth + 1)
-        return f"(= {t1} {t2})"
+        # U-sorted equality atom — binary or chained (= t1 t2 [t3])
+        n_eq = 2 if rng.random() < 0.75 else 3
+        terms = " ".join(_gen_term(ctx, depth + 1) for _ in range(n_eq))
+        return f"(= {terms})"
 
     # ── Compound formula using Core connectives ──────────────────────────
     op = rng.choice(["not", "and", "or", "=>", "xor", "ite", "bool_eq"])

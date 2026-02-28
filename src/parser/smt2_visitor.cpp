@@ -380,6 +380,30 @@ void Smt2Visitor::assert_formula(
             return;
         }
 
+        // (= t1 t2 ... tn) n >= 3 — chained equality: assert each consecutive pair.
+        if (op == "=" && ctx->term().size() >= 3) {
+            auto terms = ctx->term();
+            if (is_bool_sorted(terms[0])) {
+                for (size_t i = 0; i + 1 < terms.size(); ++i) {
+                    int p = eval_lit(terms[i]);
+                    int q = eval_lit(terms[i + 1]);
+                    std::array<int, 2> c1 = {-p, q};
+                    std::array<int, 2> c2 = { p, -q};
+                    ctx_.sat.add_clause(std::span<const int>(c1));
+                    ctx_.sat.add_clause(std::span<const int>(c2));
+                }
+            } else {
+                for (size_t i = 0; i + 1 < terms.size(); ++i) {
+                    NodeId ti = visit_term(terms[i]);
+                    NodeId tj = visit_term(terms[i + 1]);
+                    int lit = ctx_.euf.register_equality(ti, tj);
+                    std::array<int, 1> cl = {lit};
+                    ctx_.sat.add_clause(std::span<const int>(cl));
+                }
+            }
+            return;
+        }
+
         // (distinct t1 t2 ... tn) — pairwise disequalities as unit clauses
         if (op == "distinct") {
             auto terms = ctx->term();
@@ -489,6 +513,42 @@ int Smt2Visitor::eval_lit(
         NodeId lhs = visit_term(ctx->term()[0]);
         NodeId rhs = visit_term(ctx->term()[1]);
         return ctx_.euf.register_equality(lhs, rhs);
+    }
+
+    // (= t1 t2 ... tn) n >= 3 — chained equality: Tseitin y ↔ (∧_i (= ti t{i+1}))
+    if (op == "=" && ctx->term().size() >= 3) {
+        auto cit = tseitin_cache_.find(ctx);
+        if (cit != tseitin_cache_.end()) return cit->second;
+        int y = ctx_.euf.new_var();
+        tseitin_cache_[ctx] = y;
+        auto terms = ctx->term();
+        std::vector<int> sub_lits;
+        if (is_bool_sorted(terms[0])) {
+            for (size_t i = 0; i + 1 < terms.size(); ++i) {
+                int p = eval_lit(terms[i]);
+                int q = eval_lit(terms[i + 1]);
+                int x = ctx_.euf.new_var();
+                { std::array<int,3> cl = {-x, -p,  q}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+                { std::array<int,3> cl = {-x,  p, -q}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+                { std::array<int,3> cl = {-p, -q,  x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+                { std::array<int,3> cl = { p,  q,  x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+                sub_lits.push_back(x);
+            }
+        } else {
+            for (size_t i = 0; i + 1 < terms.size(); ++i) {
+                NodeId ti = visit_term(terms[i]);
+                NodeId tj = visit_term(terms[i + 1]);
+                sub_lits.push_back(ctx_.euf.register_equality(ti, tj));
+            }
+        }
+        for (int l : sub_lits) {
+            std::array<int,2> cl = {-y, l};
+            ctx_.sat.add_clause(std::span<const int>(cl));
+        }
+        std::vector<int> bwd = {y};
+        for (int l : sub_lits) bwd.push_back(-l);
+        ctx_.sat.add_clause(std::span<const int>(bwd));
+        return y;
     }
 
     // (distinct t1 t2) in literal position — same as (not (= t1 t2))
@@ -744,6 +804,24 @@ FmlRef Smt2Visitor::build_fml(
         NodeId lhs = visit_term(ctx->term()[0]);
         NodeId rhs = visit_term(ctx->term()[1]);
         return fml_eq(lhs, rhs);
+    }
+
+    // (= t1 t2 ... tn) n >= 3 — chained: fml_and of consecutive equality pairs
+    if (op == "=" && ctx->term().size() >= 3) {
+        auto terms = ctx->term();
+        std::vector<FmlRef> pairs;
+        if (is_bool_sorted(terms[0])) {
+            for (size_t i = 0; i + 1 < terms.size(); ++i)
+                pairs.push_back(fml_booleq(build_fml(terms[i]), build_fml(terms[i + 1])));
+        } else {
+            for (size_t i = 0; i + 1 < terms.size(); ++i) {
+                NodeId lhs = visit_term(terms[i]);
+                NodeId rhs = visit_term(terms[i + 1]);
+                pairs.push_back(fml_eq(lhs, rhs));
+            }
+        }
+        if (pairs.size() == 1) return pairs[0];
+        return fml_and(std::move(pairs));
     }
 
     // (distinct t1 t2) — single disequality

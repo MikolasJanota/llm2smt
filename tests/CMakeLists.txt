@@ -156,6 +156,11 @@ add_test(
          grep -q 'by grind' ${CMAKE_BINARY_DIR}/t44_proof.lean"
 )
 
+# t45-t47: chained equality (= t1 t2 ... tn) (:chainable)
+add_smt2_test(chained_eq_unsat         t45_chained_eq_unsat.smt2          unsat)
+add_smt2_test(chained_eq_sat           t46_chained_eq_sat.smt2            sat)
+add_smt2_test(chained_eq_nested_unsat  t47_chained_eq_nested_unsat.smt2   unsat)
+
 # ── Unit test binaries ────────────────────────────────────────────────────────
 add_executable(test_node_manager test_node_manager.cpp)
 target_link_libraries(test_node_manager PRIVATE core GTest::gtest_main)

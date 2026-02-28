@@ -1,0 +1,10 @@
+(set-logic QF_UF)
+(declare-sort U 0)
+(declare-fun a () U)
+(declare-fun b () U)
+(declare-fun c () U)
+(declare-fun d () U)
+; (= a b c) means a=b and b=c; nothing forces a=d, so SAT
+(assert (= a b c))
+(assert (not (= a d)))
+(check-sat)
