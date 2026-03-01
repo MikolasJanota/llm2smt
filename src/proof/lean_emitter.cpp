@@ -252,12 +252,39 @@ void LeanEmitter::emit(std::ostream& out,
                 // Same canonical order as fml_to_lean(FmlKind::Eq, ...)
                 NodeId lhs_id = atom.lhs, rhs_id = atom.rhs;
                 if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
+                // If one side is a Bool sentinel, emit propositional form so
+                // that sat_decide / grind see the same atom as the hypothesis.
+                const std::string& lhs_sym =
+                    nm.symbol_table().get(nm.get(lhs_id).sym).name;
+                const std::string& rhs_sym =
+                    nm.symbol_table().get(nm.get(rhs_id).sym).name;
+                const bool lhs_is_sentinel =
+                    (lhs_sym == "__bool_true" || lhs_sym == "__bool_false");
+                const bool rhs_is_sentinel =
+                    (rhs_sym == "__bool_true" || rhs_sym == "__bool_false");
+                if (lhs_is_sentinel || rhs_is_sentinel) {
+                    // One side is the sentinel; the other is the Prop node.
+                    NodeId prop_id = lhs_is_sentinel ? rhs_id : lhs_id;
+                    const std::string& sentinel_sym =
+                        lhs_is_sentinel ? lhs_sym : rhs_sym;
+                    // positive sentinel_true  → prop holds
+                    // negative sentinel_true  → prop does not hold
+                    // positive sentinel_false → prop does not hold
+                    // negative sentinel_false → prop holds
+                    bool sentinel_is_true = (sentinel_sym == "__bool_true");
+                    bool prop_holds = sentinel_is_true ? (lit > 0) : (lit < 0);
+                    if (prop_holds)
+                        out << node_to_lean(prop_id, nm);
+                    else
+                        out << "¬(" << node_to_lean(prop_id, nm) << ")";
+                } else {
                 std::string lhs_str = node_to_lean(lhs_id, nm);
                 std::string rhs_str = node_to_lean(rhs_id, nm);
                 if (lit > 0)
                     out << lhs_str << " = " << rhs_str;
                 else
                     out << "¬(" << lhs_str << " = " << rhs_str << ")";
+                }
             } else {
                 auto nit = lit_to_node.find(var);
                 if (nit != lit_to_node.end()) {
@@ -272,7 +299,7 @@ void LeanEmitter::emit(std::ostream& out,
         out << " := by grind\n";
     }
 
-    out << "  sat_decide\n";
+    out << "  grind\n";
 }
 
 } // namespace llm2smt
