@@ -13,6 +13,7 @@ struct PreprocOptions {
     std::string proof_file;          // empty = no proof output
     std::string lean_project;        // if non-empty, emit "import lean_project.ConvertProp"
     bool        proof_minimize = false; // remove unnecessary theory lemmas via UNSAT core
+    bool        eq_bridge  = false;  // add common EUF consequences of disjunction branches
 };
 
 } // namespace llm2smt

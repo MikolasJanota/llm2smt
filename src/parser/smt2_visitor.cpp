@@ -6,6 +6,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "preprocessor/disjunction_bridge.h"
 #include "preprocessor/nnf.h"
 #include "preprocessor/simplifier.h"
 
@@ -168,7 +169,7 @@ std::any Smt2Visitor::visitCommand(
     else if (ctx->cmd_assert()) {
         auto terms = ctx->term();
         if (terms.empty()) throw std::runtime_error("assert: missing term");
-        if (opts_.passes > 0 || opts_.nnf || !opts_.proof_file.empty())
+        if (opts_.passes > 0 || opts_.nnf || !opts_.proof_file.empty() || opts_.eq_bridge)
             pending_fmls_.push_back(build_fml(terms[0]));
         else
             assert_formula(terms[0]);
@@ -1073,6 +1074,20 @@ void Smt2Visitor::flush_pending_fmls()
     if (opts_.nnf) {
         for (auto& f : pending_fmls_)
             f = to_nnf(f);
+    }
+
+    // Step A.5: Equality bridging under disjunctions.
+    // Bridge-derived equalities are applied as permanent CC merges immediately
+    // so they take effect regardless of whether the Simplifier is enabled.
+    if (opts_.eq_bridge) {
+        const size_t before = pending_fmls_.size();
+        bridge_disjunctions(pending_fmls_);
+        for (size_t i = before; i < pending_fmls_.size(); ++i) {
+            const FmlRef& f = pending_fmls_[i];
+            if (f->kind == FmlKind::Eq)
+                ctx_.euf.register_permanent_equality(f->eq_lhs, f->eq_rhs);
+        }
+        pending_fmls_.resize(before);  // already in CC, don't re-encode
     }
 
     // Step B: Simplifier (unchanged, only if passes > 0).

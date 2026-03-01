@@ -48,6 +48,18 @@ function(add_smt2_test_selectors name file expected)
     )
 endfunction()
 
+# Like add_smt2_test but runs with --eq-bridge.
+function(add_smt2_test_eq_bridge name file expected)
+    add_test(
+        NAME "smt2/${name}"
+        COMMAND $<TARGET_FILE:llm2smt> --eq-bridge
+                "${CMAKE_CURRENT_SOURCE_DIR}/smt2/${file}"
+    )
+    set_tests_properties("smt2/${name}" PROPERTIES
+        PASS_REGULAR_EXPRESSION "^${expected}"
+    )
+endfunction()
+
 # t01: a=b  ∧  a≠b  →  unsat  (direct contradiction)
 add_smt2_test(unsat_direct          t01_unsat_direct.smt2          unsat)
 # t02: a=b  ∧  b=c  ∧  a≠c   →  unsat  (transitivity)
@@ -159,6 +171,9 @@ add_test(
 # t48-t49: n-ary xor (:left-assoc)
 add_smt2_test(nary_xor_unsat  t48_nary_xor_unsat.smt2  unsat)
 add_smt2_test(nary_xor_sat    t49_nary_xor_sat.smt2    sat)
+
+# t50: --eq-bridge eliminates exponential blowup on 19-diamond chain (diamond20)
+add_smt2_test_eq_bridge(eq_bridge_diamond  t50_eq_bridge_diamond.smt2  unsat)
 
 # t45-t47: chained equality (= t1 t2 ... tn) (:chainable)
 add_smt2_test(chained_eq_unsat         t45_chained_eq_unsat.smt2          unsat)

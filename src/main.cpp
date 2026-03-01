@@ -68,6 +68,8 @@ int main(int argc, char** argv) {
     app.add_flag("--proof-minimize", opts.proof_minimize,
                  "Remove unnecessary theory lemmas via UNSAT-core extraction (requires --proof)")
        ->needs(proof_flag);
+    app.add_flag("--eq-bridge", opts.eq_bridge,
+                 "Add common EUF consequences of disjunction branches (eliminates diamond-like exponential blowup)");
 
     bool print_stats = false;
     app.add_flag("--stats", print_stats, "Print solver statistics to stderr after solving");
