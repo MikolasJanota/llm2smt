@@ -84,8 +84,13 @@ std::string LeanEmitter::fml_to_lean(FmlRef f, const NodeManager& nm) const
         return "True";
     case FmlKind::False:
         return "False";
-    case FmlKind::Eq:
-        return node_to_lean(f->eq_lhs, nm) + " = " + node_to_lean(f->eq_rhs, nm);
+    case FmlKind::Eq: {
+        // Canonical order by NodeId so that a=b and b=a produce the same
+        // string — sat_decide must not see them as distinct opaque atoms.
+        NodeId lhs = f->eq_lhs, rhs = f->eq_rhs;
+        if (lhs > rhs) std::swap(lhs, rhs);
+        return node_to_lean(lhs, nm) + " = " + node_to_lean(rhs, nm);
+    }
     case FmlKind::Pred:
         return node_to_lean(f->pred, nm);
     case FmlKind::Not:
@@ -244,8 +249,11 @@ void LeanEmitter::emit(std::ostream& out,
             auto eit = lit_to_atom.find(var);
             if (eit != lit_to_atom.end()) {
                 const EqAtom& atom = eit->second;
-                std::string lhs_str = node_to_lean(atom.lhs, nm);
-                std::string rhs_str = node_to_lean(atom.rhs, nm);
+                // Same canonical order as fml_to_lean(FmlKind::Eq, ...)
+                NodeId lhs_id = atom.lhs, rhs_id = atom.rhs;
+                if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
+                std::string lhs_str = node_to_lean(lhs_id, nm);
+                std::string rhs_str = node_to_lean(rhs_id, nm);
                 if (lit > 0)
                     out << lhs_str << " = " << rhs_str;
                 else
