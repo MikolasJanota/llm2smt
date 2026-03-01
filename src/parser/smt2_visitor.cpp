@@ -162,6 +162,7 @@ std::any Smt2Visitor::visitCommand(
             for (size_t i = 0; i + 1 < sorts.size(); ++i)
                 decl.param_sorts.push_back(sorts[i]->getText());
         }
+        sym_to_sort_[sym] = decl.return_sort;
         ctx_.declared_fn_order.push_back(std::move(decl));
     }
     else if (ctx->cmd_assert()) {
@@ -261,10 +262,22 @@ NodeId Smt2Visitor::visit_term(
         int cond_lit    = eval_lit(ctx->term()[0]);
         NodeId then_node = visit_term(ctx->term()[1]);
         NodeId else_node = visit_term(ctx->term()[2]);
+        // Infer the sort from the then-branch symbol (works for both 0-ary
+        // constants and n-ary function applications, since NodeData::sym is
+        // always the head symbol whose return sort is in sym_to_sort_).
+        std::string ite_sort;
+        auto sit = sym_to_sort_.find(ctx_.nm.get(then_node).sym);
+        if (sit != sym_to_sort_.end()) ite_sort = sit->second;
+
         SymbolId fresh = ctx_.nm.declare_symbol(
             "__ite_" + std::to_string(ite_counter_++), 0);
+        sym_to_sort_[fresh] = ite_sort;  // allow nested ITEs to look this up
         NodeId result = ctx_.nm.mk_const(fresh);
         ite_node_cache_[ctx] = result;
+        // Register as a declared constant so the Lean emitter can emit a
+        // variable declaration for it.
+        { FnDecl d; d.sym = fresh; d.return_sort = ite_sort;
+          ctx_.declared_fn_order.push_back(std::move(d)); }
         int eq_then = ctx_.euf.register_equality(result, then_node);
         { std::array<int,2> cl = {-cond_lit, eq_then}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         int eq_else = ctx_.euf.register_equality(result, else_node);

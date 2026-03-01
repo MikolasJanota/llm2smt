@@ -50,6 +50,11 @@ private:
     std::unordered_map<smt2parser::SMTLIBv2Parser::TermContext*, NodeId> ite_node_cache_;
     int ite_counter_ = 0;  // for generating unique names
 
+    // Symbol → return sort name; populated from declare-fun commands and
+    // from internal __ite_N node creation (so that nested ITEs can look up
+    // the sort of their branches).
+    std::unordered_map<SymbolId, std::string> sym_to_sort_;
+
     // A literal that is always forced true (for `true`/`false` constants).
     int true_lit_ = 0;   // 0 = not yet allocated
     int get_true_lit();  // allocates on first call

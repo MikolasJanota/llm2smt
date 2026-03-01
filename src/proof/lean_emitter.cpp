@@ -179,8 +179,9 @@ void LeanEmitter::emit(std::ostream& out,
 
     for (const FnDecl& decl : ctx.declared_fn_order) {
         const std::string& fname = nm.symbol_table().get(decl.sym).name;
-        // Skip internal symbols (e.g., __bool_true, __bool_false)
-        if (!fname.empty() && fname[0] == '_' && fname.size() > 1 && fname[1] == '_')
+        // Skip only the two Bool-bridging sentinels; other internal symbols
+        // (e.g. __ite_N) are legitimate U-sorted constants that need declarations.
+        if (fname == "__bool_true" || fname == "__bool_false")
             continue;
         bool is_bool    = (decl.return_sort == "Bool");
         bool is_zerory  = decl.param_sorts.empty();
