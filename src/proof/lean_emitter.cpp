@@ -300,7 +300,7 @@ void LeanEmitter::emit(std::ostream& out,
         out << " := by grind\n";
     }
 
-    out << "  grind\n";
+    out << "  sat_decide\n";
 }
 
 } // namespace llm2smt
