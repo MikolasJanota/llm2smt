@@ -1,0 +1,2 @@
+Consider smt problem with disjunctions linking a sequence of xi as xi= yi = x_{i+1} or xi= zi = x_{i+1} . With x1!=x100. This causes issues for lazy SMT and problems of   
+  this type are in ~/git/llm2smt/sandbox/non-incremental/QF_UF/eq_diamond/. Devise preprocessing technique to overcome the exponential behavior on this

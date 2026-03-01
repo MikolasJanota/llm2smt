@@ -1,0 +1,20 @@
+The objective is to produce proofs in lean for unsatisfiable problems. This means that the solver will have a flag –proof file  that will  write a proof into the file if the given formula was successfully shown to be unsatisfiable.
+
+The proof will be a single  theorem with possibly lemmas inside.  Since we are dealing with QF_UF  we will simply rely on lean’s built-in  setup, i.e. equality and function  applications.
+ So the first task  to produce the proof will require translating the input SMT  problem into LEAN.
+ This again is straightforward  since uninterpreted sorts can be represented as types.
+
+LEAN’s  lemmas will be used to represent theory lemmas inferred during search, such as a=b => f(a)=f(b).  We will rely on  LEAN  to discharge the lemma by the grind tactic.
+
+Once we have all the theory lemmas in place, we need to reason about the bool abstraction within LEAN’s proof.   The unsat  propositional proof will be handled by LEAN by the sat_decide  tactic. E.g.
+
+example (α : Type) (x y : α) : (x=y) ∨ ¬ (x=y) := by
+  have : (...) := by grind
+  have : (...) := by grind
+  have : (...) := by grind
+  have : (...) := by grind
+  sat_decide
+
+Prepare a plan for this goal, separate into smaller tasks. Do not run LEAN at this point.
+Anything unclear, ask.
+
