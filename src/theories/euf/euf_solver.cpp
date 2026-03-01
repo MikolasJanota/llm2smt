@@ -258,6 +258,8 @@ void EufSolver::discover_propagations() {
 
         std::vector<EqId> expl = cc_.explain(atom.flat_lhs, atom.flat_rhs);
         reason_clauses_[lit] = build_reason_clause(lit, expl);
+        if (record_proofs_)
+            proof_conflicts_.push_back(reason_clauses_[lit]);
         prop_queue_.push_back(lit);
         prop_enqueued_.insert(lit);
     }
