@@ -168,6 +168,16 @@ add_test(
          grep -q 'by grind' ${CMAKE_BINARY_DIR}/t44_proof.lean"
 )
 
+# t51: --proof with U-sorted ite inlines (if c then a else b) and adds ite_pos/ite_neg clauses
+add_test(
+    NAME "smt2/ite_proof_generates"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t51_proof.lean \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t51_ite_proof.smt2 && \
+         grep -q 'ite_pos_0' ${CMAKE_BINARY_DIR}/t51_proof.lean && \
+         grep -q 'open Classical in' ${CMAKE_BINARY_DIR}/t51_proof.lean"
+)
+
 # t48-t49: n-ary xor (:left-assoc)
 add_smt2_test(nary_xor_unsat  t48_nary_xor_unsat.smt2  unsat)
 add_smt2_test(nary_xor_sat    t49_nary_xor_sat.smt2    sat)

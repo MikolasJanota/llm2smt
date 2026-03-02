@@ -23,7 +23,10 @@ public:
               const std::string& lean_project = {});
 
 private:
-    // NodeId → Lean expression string (handles constants and n-ary apps)
+    // Set during emit(); used by node_to_lean / fml_to_lean.
+    const SmtContext* ctx_ = nullptr;
+
+    // NodeId → Lean expression string (handles constants, n-ary apps, ite nodes)
     std::string node_to_lean(NodeId n, const NodeManager& nm) const;
 
     // FmlRef → Lean proposition string

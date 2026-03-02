@@ -66,6 +66,17 @@ std::string LeanEmitter::node_to_lean(NodeId n, const NodeManager& nm) const
     // valid (True and False are Prop values, matching `h : U → Prop`).
     if (raw_name == "__bool_true")  return "True";
     if (raw_name == "__bool_false") return "False";
+    // Inline-expand U-sorted ite nodes to `(if cond then t else e)` so that
+    // Lean has the full ite semantics without needing abstract constants.
+    if (ctx_) {
+        auto it = ctx_->ite_nodes.find(n);
+        if (it != ctx_->ite_nodes.end()) {
+            const IteInfo& info = it->second;
+            return "(if " + fml_to_lean(info.cond, nm)
+                   + " then " + node_to_lean(info.then_node, nm)
+                   + " else " + node_to_lean(info.else_node, nm) + ")";
+        }
+    }
     std::string sanitized = lean_ident(raw_name);
     if (d.children.empty()) return sanitized;
     std::string result = "(" + sanitized;
@@ -151,12 +162,19 @@ void LeanEmitter::emit(std::ostream& out,
                        const std::vector<std::vector<int>>& proof_conflicts,
                        const std::string& lean_project)
 {
+    ctx_ = &ctx;
     const NodeManager& nm = ctx.nm;
 
     if (lean_project.empty())
-        out << "import Mathlib.Tactic\n\nexample\n";
+        out << "import Mathlib.Tactic\n\n";
     else
-        out << "import " << lean_project << ".ConvertProp\n\nexample\n";
+        out << "import " << lean_project << ".ConvertProp\n\n";
+
+    // Need Classical for `if ... then ... else ...` on Props without Decidable.
+    if (!ctx.ite_nodes.empty())
+        out << "open Classical in\n";
+
+    out << "example\n";
 
     // ── Sorts ──────────────────────────────────────────────────────────────
     std::vector<std::string> sort_names;
@@ -179,9 +197,11 @@ void LeanEmitter::emit(std::ostream& out,
 
     for (const FnDecl& decl : ctx.declared_fn_order) {
         const std::string& fname = nm.symbol_table().get(decl.sym).name;
-        // Skip only the two Bool-bridging sentinels; other internal symbols
-        // (e.g. __ite_N) are legitimate U-sorted constants that need declarations.
-        if (fname == "__bool_true" || fname == "__bool_false")
+        // Skip Bool-bridging sentinels and ite proxy constants (__ite_N).
+        // Ite nodes are inlined as `(if cond then t else e)` in node_to_lean,
+        // so they need no Lean parameter declaration.
+        if (fname == "__bool_true" || fname == "__bool_false"
+            || fname.rfind("__ite_", 0) == 0)
             continue;
         bool is_bool    = (decl.return_sort == "Bool");
         bool is_zerory  = decl.param_sorts.empty();
@@ -235,6 +255,38 @@ void LeanEmitter::emit(std::ostream& out,
     lit_to_node.reserve(ctx.node_to_lit.size());
     for (const auto& [nid, lit] : ctx.node_to_lit)
         lit_to_node[lit] = nid;
+
+    // ── Ite semantic clauses ────────────────────────────────────────────────
+    // For each U-sorted ite node, add two clauses that encode its semantics:
+    //   ¬cond ∨ lhs = rhs    (if cond holds, ite result equals the then-branch)
+    //   cond ∨ lhs = rhs     (if cond fails, ite result equals the else-branch)
+    // Canonical NodeId ordering (smaller id on left) must match the ordering
+    // used by the theory clause emitter so sat_decide sees consistent atoms.
+    // These clauses are provable by grind via if_pos/if_neg.
+    size_t ite_clause_idx = 0;
+    for (const auto& [ite_id, info] : ctx.ite_nodes) {
+        const std::string cond_lean = fml_to_lean(info.cond, nm);
+
+        // then-branch clause: ¬cond ∨ canon(ite, then)
+        {
+            NodeId lhs_id = ite_id, rhs_id = info.then_node;
+            if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
+            out << "  have ite_pos_" << ite_clause_idx
+                << " : ¬(" << cond_lean << ") ∨ "
+                << node_to_lean(lhs_id, nm) << " = " << node_to_lean(rhs_id, nm)
+                << " := by grind\n";
+        }
+        // else-branch clause: cond ∨ canon(ite, else)
+        {
+            NodeId lhs_id = ite_id, rhs_id = info.else_node;
+            if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
+            out << "  have ite_neg_" << ite_clause_idx
+                << " : (" << cond_lean << ") ∨ "
+                << node_to_lean(lhs_id, nm) << " = " << node_to_lean(rhs_id, nm)
+                << " := by grind\n";
+        }
+        ++ite_clause_idx;
+    }
 
     // ── Theory lemmas ──────────────────────────────────────────────────────
     const auto& lit_to_atom = ctx.euf.lit_to_atom();

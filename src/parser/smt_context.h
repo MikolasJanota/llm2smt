@@ -7,6 +7,7 @@
 
 #include "core/node.h"
 #include "core/node_manager.h"
+#include "preprocessor/fml.h"
 #include "theories/euf/euf_solver.h"
 #include "sat/ipasir_up.h"
 
@@ -17,6 +18,13 @@ struct FnDecl {
     SymbolId                 sym;
     std::string              return_sort;
     std::vector<std::string> param_sorts;
+};
+
+// Info about a U-sorted ite node, for Lean proof emission.
+struct IteInfo {
+    FmlRef cond;        // Bool condition as a formula
+    NodeId then_node;
+    NodeId else_node;
 };
 
 // Holds the global state for one SMT-LIB2 parse session.
@@ -33,6 +41,9 @@ struct SmtContext {
     std::unordered_map<NodeId, int>            node_to_lit;
     // User-declared functions in declaration order (for deterministic get-model output)
     std::vector<FnDecl>                        declared_fn_order;
+
+    // U-sorted ite nodes: __ite_N NodeId → {condition FmlRef, then/else NodeIds}
+    std::unordered_map<NodeId, IteInfo> ite_nodes;
 
     std::vector<int> assertions;
     std::string      logic;

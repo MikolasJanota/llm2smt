@@ -279,6 +279,9 @@ NodeId Smt2Visitor::visit_term(
         // variable declaration for it.
         { FnDecl d; d.sym = fresh; d.return_sort = ite_sort;
           ctx_.declared_fn_order.push_back(std::move(d)); }
+        // Store ite info for proof emission (inline expansion in Lean).
+        if (!opts_.proof_file.empty())
+            ctx_.ite_nodes[result] = IteInfo{build_fml(ctx->term()[0]), then_node, else_node};
         int eq_then = ctx_.euf.register_equality(result, then_node);
         { std::array<int,2> cl = {-cond_lit, eq_then}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         int eq_else = ctx_.euf.register_equality(result, else_node);
