@@ -352,7 +352,13 @@ void LeanEmitter::emit(std::ostream& out,
         out << " := by grind\n";
     }
 
-    out << "  sat_decide\n";
+    // `assumption` handles the trivial case where `False` is literally in the
+    // hypothesis context (e.g. from `(assert false)`).  When that succeeds the
+    // goal is already closed; `sat_decide` is used for the general case.
+    // This avoids the "No goals to be solved" error that occurs when
+    // sat_decide's internal simp step closes the goal leaving bv_decide with
+    // nothing to do.
+    out << "  first | assumption | sat_decide\n";
 }
 
 } // namespace llm2smt

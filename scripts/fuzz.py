@@ -326,11 +326,14 @@ def check_proof(our_cmd: list, smt2_file: str, args, timeout: float) -> tuple[bo
         if r.returncode not in (0, 124) or not open(proof_file).read().strip():
             return False, f"proof generation failed (rc={r.returncode})"
 
-        # Run the proof checker
-        check_cmd = [args.check_proof, proof_file]
+        # Run the proof checker from its own directory (scripts often use
+        # relative paths internally, e.g. `cd Experiments3`).
+        check_script = os.path.abspath(args.check_proof)
+        check_cwd    = os.path.dirname(check_script)
+        check_cmd = [check_script, proof_file]
         try:
             r2 = subprocess.run(check_cmd, capture_output=True, text=True,
-                                timeout=timeout * 10 + 5)
+                                timeout=timeout * 10 + 5, cwd=check_cwd)
         except subprocess.TimeoutExpired:
             return False, "proof checker timed out"
         if r2.returncode != 0:
