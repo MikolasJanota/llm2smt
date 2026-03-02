@@ -59,7 +59,7 @@ int main(int argc, char** argv) {
     auto* nnf_flag = app.add_flag("--nnf", opts.nnf,
                  "Convert to Negation Normal Form before encoding");
     app.add_flag("--selectors", opts.selectors,
-                 "Use selector variable technique for Or-with-compound-disjuncts encoding")
+                 "[DEPRECATED] Use selector variable technique for Or-with-compound-disjuncts encoding")
        ->needs(nnf_flag);
     auto* proof_flag = app.add_option("--proof", opts.proof_file,
                    "Write Lean 4 UNSAT proof to this file (QF_UF only)");
@@ -75,6 +75,9 @@ int main(int argc, char** argv) {
     app.add_flag("--stats", print_stats, "Print solver statistics to stderr after solving");
 
     CLI11_PARSE(app, argc, argv);
+
+    if (opts.selectors)
+        std::cerr << "Warning: --selectors is deprecated and may be removed in a future version.\n";
 
     try {
         std::ifstream file;

@@ -43,8 +43,10 @@ function(add_smt2_test_selectors name file expected)
         COMMAND $<TARGET_FILE:llm2smt> --preprocess-passes 1 --nnf --selectors
                 "${CMAKE_CURRENT_SOURCE_DIR}/smt2/${file}"
     )
+    # --selectors is deprecated; its warning goes to stderr before the result,
+    # so use (^|\n) to match expected at the start of a line rather than ^.
     set_tests_properties("smt2/${name}" PROPERTIES
-        PASS_REGULAR_EXPRESSION "^${expected}"
+        PASS_REGULAR_EXPRESSION "(^|\n)${expected}"
     )
 endfunction()
 

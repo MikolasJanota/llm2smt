@@ -96,6 +96,9 @@ std::string LeanEmitter::fml_to_lean(FmlRef f, const NodeManager& nm) const
     case FmlKind::False:
         return "False";
     case FmlKind::Eq: {
+        // a = a is always true; emit "True" so sat_decide doesn't treat it as
+        // an opaque atom that it could assign false (reflexivity is not built in).
+        if (f->eq_lhs == f->eq_rhs) return "True";
         // Canonical order by NodeId so that a=b and b=a produce the same
         // string — sat_decide must not see them as distinct opaque atoms.
         NodeId lhs = f->eq_lhs, rhs = f->eq_rhs;
@@ -105,6 +108,10 @@ std::string LeanEmitter::fml_to_lean(FmlRef f, const NodeManager& nm) const
     case FmlKind::Pred:
         return node_to_lean(f->pred, nm);
     case FmlKind::Not:
+        // ¬(a = a) is always false; emit "False" so sat_decide can't satisfy it.
+        if (f->children[0]->kind == FmlKind::Eq &&
+            f->children[0]->eq_lhs == f->children[0]->eq_rhs)
+            return "False";
         return "¬(" + fml_to_lean(f->children[0], nm) + ")";
     case FmlKind::And: {
         std::string s = "(";
@@ -288,8 +295,74 @@ void LeanEmitter::emit(std::ostream& out,
         ++ite_clause_idx;
     }
 
-    // ── Theory lemmas ──────────────────────────────────────────────────────
+    // ── Ite bridging lemmas ─────────────────────────────────────────────────
+    // When preprocessing substitutes a proxy node (e.g. y$X$next_rhs_op) with
+    // the inlined ite expression directly, new "shortcut" EUF atoms are created
+    // (e.g. __ite_N = X$next rather than proxy = X$next).  These atoms appear
+    // in theory clauses but have no corresponding Lean hypothesis, so sat_decide
+    // cannot derive the equality by transitivity.
+    //
+    // For each such shortcut atom (ite_id = X where X is not the then/else
+    // branch and not a known proxy), emit:
+    //   ite_lean = X_lean ∨ ¬(proxy_lean = X_lean)  := by grind
+    // This is provable from the proxy hypothesis (proxy_lean = ite_lean).
     const auto& lit_to_atom = ctx.euf.lit_to_atom();
+    {
+        // Step 1: collect proxy nodes for each ite node from proof_fmls.
+        // A proxy is a user node P such that proof_fmls contains Eq(P, ite_id)
+        // or Eq(ite_id, P), i.e. the original assertion "(= P (ite ...))".
+        std::unordered_map<NodeId, std::vector<NodeId>> ite_proxies;
+        for (const FmlRef& f : proof_fmls) {
+            if (f->kind != FmlKind::Eq) continue;
+            NodeId a = f->eq_lhs, b = f->eq_rhs;
+            if (ctx.ite_nodes.count(a) && !ctx.ite_nodes.count(b))
+                ite_proxies[a].push_back(b);
+            else if (ctx.ite_nodes.count(b) && !ctx.ite_nodes.count(a))
+                ite_proxies[b].push_back(a);
+        }
+
+        // Step 2: for each ite node, find shortcut atoms and emit bridges.
+        size_t bridge_idx = 0;
+        for (const auto& [ite_id, info] : ctx.ite_nodes) {
+            auto pxit = ite_proxies.find(ite_id);
+            if (pxit == ite_proxies.end()) continue;  // no proxy → no shortcuts
+            const std::vector<NodeId>& proxies = pxit->second;
+
+            // Sides that are NOT shortcuts: then-branch, else-branch, proxies.
+            std::unordered_set<NodeId> non_shortcut;
+            non_shortcut.insert(info.then_node);
+            non_shortcut.insert(info.else_node);
+            for (NodeId p : proxies) non_shortcut.insert(p);
+
+            for (const auto& [var, atom] : lit_to_atom) {
+                NodeId a = atom.lhs, b = atom.rhs;
+                if (a != ite_id && b != ite_id) continue;
+                NodeId other = (a == ite_id) ? b : a;
+                if (non_shortcut.count(other)) continue;   // not a shortcut
+                if (ctx.ite_nodes.count(other)) continue;  // other ite — skip
+
+                // Canonical ordering for ite = other
+                NodeId lhs_id = ite_id, rhs_id = other;
+                if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
+                const std::string ite_eq_other =
+                    node_to_lean(lhs_id, nm) + " = " + node_to_lean(rhs_id, nm);
+
+                for (NodeId proxy : proxies) {
+                    // Canonical ordering for proxy = other
+                    NodeId p_lhs = proxy, p_rhs = other;
+                    if (p_lhs > p_rhs) std::swap(p_lhs, p_rhs);
+                    const std::string proxy_eq_other =
+                        node_to_lean(p_lhs, nm) + " = " + node_to_lean(p_rhs, nm);
+
+                    out << "  have ite_bridge_" << bridge_idx++
+                        << " : " << ite_eq_other
+                        << " ∨ ¬(" << proxy_eq_other << ") := by grind\n";
+                }
+            }
+        }
+    }
+
+    // ── Theory lemmas ──────────────────────────────────────────────────────
     for (size_t i = 0; i < proof_conflicts.size(); ++i) {
         const auto& clause = proof_conflicts[i];
         out << "  have cl_" << i << " : ";
@@ -304,6 +377,13 @@ void LeanEmitter::emit(std::ostream& out,
                 const EqAtom& atom = eit->second;
                 // Same canonical order as fml_to_lean(FmlKind::Eq, ...)
                 NodeId lhs_id = atom.lhs, rhs_id = atom.rhs;
+                // Reflexivity: a = a is always true (positive) / always false (neg).
+                // Emit the propositionally-correct constant so sat_decide doesn't
+                // need to reason about it.
+                if (lhs_id == rhs_id) {
+                    out << (lit > 0 ? "True" : "False");
+                    continue;
+                }
                 if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
                 // If one side is a Bool sentinel, emit propositional form so
                 // that sat_decide / grind see the same atom as the hypothesis.
@@ -354,11 +434,12 @@ void LeanEmitter::emit(std::ostream& out,
 
     // `assumption` handles the trivial case where `False` is literally in the
     // hypothesis context (e.g. from `(assert false)`).  When that succeeds the
-    // goal is already closed; `sat_decide` is used for the general case.
-    // This avoids the "No goals to be solved" error that occurs when
-    // sat_decide's internal simp step closes the goal leaving bv_decide with
-    // nothing to do.
-    out << "  first | assumption | sat_decide\n";
+    // goal is already closed before `grind` is attempted.
+    // `grind` is used for the general case: it performs EUF reasoning
+    // (transitivity, congruence) in addition to propositional reasoning, which
+    // is necessary when preprocessing substituted variables and introduced atoms
+    // that differ from the original hypothesis atoms by EUF-equivalent rewrites.
+    out << "  first | assumption | grind\n";
 }
 
 } // namespace llm2smt
