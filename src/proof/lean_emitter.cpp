@@ -373,40 +373,55 @@ void LeanEmitter::emit(std::ostream& out,
         const auto& clause = proof_conflicts[i];
         std::string tname = "cl_" + std::to_string(i);
 
-        // Check whether this is an eq-bridge unit clause with a known source Or.
-        // If so, emit as implication form: SOURCE_OR → decide (lhs = rhs) := by grind
-        if (clause.size() == 1) {
+        // Unit clauses arise when all equalities in the EUF explanation were
+        // permanent (eq-bridge or preproc-forced).  If every such permanent
+        // equality has a known eq-bridge source Or, state the theorem as an
+        // implication chain so grind only needs to reason about the specific
+        // disjunction(s) that implied the bridged equality:
+        //   theorem cl_N : SRC_OR_1 → SRC_OR_2 → ... → decide (lhs = rhs) := by grind
+        // This is a pure EUF tautology; grind proves it without any axiom context.
+        // In the contradiction theorem we apply it against the relevant hypothesis:
+        //   have cl_N : decide (lhs = rhs) := cl_N (by have hyp_j := hyp_j; grind) ...
+        if (clause.size() == 1 && i < ctx.euf.proof_unit_perm_deps().size()
+                && !ctx.euf.proof_unit_perm_deps()[i].empty()) {
+            const auto& perm_deps = ctx.euf.proof_unit_perm_deps()[i];
             int lit = clause[0];
             int var = (lit > 0) ? lit : -lit;
-            if (lit > 0) {
-                auto eit = lit_to_atom.find(var);
-                if (eit != lit_to_atom.end()) {
+            auto eit = lit_to_atom.find(var);
+            if (lit > 0 && eit != lit_to_atom.end()) {
+                // Collect unique source Or formulas for each perm dep.
+                struct SrcInfo { size_t hyp_idx; std::string src_str; };
+                std::vector<SrcInfo> sources;
+                bool all_found = true;
+                for (const auto& [pa, pb] : perm_deps) {
+                    NodeId a = pa, b = pb;
+                    if (a > b) std::swap(a, b);
+                    auto sit = ctx.eq_bridge_sources.find({a, b});
+                    if (sit == ctx.eq_bridge_sources.end()) { all_found = false; break; }
+                    std::string s = fml_to_lean(sit->second.second, nm);
+                    // Deduplicate: same Or formula might appear via multiple paths.
+                    bool dup = false;
+                    for (const auto& x : sources) if (x.src_str == s) { dup = true; break; }
+                    if (!dup) sources.push_back({sit->second.first + 1, std::move(s)});
+                }
+                if (all_found && !sources.empty()) {
                     NodeId lhs_id = eit->second.lhs, rhs_id = eit->second.rhs;
-                    NodeId canon_lhs = lhs_id, canon_rhs = rhs_id;
-                    if (canon_lhs > canon_rhs) std::swap(canon_lhs, canon_rhs);
-                    auto src_it = ctx.eq_bridge_sources.find({canon_lhs, canon_rhs});
-                    if (src_it != ctx.eq_bridge_sources.end()) {
-                        size_t hyp_idx = src_it->second.first + 1;  // 1-based
-                        FmlRef source_or = src_it->second.second;
-                        std::string src_str = fml_to_lean(source_or, nm);
-                        std::string lhs_str = node_to_lean(canon_lhs, nm);
-                        std::string rhs_str = node_to_lean(canon_rhs, nm);
-                        std::string concl = "decide (" + lhs_str + " = " + rhs_str + ")";
-
-                        // Theorem: SOURCE_OR → decide (lhs = rhs)
-                        // This is a pure EUF tautology; grind proves it standalone.
-                        out << "theorem " << tname << " : " << src_str
-                            << " → " << concl << " := by grind\n";
-                        theorem_names.push_back(tname);
-
-                        // In contradiction: apply the implication to hyp_j
-                        std::string app = "have " + tname + " : " + concl
-                            + " := " + tname
-                            + " (by have hyp" + std::to_string(hyp_idx)
-                            + " := hyp" + std::to_string(hyp_idx) + "; grind)";
-                        contradiction_applications.push_back(app);
-                        continue;
+                    if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
+                    std::string concl = "decide (" + node_to_lean(lhs_id, nm)
+                                        + " = " + node_to_lean(rhs_id, nm) + ")";
+                    // Emit: SRC_OR_1 → SRC_OR_2 → ... → decide (lhs = rhs) := by grind
+                    out << "theorem " << tname << " : ";
+                    for (const auto& s : sources) out << s.src_str << " → ";
+                    out << concl << " := by grind\n";
+                    theorem_names.push_back(tname);
+                    // Contradiction application: cl_N arg1 arg2 ...
+                    std::string app = "have " + tname + " : " + concl + " := " + tname;
+                    for (const auto& s : sources) {
+                        app += " (by have hyp" + std::to_string(s.hyp_idx)
+                               + " := hyp" + std::to_string(s.hyp_idx) + "; grind)";
                     }
+                    contradiction_applications.push_back(app);
+                    continue;
                 }
             }
         }

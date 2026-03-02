@@ -206,6 +206,19 @@ add_test(
          grep -q 'cl_0 (by have hyp1 := hyp1' ${CMAKE_BINARY_DIR}/t53_proof.lean"
 )
 
+# t54: --proof with --eq-bridge on 2-diamond chain (eq_diamond3): unit cl_N for x0=x2 must
+#      be stated as implication from BOTH source Or formulas (chained perm deps via transitivity).
+#      Regression for bug where cl_0 had only one hop looked up from eq_bridge_sources directly.
+add_test(
+    NAME "smt2/eq_bridge_proof_transitive_unit_clause"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --preprocess-passes 1 --eq-bridge \
+         --proof ${CMAKE_BINARY_DIR}/t54_proof.lean \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t54_eq_bridge_diamond3_proof.smt2 && \
+         grep -q 'cl_0 :.*→.*→ decide' ${CMAKE_BINARY_DIR}/t54_proof.lean && \
+         grep -q 'cl_0 (by have hyp1.*grind) (by have hyp1.*grind)' ${CMAKE_BINARY_DIR}/t54_proof.lean"
+)
+
 # t48-t49: n-ary xor (:left-assoc)
 add_smt2_test(nary_xor_unsat  t48_nary_xor_unsat.smt2  unsat)
 add_smt2_test(nary_xor_sat    t49_nary_xor_sat.smt2    sat)

@@ -77,6 +77,13 @@ public:
         return permanent_eq_pairs_;
     }
 
+    // For each entry in proof_conflicts(), the permanent equalities (original
+    // NodeId pairs) that were in the EUF explanation but skipped because they
+    // are permanent.  Non-empty only for unit conflict clauses.
+    const std::vector<std::vector<std::pair<NodeId,NodeId>>>& proof_unit_perm_deps() const {
+        return proof_unit_perm_deps_;
+    }
+
 private:
     NodeManager& nm_;
     CC           cc_;
@@ -95,6 +102,9 @@ private:
     // Same pairs kept as (original_lhs, original_rhs) for proof emission
     // (original = pre-flattening NodeIds, so node_to_lean can render them).
     std::vector<std::pair<NodeId, NodeId>>     permanent_eq_pairs_;
+    // Reverse map: flat-key → original NodeId pair for permanent equalities.
+    // Used by build_conflict to record perm deps for unit clause proof emission.
+    std::unordered_map<uint64_t, std::pair<NodeId,NodeId>> permanent_flat_to_orig_;
 
     // Next SAT variable to allocate (external to a real SAT solver, so we manage here)
     int next_var_ = 1;
@@ -121,6 +131,8 @@ private:
     // Proof recording
     bool                          record_proofs_   = false;
     std::vector<std::vector<int>> proof_conflicts_;
+    // Parallel to proof_conflicts_: permanent eq deps for unit clauses (else empty).
+    std::vector<std::vector<std::pair<NodeId,NodeId>>> proof_unit_perm_deps_;
 
     Stats& stats_;
 

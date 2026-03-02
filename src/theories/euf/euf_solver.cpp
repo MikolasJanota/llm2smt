@@ -42,6 +42,7 @@ void EufSolver::register_permanent_equality(NodeId lhs, NodeId rhs) {
     uint64_t key = atom_key(flat_lhs, flat_rhs);
     if (!permanent_flat_eqs_.insert(key).second) return;  // already done
     permanent_eq_pairs_.push_back({lhs, rhs});  // original nodes (not flat) for proof emission
+    permanent_flat_to_orig_[key] = {lhs, rhs};
     cc_.add_equation(flat_lhs, flat_rhs);
 }
 
@@ -158,6 +159,7 @@ void EufSolver::build_conflict(const std::vector<EqId>& explanation, int diseq_l
     // where ei are the equalities in the explanation.
     conflict_clause_.clear();
     conflict_clause_.push_back(-diseq_lit);  // negate the disequality literal
+    std::vector<std::pair<NodeId,NodeId>> perm_deps;
     for (EqId eq : explanation) {
         const Equation& e = cc_.get_equation(eq);
         // explain() only returns EqIds from DirectLabel edges, which are always
@@ -174,7 +176,13 @@ void EufSolver::build_conflict(const std::vector<EqId>& explanation, int diseq_l
         // In that case treat it as permanent: including the pre-registered SAT
         // literal would produce a tautological clause {V, ¬V} that crashes
         // CaDiCaL's analyze().
-        if (permanent_flat_eqs_.count(key)) continue;
+        if (permanent_flat_eqs_.count(key)) {
+            // Record original-node pair for proof emission.
+            auto pit = permanent_flat_to_orig_.find(key);
+            if (pit != permanent_flat_to_orig_.end())
+                perm_deps.push_back(pit->second);
+            continue;
+        }
         auto it = flat_atom_to_lit_.find(key);
         if (it == flat_atom_to_lit_.end()) {
             assert(false && "equation in explanation has no SAT literal and is not permanent");
@@ -186,8 +194,14 @@ void EufSolver::build_conflict(const std::vector<EqId>& explanation, int diseq_l
     stats_.euf_conflict_lits_total += conflict_clause_.size();
     has_conflict_     = true;
     conflict_lit_idx_ = 0;
-    if (record_proofs_)
+    if (record_proofs_) {
         proof_conflicts_.push_back(conflict_clause_);
+        // Record perm deps only for unit clauses (where all explanation eqs were permanent).
+        if (conflict_clause_.size() == 1)
+            proof_unit_perm_deps_.push_back(std::move(perm_deps));
+        else
+            proof_unit_perm_deps_.push_back({});
+    }
 }
 
 bool EufSolver::cb_has_external_clause(bool& is_forgettable) {
