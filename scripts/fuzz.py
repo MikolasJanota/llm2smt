@@ -21,6 +21,10 @@ Usage:
     # Model checking only (skip result-comparison, just verify models)
     python scripts/fuzz.py --check-model --count 200
 
+    # Proof checking: verify Lean proofs for all UNSAT cases
+    python scripts/fuzz.py --check-proof sandbox/check_proof.sh \
+        --proof-lean-project Experiments3 --count 100
+
 The reference solver (--ref) must accept an SMT-LIB2 file as its last argument
 and print "sat" or "unsat" on stdout.  Both cvc5 and z3 work out of the box.
 
@@ -300,6 +304,45 @@ def run_solver(cmd: list[str], filepath: str, timeout: float) -> str:
 # Per-test worker (called from thread pool)
 # ---------------------------------------------------------------------------
 
+def check_proof(our_cmd: list, smt2_file: str, args, timeout: float) -> tuple[bool, str]:
+    """
+    Generate a Lean proof for `smt2_file` and run args.check_proof on it.
+    Returns (ok, reason).  ok=True if the proof checker exits 0.
+    """
+    fd, proof_file = tempfile.mkstemp(suffix=".lean")
+    os.close(fd)
+    try:
+        # Build: solver --proof <proof_file> [--lean-project NAME] <smt2_file>
+        gen_cmd = ["timeout", str(timeout)] + our_cmd + ["--proof", proof_file]
+        if args.proof_lean_project:
+            gen_cmd += ["--lean-project", args.proof_lean_project]
+        gen_cmd.append(smt2_file)
+
+        try:
+            r = subprocess.run(gen_cmd, capture_output=True, text=True,
+                               timeout=timeout + 2)
+        except subprocess.TimeoutExpired:
+            return False, "proof generation timed out"
+        if r.returncode not in (0, 124) or not open(proof_file).read().strip():
+            return False, f"proof generation failed (rc={r.returncode})"
+
+        # Run the proof checker
+        check_cmd = [args.check_proof, proof_file]
+        try:
+            r2 = subprocess.run(check_cmd, capture_output=True, text=True,
+                                timeout=timeout * 10 + 5)
+        except subprocess.TimeoutExpired:
+            return False, "proof checker timed out"
+        if r2.returncode != 0:
+            return False, f"proof checker failed (rc={r2.returncode})"
+        return True, ""
+    finally:
+        try:
+            os.unlink(proof_file)
+        except OSError:
+            pass
+
+
 def _run_one_test(i: int, seed: int, args, our_cmd: list, ref_cmd: list,
                   save_dir: Path) -> dict:
     """
@@ -307,7 +350,8 @@ def _run_one_test(i: int, seed: int, args, our_cmd: list, ref_cmd: list,
     (each invocation uses its own RNG and temp file).
 
     Returns a dict with keys:
-      i, our, ref, smt2, model_ok (bool), model_reason (str)
+      i, our, ref, smt2, model_ok (bool), model_reason (str),
+      proof_ok (bool), proof_reason (str)
     """
     rng = random.Random(seed)
     smt2 = gen_qf_uf(
@@ -325,11 +369,16 @@ def _run_one_test(i: int, seed: int, args, our_cmd: list, ref_cmd: list,
     )
 
     fd, tmpfile = tempfile.mkstemp(suffix=".smt2")
+    proof_ok     = True
+    proof_reason = ""
     try:
         with os.fdopen(fd, "w") as fh:
             fh.write(smt2)
         our = run_solver(our_cmd, tmpfile, args.timeout)
         ref = run_solver(ref_cmd, tmpfile, args.timeout)
+
+        if our == "unsat" and args.check_proof:
+            proof_ok, proof_reason = check_proof(our_cmd, tmpfile, args, args.timeout)
     finally:
         os.unlink(tmpfile)
 
@@ -340,7 +389,8 @@ def _run_one_test(i: int, seed: int, args, our_cmd: list, ref_cmd: list,
                                                      args.timeout)
 
     return dict(i=i, our=our, ref=ref, smt2=smt2,
-                model_ok=model_ok, model_reason=model_reason)
+                model_ok=model_ok, model_reason=model_reason,
+                proof_ok=proof_ok, proof_reason=proof_reason)
 
 
 # ---------------------------------------------------------------------------
@@ -402,6 +452,12 @@ def main() -> int:
                         help="When our solver says SAT, verify the model is correct "
                              "by injecting it into the problem and re-checking with "
                              "the reference solver")
+    parser.add_argument("--check-proof", default=None, metavar="SCRIPT",
+                        help="When our solver says UNSAT, generate a Lean proof and "
+                             "run SCRIPT on it; SCRIPT must exit 0 on success")
+    parser.add_argument("--proof-lean-project", default=None, metavar="NAME",
+                        help="Lean project name passed as --lean-project to our solver "
+                             "when generating proofs (requires --check-proof)")
     args = parser.parse_args()
 
     our_cmd = args.our_solver.split()
@@ -415,7 +471,7 @@ def main() -> int:
     master_rng = random.Random(args.seed)
     test_seeds = [master_rng.randint(0, 2**32) for _ in range(args.count)]
 
-    n_ok = n_mismatch = n_our_err = n_ref_err = n_model_fail = 0
+    n_ok = n_mismatch = n_our_err = n_ref_err = n_model_fail = n_proof_fail = 0
     n_done = 0
 
     print(f"Fuzzing {args.count} random QF_UF problems "
@@ -428,6 +484,7 @@ def main() -> int:
     print(f"  Assertions  : {args.n_assert}  "
           f"(compound={args.compound_prob:.0%}  diseq={args.diseq_prob:.0%})")
     print(f"  Check model : {'yes' if args.check_model else 'no'}")
+    print(f"  Check proof : {args.check_proof or 'no'}")
     print()
 
     try:
@@ -473,11 +530,18 @@ def main() -> int:
                         print(f"[MODEL FAIL #{n_model_fail}] test {i}: "
                               f"{res['model_reason']}  saved → {fail_path}")
                         stop = args.stop_on_first_fail
+                    if not res["proof_ok"]:
+                        n_proof_fail += 1
+                        fail_path = save_dir / f"proof_fail_{i:06d}.smt2"
+                        fail_path.write_text(smt2)
+                        print(f"[PROOF FAIL #{n_proof_fail}] test {i}: "
+                              f"{res['proof_reason']}  saved → {fail_path}")
+                        stop = args.stop_on_first_fail
 
                 if n_done % 100 == 0:
                     print(f"  {n_done:5d}/{args.count}  "
                           f"ok={n_ok}  mismatch={n_mismatch}  "
-                          f"model_fail={n_model_fail}  "
+                          f"model_fail={n_model_fail}  proof_fail={n_proof_fail}  "
                           f"our_err={n_our_err}  ref_err={n_ref_err}")
 
                 if stop:
@@ -490,10 +554,11 @@ def main() -> int:
 
     print()
     print(f"Results: ok={n_ok}  mismatch={n_mismatch}  model_fail={n_model_fail}  "
-          f"our_err={n_our_err}  ref_err={n_ref_err}")
-    if n_mismatch or n_model_fail or n_our_err:
+          f"proof_fail={n_proof_fail}  our_err={n_our_err}  ref_err={n_ref_err}")
+    if n_mismatch or n_model_fail or n_proof_fail or n_our_err:
         print(f"Failing cases saved in: {save_dir}/")
-    return 0 if (n_mismatch == 0 and n_model_fail == 0 and n_our_err == 0) else 1
+    return 0 if (n_mismatch == 0 and n_model_fail == 0 and
+                 n_proof_fail == 0 and n_our_err == 0) else 1
 
 
 if __name__ == "__main__":
