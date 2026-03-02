@@ -6,6 +6,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace llm2smt {
@@ -97,19 +98,19 @@ std::string LeanEmitter::fml_to_lean(FmlRef f, const NodeManager& nm) const
     case FmlKind::False:
         return "False";
     case FmlKind::Eq: {
-        // a = a is always true; emit "True" so sat_decide doesn't treat it as
+        // a = a is always true; emit "True" so bv_decide doesn't treat it as
         // an opaque atom that it could assign false (reflexivity is not built in).
         if (f->eq_lhs == f->eq_rhs) return "True";
         // Canonical order by NodeId so that a=b and b=a produce the same
-        // string — sat_decide must not see them as distinct opaque atoms.
+        // string — bv_decide must not see them as distinct opaque atoms.
         NodeId lhs = f->eq_lhs, rhs = f->eq_rhs;
         if (lhs > rhs) std::swap(lhs, rhs);
-        return node_to_lean(lhs, nm) + " = " + node_to_lean(rhs, nm);
+        return "decide (" + node_to_lean(lhs, nm) + " = " + node_to_lean(rhs, nm) + ")";
     }
     case FmlKind::Pred:
-        return node_to_lean(f->pred, nm);
+        return "decide (" + node_to_lean(f->pred, nm) + ")";
     case FmlKind::Not:
-        // ¬(a = a) is always false; emit "False" so sat_decide can't satisfy it.
+        // ¬(a = a) is always false; emit "False" so bv_decide can't satisfy it.
         if (f->children[0]->kind == FmlKind::Eq &&
             f->children[0]->eq_lhs == f->children[0]->eq_rhs)
             return "False";
@@ -167,22 +168,14 @@ std::string LeanEmitter::fn_type(const FnDecl& fn, bool is_pred) const
 void LeanEmitter::emit(std::ostream& out,
                        const SmtContext& ctx,
                        const std::vector<FmlRef>& proof_fmls,
-                       const std::vector<std::vector<int>>& proof_conflicts,
-                       const std::string& lean_project)
+                       const std::vector<std::vector<int>>& proof_conflicts)
 {
     ctx_ = &ctx;
     const NodeManager& nm = ctx.nm;
 
-    if (lean_project.empty())
-        out << "import Mathlib.Tactic\n\n";
-    else
-        out << "import " << lean_project << ".ConvertProp\n\n";
-
-    // Need Classical for `if ... then ... else ...` on Props without Decidable.
-    if (!ctx.ite_nodes.empty())
-        out << "open Classical in\n";
-
-    out << "example\n";
+    out << "import Std.Tactic.BVDecide\n\n";
+    out << "noncomputable section\n";
+    out << "open Classical\n\n";
 
     // ── Sorts ──────────────────────────────────────────────────────────────
     std::vector<std::string> sort_names;
@@ -191,72 +184,31 @@ void LeanEmitter::emit(std::ostream& out,
         sort_names.push_back(name);
     std::sort(sort_names.begin(), sort_names.end());
 
-    for (const std::string& sname : sort_names) {
-        std::string lname = lean_ident(sname);
-        out << "    (" << lname << " : Type)\n";
-    }
+    for (const std::string& sname : sort_names)
+        out << "axiom " << lean_ident(sname) << " : Type\n";
 
-    // ── Categorise declared functions ──────────────────────────────────────
-    // 0-ary U-sorted constants grouped by return sort (preserving decl order within group)
-    std::map<std::string, std::vector<std::string>> constants_by_sort;
-    std::vector<const FnDecl*> nary_u;       // n-ary, non-Bool
-    std::vector<const FnDecl*> zerory_bool;  // 0-ary, Bool
-    std::vector<const FnDecl*> nary_bool;    // n-ary, Bool
-
+    // ── Declared functions (each on its own line, in declaration order) ─────
     for (const FnDecl& decl : ctx.declared_fn_order) {
         const std::string& fname = nm.symbol_table().get(decl.sym).name;
         // Skip Bool-bridging sentinels and ite proxy constants (__ite_N).
         // Ite nodes are inlined as `(if cond then t else e)` in node_to_lean,
-        // so they need no Lean parameter declaration.
+        // so they need no Lean axiom declaration.
         if (fname == "__bool_true" || fname == "__bool_false"
             || fname.rfind("__ite_", 0) == 0)
             continue;
-        bool is_bool    = (decl.return_sort == "Bool");
-        bool is_zerory  = decl.param_sorts.empty();
-
-        if (!is_bool && is_zerory)
-            constants_by_sort[decl.return_sort].push_back(lean_ident(fname));
-        else if (!is_bool && !is_zerory)
-            nary_u.push_back(&decl);
-        else if (is_bool && is_zerory)
-            zerory_bool.push_back(&decl);
-        else
-            nary_bool.push_back(&decl);
-    }
-
-    // 0-ary U-sorted constants (one line per sort, space-separated names)
-    for (const auto& [sort, names] : constants_by_sort) {
-        out << "    (";
-        for (size_t i = 0; i < names.size(); ++i) {
-            if (i > 0) out << " ";
-            out << names[i];
-        }
-        out << " : " << lean_ident(sort) << ")\n";
-    }
-
-    // n-ary U-sorted functions
-    for (const FnDecl* decl : nary_u) {
-        const std::string& fname = nm.symbol_table().get(decl->sym).name;
-        out << "    (" << lean_ident(fname) << " : " << fn_type(*decl, false) << ")\n";
-    }
-
-    // 0-ary Bool (propositional constants)
-    for (const FnDecl* decl : zerory_bool) {
-        const std::string& fname = nm.symbol_table().get(decl->sym).name;
-        out << "    (" << lean_ident(fname) << " : Prop)\n";
-    }
-
-    // n-ary Bool predicates
-    for (const FnDecl* decl : nary_bool) {
-        const std::string& fname = nm.symbol_table().get(decl->sym).name;
-        out << "    (" << lean_ident(fname) << " : " << fn_type(*decl, true) << ")\n";
+        bool is_bool = (decl.return_sort == "Bool");
+        out << "axiom " << lean_ident(fname) << " : " << fn_type(decl, is_bool) << "\n";
     }
 
     // ── Assertions ─────────────────────────────────────────────────────────
-    for (size_t i = 0; i < proof_fmls.size(); ++i)
-        out << "    (hyp" << (i + 1) << " : " << fml_to_lean(proof_fmls[i], nm) << ")\n";
+    std::vector<std::string> theorem_names;
+    for (size_t i = 0; i < proof_fmls.size(); ++i) {
+        std::string hname = "hyp" + std::to_string(i + 1);
+        out << "axiom " << hname << " : " << fml_to_lean(proof_fmls[i], nm) << "\n";
+        theorem_names.push_back(hname);
+    }
 
-    out << "    : False := by\n";
+    out << "\n";
 
     // ── Build reverse map: SAT literal → NodeId (for Bool-sorted nodes) ───
     std::unordered_map<int, NodeId> lit_to_node;
@@ -264,54 +216,52 @@ void LeanEmitter::emit(std::ostream& out,
     for (const auto& [nid, lit] : ctx.node_to_lit)
         lit_to_node[lit] = nid;
 
+    const auto& lit_to_atom = ctx.euf.lit_to_atom();
+
     // ── Ite semantic clauses ────────────────────────────────────────────────
     // For each U-sorted ite node, add two clauses that encode its semantics:
-    //   ¬cond ∨ lhs = rhs    (if cond holds, ite result equals the then-branch)
-    //   cond ∨ lhs = rhs     (if cond fails, ite result equals the else-branch)
-    // Canonical NodeId ordering (smaller id on left) must match the ordering
-    // used by the theory clause emitter so sat_decide sees consistent atoms.
+    //   ¬cond ∨ decide(ite = then)   (if cond holds, ite result equals the then-branch)
+    //   cond ∨ decide(ite = else)    (if cond fails, ite result equals the else-branch)
     // These clauses are provable by grind via if_pos/if_neg.
     size_t ite_clause_idx = 0;
     for (const auto& [ite_id, info] : ctx.ite_nodes) {
         const std::string cond_lean = fml_to_lean(info.cond, nm);
 
-        // then-branch clause: ¬cond ∨ canon(ite, then)
+        // then-branch clause: ¬cond ∨ decide(canon(ite, then))
         {
             NodeId lhs_id = ite_id, rhs_id = info.then_node;
             if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
-            out << "  have ite_pos_" << ite_clause_idx
-                << " : ¬(" << cond_lean << ") ∨ "
+            std::string tname = "ite_pos_" + std::to_string(ite_clause_idx);
+            out << "theorem " << tname << " : ¬(" << cond_lean << ") ∨ decide ("
                 << node_to_lean(lhs_id, nm) << " = " << node_to_lean(rhs_id, nm)
-                << " := by grind\n";
+                << ") := by grind\n";
+            theorem_names.push_back(tname);
         }
-        // else-branch clause: cond ∨ canon(ite, else)
+        // else-branch clause: cond ∨ decide(canon(ite, else))
         {
             NodeId lhs_id = ite_id, rhs_id = info.else_node;
             if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
-            out << "  have ite_neg_" << ite_clause_idx
-                << " : (" << cond_lean << ") ∨ "
+            std::string tname = "ite_neg_" + std::to_string(ite_clause_idx);
+            out << "theorem " << tname << " : (" << cond_lean << ") ∨ decide ("
                 << node_to_lean(lhs_id, nm) << " = " << node_to_lean(rhs_id, nm)
-                << " := by grind\n";
+                << ") := by grind\n";
+            theorem_names.push_back(tname);
         }
         ++ite_clause_idx;
     }
 
     // ── Ite bridging lemmas ─────────────────────────────────────────────────
-    // When preprocessing substitutes a proxy node (e.g. y$X$next_rhs_op) with
-    // the inlined ite expression directly, new "shortcut" EUF atoms are created
-    // (e.g. __ite_N = X$next rather than proxy = X$next).  These atoms appear
-    // in theory clauses but have no corresponding Lean hypothesis, so sat_decide
-    // cannot derive the equality by transitivity.
+    // When preprocessing substitutes a proxy node with the inlined ite expression
+    // directly, new "shortcut" EUF atoms are created (e.g. __ite_N = X$next rather
+    // than proxy = X$next).  These atoms appear in theory clauses but have no
+    // corresponding Lean hypothesis, so bv_decide cannot derive the equality by
+    // transitivity.
     //
     // For each such shortcut atom (ite_id = X where X is not the then/else
     // branch and not a known proxy), emit:
-    //   ite_lean = X_lean ∨ ¬(proxy_lean = X_lean)  := by grind
-    // This is provable from the proxy hypothesis (proxy_lean = ite_lean).
-    const auto& lit_to_atom = ctx.euf.lit_to_atom();
+    //   decide(ite = X) ∨ ¬(decide(proxy = X))  := by grind
     {
         // Step 1: collect proxy nodes for each ite node from proof_fmls.
-        // A proxy is a user node P such that proof_fmls contains Eq(P, ite_id)
-        // or Eq(ite_id, P), i.e. the original assertion "(= P (ite ...))".
         std::unordered_map<NodeId, std::vector<NodeId>> ite_proxies;
         for (const FmlRef& f : proof_fmls) {
             if (f->kind != FmlKind::Eq) continue;
@@ -326,7 +276,7 @@ void LeanEmitter::emit(std::ostream& out,
         size_t bridge_idx = 0;
         for (const auto& [ite_id, info] : ctx.ite_nodes) {
             auto pxit = ite_proxies.find(ite_id);
-            if (pxit == ite_proxies.end()) continue;  // no proxy → no shortcuts
+            if (pxit == ite_proxies.end()) continue;
             const std::vector<NodeId>& proxies = pxit->second;
 
             // Sides that are NOT shortcuts: then-branch, else-branch, proxies.
@@ -346,42 +296,37 @@ void LeanEmitter::emit(std::ostream& out,
                 NodeId lhs_id = ite_id, rhs_id = other;
                 if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
                 const std::string ite_eq_other =
-                    node_to_lean(lhs_id, nm) + " = " + node_to_lean(rhs_id, nm);
+                    "decide (" + node_to_lean(lhs_id, nm) + " = " + node_to_lean(rhs_id, nm) + ")";
 
                 for (NodeId proxy : proxies) {
                     // Canonical ordering for proxy = other
                     NodeId p_lhs = proxy, p_rhs = other;
                     if (p_lhs > p_rhs) std::swap(p_lhs, p_rhs);
                     const std::string proxy_eq_other =
-                        node_to_lean(p_lhs, nm) + " = " + node_to_lean(p_rhs, nm);
+                        "decide (" + node_to_lean(p_lhs, nm) + " = " + node_to_lean(p_rhs, nm) + ")";
 
-                    out << "  have ite_bridge_" << bridge_idx++
-                        << " : " << ite_eq_other
+                    std::string tname = "ite_bridge_" + std::to_string(bridge_idx++);
+                    out << "theorem " << tname << " : " << ite_eq_other
                         << " ∨ ¬(" << proxy_eq_other << ") := by grind\n";
+                    theorem_names.push_back(tname);
                 }
             }
         }
     }
 
     // ── Permanent-equality bridge lemmas ───────────────────────────────────
-    // When preprocessing establishes a permanent equality (pa = pb) — i.e. an
-    // equality merged in the CC without a SAT variable — theory-clause atoms
-    // may refer to one representative (say pa) while the proof hypotheses only
-    // mention the other (pb).  sat_decide treats pa=Z and pb=Z as independent
-    // opaque atoms and cannot derive one from the other by EUF transitivity.
+    // When preprocessing establishes a permanent equality (pa = pb), theory-clause
+    // atoms may refer to one representative while proof hypotheses only mention the
+    // other.  bv_decide treats pa=Z and pb=Z as independent opaque atoms and cannot
+    // derive one from the other by EUF transitivity.
     //
-    // For each permanent pair and each SAT atom touching either endpoint, emit
-    // a pure EUF transitivity tautology (provable by grind in isolation):
-    //   pa = Z  ∨  ¬(pb = Z)  ∨  ¬(pb = pa)     (pa-side: bridging pb→pa)
-    //   pb = Z  ∨  ¬(pa = Z)  ∨  ¬(pa = pb)     (pb-side: bridging pa→pb)
+    // For each permanent pair and each SAT atom touching either endpoint, emit:
+    //   decide(pa = Z) ∨ ¬(decide(pb = Z)) ∨ ¬(decide(pb = pa))  := by grind
     {
-        // Collect unique bridge clauses as (lhs, rhs, neg_lhs, neg_rhs, neg_pa, neg_pb)
-        // represented as sorted string pairs to avoid duplicates.
         std::set<std::tuple<NodeId,NodeId,NodeId,NodeId,NodeId,NodeId>> seen;
 
         size_t pbr_idx = 0;
         for (const auto& [pa, pb] : ctx.euf.permanent_equalities()) {
-            // For every SAT atom (A, Z): if A == pa or A == pb, emit both bridges.
             for (const auto& [var, atom] : lit_to_atom) {
                 for (int side = 0; side < 2; ++side) {
                     NodeId pivot = (side == 0) ? pa : pb;
@@ -394,19 +339,20 @@ void LeanEmitter::emit(std::ostream& out,
                     if (Z == other) continue;  // the pair itself — not needed
 
                     // Bridge: other = Z  ∨  ¬(pivot = Z)  ∨  ¬(pivot = other)
-                    // Apply canonical NodeId ordering to each equality atom.
                     NodeId l1 = other, r1 = Z;      if (l1 > r1) std::swap(l1, r1);
                     NodeId l2 = pivot, r2 = Z;      if (l2 > r2) std::swap(l2, r2);
                     NodeId l3 = pivot, r3 = other;  if (l3 > r3) std::swap(l3, r3);
 
                     auto key = std::make_tuple(l1, r1, l2, r2, l3, r3);
-                    if (!seen.insert(key).second) continue;  // duplicate
+                    if (!seen.insert(key).second) continue;
 
-                    out << "  have perm_bridge_" << pbr_idx++
-                        << " : " << node_to_lean(l1, nm) << " = " << node_to_lean(r1, nm)
-                        << " ∨ ¬(" << node_to_lean(l2, nm) << " = " << node_to_lean(r2, nm) << ")"
-                        << " ∨ ¬(" << node_to_lean(l3, nm) << " = " << node_to_lean(r3, nm) << ")"
+                    std::string tname = "perm_bridge_" + std::to_string(pbr_idx++);
+                    out << "theorem " << tname << " : "
+                        << "decide (" << node_to_lean(l1, nm) << " = " << node_to_lean(r1, nm) << ")"
+                        << " ∨ ¬(decide (" << node_to_lean(l2, nm) << " = " << node_to_lean(r2, nm) << "))"
+                        << " ∨ ¬(decide (" << node_to_lean(l3, nm) << " = " << node_to_lean(r3, nm) << "))"
                         << " := by grind\n";
+                    theorem_names.push_back(tname);
                 }
             }
         }
@@ -415,7 +361,8 @@ void LeanEmitter::emit(std::ostream& out,
     // ── Theory lemmas ──────────────────────────────────────────────────────
     for (size_t i = 0; i < proof_conflicts.size(); ++i) {
         const auto& clause = proof_conflicts[i];
-        out << "  have cl_" << i << " : ";
+        std::string tname = "cl_" + std::to_string(i);
+        out << "theorem " << tname << " : ";
         bool first = true;
         for (int lit : clause) {
             if (!first) out << " ∨ ";
@@ -425,71 +372,40 @@ void LeanEmitter::emit(std::ostream& out,
             auto eit = lit_to_atom.find(var);
             if (eit != lit_to_atom.end()) {
                 const EqAtom& atom = eit->second;
-                // Same canonical order as fml_to_lean(FmlKind::Eq, ...)
                 NodeId lhs_id = atom.lhs, rhs_id = atom.rhs;
-                // Reflexivity: a = a is always true (positive) / always false (neg).
-                // Emit the propositionally-correct constant so sat_decide doesn't
-                // need to reason about it.
+                // Reflexivity: emit propositionally-correct constant.
                 if (lhs_id == rhs_id) {
                     out << (lit > 0 ? "True" : "False");
                     continue;
                 }
                 if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
-                // If one side is a Bool sentinel, emit propositional form so
-                // that sat_decide / grind see the same atom as the hypothesis.
-                const std::string& lhs_sym =
-                    nm.symbol_table().get(nm.get(lhs_id).sym).name;
-                const std::string& rhs_sym =
-                    nm.symbol_table().get(nm.get(rhs_id).sym).name;
-                const bool lhs_is_sentinel =
-                    (lhs_sym == "__bool_true" || lhs_sym == "__bool_false");
-                const bool rhs_is_sentinel =
-                    (rhs_sym == "__bool_true" || rhs_sym == "__bool_false");
-                if (lhs_is_sentinel || rhs_is_sentinel) {
-                    // One side is the sentinel; the other is the Prop node.
-                    NodeId prop_id = lhs_is_sentinel ? rhs_id : lhs_id;
-                    const std::string& sentinel_sym =
-                        lhs_is_sentinel ? lhs_sym : rhs_sym;
-                    // positive sentinel_true  → prop holds
-                    // negative sentinel_true  → prop does not hold
-                    // positive sentinel_false → prop does not hold
-                    // negative sentinel_false → prop holds
-                    bool sentinel_is_true = (sentinel_sym == "__bool_true");
-                    bool prop_holds = sentinel_is_true ? (lit > 0) : (lit < 0);
-                    if (prop_holds)
-                        out << node_to_lean(prop_id, nm);
-                    else
-                        out << "¬(" << node_to_lean(prop_id, nm) << ")";
-                } else {
                 std::string lhs_str = node_to_lean(lhs_id, nm);
                 std::string rhs_str = node_to_lean(rhs_id, nm);
                 if (lit > 0)
-                    out << lhs_str << " = " << rhs_str;
+                    out << "decide (" << lhs_str << " = " << rhs_str << ")";
                 else
-                    out << "¬(" << lhs_str << " = " << rhs_str << ")";
-                }
+                    out << "¬(decide (" << lhs_str << " = " << rhs_str << "))";
             } else {
                 auto nit = lit_to_node.find(var);
                 if (nit != lit_to_node.end()) {
                     std::string node_str = node_to_lean(nit->second, nm);
                     if (lit > 0)
-                        out << node_str;
+                        out << "decide (" << node_str << ")";
                     else
-                        out << "¬(" << node_str << ")";
+                        out << "¬(decide (" << node_str << "))";
                 }
             }
         }
         out << " := by grind\n";
+        theorem_names.push_back(tname);
     }
 
-    // `assumption` handles the trivial case where `False` is literally a hypothesis
-    // (e.g. from `(assert false)`).  `sat_decide` closes the general case by treating
-    // the equality atoms and propositional variables as a finite SAT problem.
-    // NOTE: grind is intentionally NOT used here — it may time out on large goals.
-    //       All EUF reasoning is pre-encoded in the `have cl_i` lemmas above,
-    //       each proved individually by grind on a small clause.  sat_decide then
-    //       only needs to do propositional reasoning over those pre-established lemmas.
-    out << "  first | assumption | sat_decide\n";
+    // ── Contradiction theorem ──────────────────────────────────────────────
+    // Load all hypotheses and theory lemmas, then close with bv_decide.
+    out << "\ntheorem contradiction : False := by\n";
+    for (const auto& name : theorem_names)
+        out << "  have " << name << " := " << name << "\n";
+    out << "  bv_decide\n";
 }
 
 } // namespace llm2smt

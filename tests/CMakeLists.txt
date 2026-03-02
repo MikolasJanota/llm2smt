@@ -177,7 +177,7 @@ add_test(
         "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t51_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t51_ite_proof.smt2 && \
          grep -q 'ite_pos_0' ${CMAKE_BINARY_DIR}/t51_proof.lean && \
-         grep -q 'open Classical in' ${CMAKE_BINARY_DIR}/t51_proof.lean"
+         grep -q 'open Classical' ${CMAKE_BINARY_DIR}/t51_proof.lean"
 )
 
 # t52: --proof with --preprocess-passes 1 must not emit __flat_N proxy names in bridge lemmas.

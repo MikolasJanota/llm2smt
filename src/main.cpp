@@ -63,8 +63,6 @@ int main(int argc, char** argv) {
        ->needs(nnf_flag);
     auto* proof_flag = app.add_option("--proof", opts.proof_file,
                    "Write Lean 4 UNSAT proof to this file (QF_UF only)");
-    app.add_option("--lean-project", opts.lean_project,
-                   "Lean project name; emits 'import NAME.ConvertProp' (default: Experiments3; use '' for Mathlib.Tactic)");
     app.add_flag("--proof-minimize", opts.proof_minimize,
                  "Remove unnecessary theory lemmas via UNSAT-core extraction (requires --proof)")
        ->needs(proof_flag);
@@ -131,7 +129,7 @@ int main(int argc, char** argv) {
 
             std::ofstream proof_out(opts.proof_file);
             LeanEmitter emitter;
-            emitter.emit(proof_out, ctx, visitor.proof_fmls(), conflicts, opts.lean_project);
+            emitter.emit(proof_out, ctx, visitor.proof_fmls(), conflicts);
         }
 
         if (print_stats) stats.print(std::cerr);

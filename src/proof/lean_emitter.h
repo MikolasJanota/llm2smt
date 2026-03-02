@@ -19,8 +19,7 @@ public:
     void emit(std::ostream& out,
               const SmtContext& ctx,
               const std::vector<FmlRef>& proof_fmls,
-              const std::vector<std::vector<int>>& proof_conflicts,
-              const std::string& lean_project = {});
+              const std::vector<std::vector<int>>& proof_conflicts);
 
 private:
     // Set during emit(); used by node_to_lean / fml_to_lean.

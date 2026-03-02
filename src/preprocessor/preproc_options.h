@@ -11,7 +11,6 @@ struct PreprocOptions {
     bool        nnf        = false;  // convert to Negation Normal Form before encoding
     bool        selectors  = false;  // selector variable technique (requires nnf = true)
     std::string proof_file;          // empty = no proof output
-    std::string lean_project = "Experiments3";  // emit "import lean_project.ConvertProp"; use "" for Mathlib.Tactic
     bool        proof_minimize = false; // remove unnecessary theory lemmas via UNSAT core
     bool        eq_bridge  = false;  // add common EUF consequences of disjunction branches
 };
