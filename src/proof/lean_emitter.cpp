@@ -359,9 +359,59 @@ void LeanEmitter::emit(std::ostream& out,
     }
 
     // ── Theory lemmas ──────────────────────────────────────────────────────
+    // For each theory lemma we also store how to apply it in the contradiction
+    // theorem.  Most theorems use the trivial "have NAME := NAME" form, but
+    // eq-bridge unit clauses are stated as implications SOURCE_OR → decide(...)
+    // and must be applied: have NAME : decide(...) := NAME (by have hyp_j := hyp_j; grind)
+    std::vector<std::string> contradiction_applications;  // parallel to theorem_names
+
+    // Seed with axiom applications already in theorem_names (hyps).
+    for (const auto& name : theorem_names)
+        contradiction_applications.push_back("");  // trivial form
+
     for (size_t i = 0; i < proof_conflicts.size(); ++i) {
         const auto& clause = proof_conflicts[i];
         std::string tname = "cl_" + std::to_string(i);
+
+        // Check whether this is an eq-bridge unit clause with a known source Or.
+        // If so, emit as implication form: SOURCE_OR → decide (lhs = rhs) := by grind
+        if (clause.size() == 1) {
+            int lit = clause[0];
+            int var = (lit > 0) ? lit : -lit;
+            if (lit > 0) {
+                auto eit = lit_to_atom.find(var);
+                if (eit != lit_to_atom.end()) {
+                    NodeId lhs_id = eit->second.lhs, rhs_id = eit->second.rhs;
+                    NodeId canon_lhs = lhs_id, canon_rhs = rhs_id;
+                    if (canon_lhs > canon_rhs) std::swap(canon_lhs, canon_rhs);
+                    auto src_it = ctx.eq_bridge_sources.find({canon_lhs, canon_rhs});
+                    if (src_it != ctx.eq_bridge_sources.end()) {
+                        size_t hyp_idx = src_it->second.first + 1;  // 1-based
+                        FmlRef source_or = src_it->second.second;
+                        std::string src_str = fml_to_lean(source_or, nm);
+                        std::string lhs_str = node_to_lean(canon_lhs, nm);
+                        std::string rhs_str = node_to_lean(canon_rhs, nm);
+                        std::string concl = "decide (" + lhs_str + " = " + rhs_str + ")";
+
+                        // Theorem: SOURCE_OR → decide (lhs = rhs)
+                        // This is a pure EUF tautology; grind proves it standalone.
+                        out << "theorem " << tname << " : " << src_str
+                            << " → " << concl << " := by grind\n";
+                        theorem_names.push_back(tname);
+
+                        // In contradiction: apply the implication to hyp_j
+                        std::string app = "have " + tname + " : " + concl
+                            + " := " + tname
+                            + " (by have hyp" + std::to_string(hyp_idx)
+                            + " := hyp" + std::to_string(hyp_idx) + "; grind)";
+                        contradiction_applications.push_back(app);
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Normal clause emission.
         out << "theorem " << tname << " : ";
         bool first = true;
         for (int lit : clause) {
@@ -396,15 +446,31 @@ void LeanEmitter::emit(std::ostream& out,
                 }
             }
         }
-        out << " := by grind\n";
+        // Non-bridge unit clauses (e.g. from preproc forced equalities) are not
+        // universal EUF tautologies; include all hypotheses so grind can derive them.
+        const bool is_unit = (clause.size() == 1) && !proof_fmls.empty();
+        if (!is_unit) {
+            out << " := by grind\n";
+        } else {
+            out << " := by\n";
+            for (size_t j = 0; j < proof_fmls.size(); ++j)
+                out << "  have hyp" << (j + 1) << " := hyp" << (j + 1) << "\n";
+            out << "  grind\n";
+        }
         theorem_names.push_back(tname);
+        contradiction_applications.push_back("");  // trivial form
     }
 
     // ── Contradiction theorem ──────────────────────────────────────────────
-    // Load all hypotheses and theory lemmas, then close with bv_decide.
     out << "\ntheorem contradiction : False := by\n";
-    for (const auto& name : theorem_names)
-        out << "  have " << name << " := " << name << "\n";
+    for (size_t i = 0; i < theorem_names.size(); ++i) {
+        const std::string& name = theorem_names[i];
+        const std::string& app  = contradiction_applications[i];
+        if (app.empty())
+            out << "  have " << name << " := " << name << "\n";
+        else
+            out << "  " << app << "\n";
+    }
     out << "  bv_decide\n";
 }
 

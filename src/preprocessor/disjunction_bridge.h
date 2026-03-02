@@ -1,9 +1,19 @@
 #pragma once
 
+#include <cstddef>
 #include <vector>
+#include "core/node.h"
 #include "preprocessor/fml.h"
 
 namespace llm2smt {
+
+// Info about one equality derived by bridge_disjunctions.
+// Used by the proof emitter to produce tight implication-form lemmas.
+struct BridgeEquality {
+    size_t top_fml_idx;  // index into the fmls[] vector for the source formula
+    FmlRef source_or;    // the Or sub-formula from which this equality was derived
+    NodeId lhs, rhs;
+};
 
 // Equality bridging under disjunctions.
 //
@@ -26,6 +36,10 @@ namespace llm2smt {
 //
 // The pass is sound (only adds logical consequences) and runs in time
 // O(sum over Or-nodes of branches×equalities×shared_vars²).
-void bridge_disjunctions(std::vector<FmlRef>& fmls);
+//
+// If equalities is non-null, each derived equality is also appended to it
+// (used by the proof emitter to build implication-form lemmas).
+void bridge_disjunctions(std::vector<FmlRef>& fmls,
+                          std::vector<BridgeEquality>* equalities = nullptr);
 
 } // namespace llm2smt

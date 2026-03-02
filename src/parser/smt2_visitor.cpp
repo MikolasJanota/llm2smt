@@ -1084,11 +1084,18 @@ void Smt2Visitor::flush_pending_fmls()
     // so they take effect regardless of whether the Simplifier is enabled.
     if (opts_.eq_bridge) {
         const size_t before = pending_fmls_.size();
-        bridge_disjunctions(pending_fmls_);
+        std::vector<BridgeEquality> bridge_equalities;
+        bridge_disjunctions(pending_fmls_,
+                            !opts_.proof_file.empty() ? &bridge_equalities : nullptr);
         for (size_t i = before; i < pending_fmls_.size(); ++i) {
             const FmlRef& f = pending_fmls_[i];
             if (f->kind == FmlKind::Eq)
                 ctx_.euf.register_permanent_equality(f->eq_lhs, f->eq_rhs);
+        }
+        for (const auto& be : bridge_equalities) {
+            NodeId a = be.lhs, b = be.rhs;
+            if (a > b) std::swap(a, b);
+            ctx_.eq_bridge_sources[{a, b}] = {be.top_fml_idx, be.source_or};
         }
         pending_fmls_.resize(before);  // already in CC, don't re-encode
     }

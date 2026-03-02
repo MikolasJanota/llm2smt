@@ -48,7 +48,8 @@ static void collect_eqs(FmlRef f, UF& uf)
 
 // ── Bridge a single Or node ────────────────────────────────────────────────
 
-static void bridge_or(FmlRef f, std::vector<FmlRef>& out)
+static void bridge_or(FmlRef f, size_t top_idx, std::vector<FmlRef>& out,
+                       std::vector<BridgeEquality>* eq_out)
 {
     const auto& branches = f->children;
     if (branches.size() < 2) return;
@@ -79,23 +80,27 @@ static void bridge_or(FmlRef f, std::vector<FmlRef>& out)
             for (auto& u : uf) {
                 if (!u.same(a, b)) { common = false; break; }
             }
-            if (common)
+            if (common) {
                 out.push_back(fml_eq(a, b));
+                if (eq_out)
+                    eq_out->push_back({top_idx, f, a, b});
+            }
         }
     }
 }
 
 // ── Recurse through the formula tree to find all Or nodes ─────────────────
 
-static void extract_from(FmlRef f, std::vector<FmlRef>& out)
+static void extract_from(FmlRef f, size_t top_idx, std::vector<FmlRef>& out,
+                           std::vector<BridgeEquality>* eq_out)
 {
     switch (f->kind) {
     case FmlKind::Or:
-        bridge_or(f, out);
+        bridge_or(f, top_idx, out, eq_out);
         break;
     case FmlKind::And:
         for (const auto& ch : f->children)
-            extract_from(ch, out);
+            extract_from(ch, top_idx, out, eq_out);
         break;
     default:
         break;
@@ -104,11 +109,12 @@ static void extract_from(FmlRef f, std::vector<FmlRef>& out)
 
 // ── Public entry point ─────────────────────────────────────────────────────
 
-void bridge_disjunctions(std::vector<FmlRef>& fmls)
+void bridge_disjunctions(std::vector<FmlRef>& fmls,
+                          std::vector<BridgeEquality>* equalities)
 {
     std::vector<FmlRef> new_facts;
-    for (const auto& f : fmls)
-        extract_from(f, new_facts);
+    for (size_t i = 0; i < fmls.size(); ++i)
+        extract_from(fmls[i], i, new_facts, equalities);
     fmls.insert(fmls.end(), new_facts.begin(), new_facts.end());
 }
 

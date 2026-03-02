@@ -191,6 +191,21 @@ add_test(
          grep -c '__flat_' ${CMAKE_BINARY_DIR}/t52_proof.lean | grep -q '^0\$'"
 )
 
+# t53: --proof with --eq-bridge: unit cl_N from permanent eq-bridge equalities must be stated
+#      as implications from the specific source Or formula, not as bare unconditional theorems.
+#      E.g. cl_0 : (... ∨ ...) → decide (x0 = x1) := by grind,
+#      applied as: have cl_0 : decide (x0 = x1) := cl_0 (by have hyp1 := hyp1; grind).
+#      Regression for bug where cl_0 : decide (x0 = x1) was emitted without preconditions.
+add_test(
+    NAME "smt2/eq_bridge_proof_unit_clause_has_hyps"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --preprocess-passes 1 --eq-bridge \
+         --proof ${CMAKE_BINARY_DIR}/t53_proof.lean \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t53_eq_bridge_proof.smt2 && \
+         grep -q 'cl_0 :.*→ decide' ${CMAKE_BINARY_DIR}/t53_proof.lean && \
+         grep -q 'cl_0 (by have hyp1 := hyp1' ${CMAKE_BINARY_DIR}/t53_proof.lean"
+)
+
 # t48-t49: n-ary xor (:left-assoc)
 add_smt2_test(nary_xor_unsat  t48_nary_xor_unsat.smt2  unsat)
 add_smt2_test(nary_xor_sat    t49_nary_xor_sat.smt2    sat)

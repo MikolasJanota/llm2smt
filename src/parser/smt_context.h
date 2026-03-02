@@ -1,8 +1,10 @@
 #pragma once
 
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "core/node.h"
@@ -44,6 +46,10 @@ struct SmtContext {
 
     // U-sorted ite nodes: __ite_N NodeId → {condition FmlRef, then/else NodeIds}
     std::unordered_map<NodeId, IteInfo> ite_nodes;
+
+    // eq-bridge proof sources: canonical pair (min,max) → (top_fml_idx, source_or)
+    // Populated only when proof output is requested.
+    std::map<std::pair<NodeId,NodeId>, std::pair<size_t,FmlRef>> eq_bridge_sources;
 
     std::vector<int> assertions;
     std::string      logic;
