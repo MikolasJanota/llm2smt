@@ -41,6 +41,7 @@ void EufSolver::register_permanent_equality(NodeId lhs, NodeId rhs) {
     NodeId flat_rhs = flattener_.flatten_and_register(rhs);
     uint64_t key = atom_key(flat_lhs, flat_rhs);
     if (!permanent_flat_eqs_.insert(key).second) return;  // already done
+    permanent_eq_pairs_.push_back({lhs, rhs});  // original nodes (not flat) for proof emission
     cc_.add_equation(flat_lhs, flat_rhs);
 }
 

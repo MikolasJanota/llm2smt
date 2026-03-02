@@ -180,6 +180,17 @@ add_test(
          grep -q 'open Classical in' ${CMAKE_BINARY_DIR}/t51_proof.lean"
 )
 
+# t52: --proof with --preprocess-passes 1 must not emit __flat_N proxy names in bridge lemmas.
+#      Regression for bug where permanent_eq_pairs_ stored flat NodeIds instead of originals.
+add_test(
+    NAME "smt2/preproc_perm_eq_proof_no_flat_nodes"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --preprocess-passes 1 --proof ${CMAKE_BINARY_DIR}/t52_proof.lean \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t52_preproc_perm_eq_proof.smt2 && \
+         grep -q 'perm_bridge' ${CMAKE_BINARY_DIR}/t52_proof.lean && \
+         grep -c '__flat_' ${CMAKE_BINARY_DIR}/t52_proof.lean | grep -q '^0\$'"
+)
+
 # t48-t49: n-ary xor (:left-assoc)
 add_smt2_test(nary_xor_unsat  t48_nary_xor_unsat.smt2  unsat)
 add_smt2_test(nary_xor_sat    t49_nary_xor_sat.smt2    sat)

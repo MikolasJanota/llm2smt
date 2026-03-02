@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <map>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -357,6 +358,55 @@ void LeanEmitter::emit(std::ostream& out,
                     out << "  have ite_bridge_" << bridge_idx++
                         << " : " << ite_eq_other
                         << " ∨ ¬(" << proxy_eq_other << ") := by grind\n";
+                }
+            }
+        }
+    }
+
+    // ── Permanent-equality bridge lemmas ───────────────────────────────────
+    // When preprocessing establishes a permanent equality (pa = pb) — i.e. an
+    // equality merged in the CC without a SAT variable — theory-clause atoms
+    // may refer to one representative (say pa) while the proof hypotheses only
+    // mention the other (pb).  sat_decide treats pa=Z and pb=Z as independent
+    // opaque atoms and cannot derive one from the other by EUF transitivity.
+    //
+    // For each permanent pair and each SAT atom touching either endpoint, emit
+    // a pure EUF transitivity tautology (provable by grind in isolation):
+    //   pa = Z  ∨  ¬(pb = Z)  ∨  ¬(pb = pa)     (pa-side: bridging pb→pa)
+    //   pb = Z  ∨  ¬(pa = Z)  ∨  ¬(pa = pb)     (pb-side: bridging pa→pb)
+    {
+        // Collect unique bridge clauses as (lhs, rhs, neg_lhs, neg_rhs, neg_pa, neg_pb)
+        // represented as sorted string pairs to avoid duplicates.
+        std::set<std::tuple<NodeId,NodeId,NodeId,NodeId,NodeId,NodeId>> seen;
+
+        size_t pbr_idx = 0;
+        for (const auto& [pa, pb] : ctx.euf.permanent_equalities()) {
+            // For every SAT atom (A, Z): if A == pa or A == pb, emit both bridges.
+            for (const auto& [var, atom] : lit_to_atom) {
+                for (int side = 0; side < 2; ++side) {
+                    NodeId pivot = (side == 0) ? pa : pb;
+                    NodeId other = (side == 0) ? pb : pa;
+                    NodeId a = atom.lhs, b = atom.rhs;
+                    NodeId Z;
+                    if      (a == pivot) Z = b;
+                    else if (b == pivot) Z = a;
+                    else continue;
+                    if (Z == other) continue;  // the pair itself — not needed
+
+                    // Bridge: other = Z  ∨  ¬(pivot = Z)  ∨  ¬(pivot = other)
+                    // Apply canonical NodeId ordering to each equality atom.
+                    NodeId l1 = other, r1 = Z;      if (l1 > r1) std::swap(l1, r1);
+                    NodeId l2 = pivot, r2 = Z;      if (l2 > r2) std::swap(l2, r2);
+                    NodeId l3 = pivot, r3 = other;  if (l3 > r3) std::swap(l3, r3);
+
+                    auto key = std::make_tuple(l1, r1, l2, r2, l3, r3);
+                    if (!seen.insert(key).second) continue;  // duplicate
+
+                    out << "  have perm_bridge_" << pbr_idx++
+                        << " : " << node_to_lean(l1, nm) << " = " << node_to_lean(r1, nm)
+                        << " ∨ ¬(" << node_to_lean(l2, nm) << " = " << node_to_lean(r2, nm) << ")"
+                        << " ∨ ¬(" << node_to_lean(l3, nm) << " = " << node_to_lean(r3, nm) << ")"
+                        << " := by grind\n";
                 }
             }
         }

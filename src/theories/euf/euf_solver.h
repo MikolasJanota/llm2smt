@@ -70,6 +70,13 @@ public:
         return lit_to_atom_;
     }
 
+    // Original-node pairs permanently merged by preprocessing (no SAT variable).
+    // Used by the Lean emitter to generate transitivity bridge lemmas.
+    // The NodeIds are the pre-flattening originals so node_to_lean can render them.
+    const std::vector<std::pair<NodeId, NodeId>>& permanent_equalities() const {
+        return permanent_eq_pairs_;
+    }
+
 private:
     NodeManager& nm_;
     CC           cc_;
@@ -85,6 +92,9 @@ private:
     // Flat-node pairs for equalities that were permanently merged in the CC
     // without a SAT variable (registered via register_permanent_equality).
     std::unordered_set<uint64_t>               permanent_flat_eqs_;
+    // Same pairs kept as (original_lhs, original_rhs) for proof emission
+    // (original = pre-flattening NodeIds, so node_to_lean can render them).
+    std::vector<std::pair<NodeId, NodeId>>     permanent_eq_pairs_;
 
     // Next SAT variable to allocate (external to a real SAT solver, so we manage here)
     int next_var_ = 1;
