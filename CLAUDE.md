@@ -53,6 +53,11 @@ python scripts/minimize_smt2.py \
 python scripts/minimize_smt2.py \
     --cmd 'build-dbg/bin/llm2smt' \
     --input failing.smt2 --output minimal.smt2 --match 'wrong_string' -v
+
+# Lean proof wrong (solver says unsat but proof checker rejects it):
+python scripts/minimize_smt2.py \
+    --cmd 'scripts/oracle_proof_fail.sh --preprocess-passes 1' \
+    --input failing.smt2 --output minimal.smt2 -v
 ```
 
 Use `/minimize` to invoke this as a skill.
