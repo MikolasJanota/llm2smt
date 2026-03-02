@@ -91,6 +91,29 @@ Rules:
 - Never create the tag before the bump commit; always tag the bump commit itself.
 - Patch bumps (`Z`) for bug fixes; minor bumps (`Y`) for new features; major (`X`) for breaking changes.
 
+## Lean proof generation
+
+Generated proofs close with:
+```lean
+first | assumption | sat_decide
+```
+
+**`sat_decide` must always be the last tactic.**  Do not replace it with
+`grind` or add `grind` as a fallback on the whole goal — `grind` may time out
+on large proof contexts.
+
+`grind` is used **only** to prove individual theory lemmas:
+```lean
+have cl_0 : ... := by grind   -- small EUF clause, grind is fast here
+have cl_1 : ... := by grind
+...
+first | assumption | sat_decide   -- propositional closure; grind NOT here
+```
+
+All EUF reasoning (transitivity, congruence) must be pre-encoded in the
+`have cl_i` lemmas so that `sat_decide` only needs to do propositional
+reasoning over those pre-established clauses.
+
 ## Architecture notes
 
 - The CC module (`src/theories/euf/cc.cpp`) must only store **flat** nodes (constants or single-level applications).

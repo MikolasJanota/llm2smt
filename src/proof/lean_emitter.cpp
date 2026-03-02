@@ -432,14 +432,14 @@ void LeanEmitter::emit(std::ostream& out,
         out << " := by grind\n";
     }
 
-    // `assumption` handles the trivial case where `False` is literally in the
-    // hypothesis context (e.g. from `(assert false)`).  When that succeeds the
-    // goal is already closed before `grind` is attempted.
-    // `grind` is used for the general case: it performs EUF reasoning
-    // (transitivity, congruence) in addition to propositional reasoning, which
-    // is necessary when preprocessing substituted variables and introduced atoms
-    // that differ from the original hypothesis atoms by EUF-equivalent rewrites.
-    out << "  first | assumption | grind\n";
+    // `assumption` handles the trivial case where `False` is literally a hypothesis
+    // (e.g. from `(assert false)`).  `sat_decide` closes the general case by treating
+    // the equality atoms and propositional variables as a finite SAT problem.
+    // NOTE: grind is intentionally NOT used here — it may time out on large goals.
+    //       All EUF reasoning is pre-encoded in the `have cl_i` lemmas above,
+    //       each proved individually by grind on a small clause.  sat_decide then
+    //       only needs to do propositional reasoning over those pre-established lemmas.
+    out << "  first | assumption | sat_decide\n";
 }
 
 } // namespace llm2smt
