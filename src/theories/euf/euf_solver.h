@@ -54,6 +54,10 @@ public:
     // Allocate a fresh SAT variable (for Bool-valued atoms outside EUF).
     int new_var() { return next_var_++; }
 
+    // Enable/disable theory propagation (for ablation studies).
+    // Conflict detection is always active regardless of this setting.
+    void set_propagation(bool v) { propagation_enabled_ = v; }
+
     // Access internals (for testing)
     CC&          cc()          { return cc_; }
     NodeManager& nm()          { return nm_; }
@@ -158,6 +162,12 @@ private:
     // notify_assignment (called per assignment) into cb_propagate (called once
     // after a full BCP batch), avoiding O(K × N) quadratic work.
     bool needs_rescan_ = false;
+
+    // Ablation flag: when false, Step 2 of discover_propagations() (the
+    // proactive equality-implication scan) is skipped.  Conflict detection
+    // (Step 1, notify_assignment early check, cb_check_found_model) is
+    // unaffected so correctness is preserved.
+    bool propagation_enabled_ = true;
 
     // Make a 64-bit key for an unordered pair of NodeIds
     static uint64_t atom_key(NodeId a, NodeId b) {

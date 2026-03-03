@@ -264,6 +264,8 @@ void EufSolver::discover_propagations() {
         }
     }
 
+    if (!propagation_enabled_) return;
+
     // Step 2: scan all registered equality atoms for implied ones.
     // lit_to_atom_ stores only positive literals, so no sign filter needed.
     for (const auto& [lit, atom] : lit_to_atom_) {
