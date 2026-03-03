@@ -2,8 +2,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <map>
-#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -314,119 +312,80 @@ void LeanEmitter::emit(std::ostream& out,
         }
     }
 
-    // ── Permanent-equality bridge lemmas ───────────────────────────────────
-    // When preprocessing establishes a permanent equality (pa = pb), theory-clause
-    // atoms may refer to one representative while proof hypotheses only mention the
-    // other.  bv_decide treats pa=Z and pb=Z as independent opaque atoms and cannot
-    // derive one from the other by EUF transitivity.
-    //
-    // For each permanent pair and each SAT atom touching either endpoint, emit:
-    //   decide(pa = Z) ∨ ¬(decide(pb = Z)) ∨ ¬(decide(pb = pa))  := by grind
+    // ── Eq-bridge lemmas ────────────────────────────────────────────────────
+    // For each permanent equality (pa=pb) established by the eq-bridge preprocessor,
+    // the source is an Or formula whose disjuncts encode the ways pa=pb can hold.
+    // For each disjunct (typically a conjunction of EUF atoms), emit a simple
+    // implication theorem that grind can prove in isolation:
+    //   theorem eq_bridge_K : decide(A1) → decide(A2) → decide(pa=pb) := by grind
+    // bv_decide then does the propositional case-split over the source hypothesis.
     {
-        std::set<std::tuple<NodeId,NodeId,NodeId,NodeId,NodeId,NodeId>> seen;
-
-        size_t pbr_idx = 0;
-        for (const auto& [pa, pb] : ctx.euf.permanent_equalities()) {
-            for (const auto& [var, atom] : lit_to_atom) {
-                for (int side = 0; side < 2; ++side) {
-                    NodeId pivot = (side == 0) ? pa : pb;
-                    NodeId other = (side == 0) ? pb : pa;
-                    NodeId a = atom.lhs, b = atom.rhs;
-                    NodeId Z;
-                    if      (a == pivot) Z = b;
-                    else if (b == pivot) Z = a;
-                    else continue;
-                    if (Z == other) continue;  // the pair itself — not needed
-
-                    // Bridge: other = Z  ∨  ¬(pivot = Z)  ∨  ¬(pivot = other)
-                    NodeId l1 = other, r1 = Z;      if (l1 > r1) std::swap(l1, r1);
-                    NodeId l2 = pivot, r2 = Z;      if (l2 > r2) std::swap(l2, r2);
-                    NodeId l3 = pivot, r3 = other;  if (l3 > r3) std::swap(l3, r3);
-
-                    auto key = std::make_tuple(l1, r1, l2, r2, l3, r3);
-                    if (!seen.insert(key).second) continue;
-
-                    std::string tname = "perm_bridge_" + std::to_string(pbr_idx++);
-                    out << "theorem " << tname << " : "
-                        << "decide (" << node_to_lean(l1, nm) << " = " << node_to_lean(r1, nm) << ")"
-                        << " ∨ ¬(decide (" << node_to_lean(l2, nm) << " = " << node_to_lean(r2, nm) << "))"
-                        << " ∨ ¬(decide (" << node_to_lean(l3, nm) << " = " << node_to_lean(r3, nm) << "))"
-                        << " := by grind\n";
-                    theorem_names.push_back(tname);
-                }
+        size_t ebr_idx = 0;
+        for (const auto& [canonical_pair, bridge_info] : ctx.eq_bridge_sources) {
+            NodeId pa = canonical_pair.first, pb = canonical_pair.second;
+            // Conclusion: decide(pa=pb) — canonical pair is already min<max.
+            std::string concl = "decide (" + node_to_lean(pa, nm)
+                                 + " = " + node_to_lean(pb, nm) + ")";
+            FmlRef src_fml = bridge_info.second;
+            // Decompose Or into disjuncts (or treat atom as a single disjunct).
+            std::vector<FmlRef> disjuncts;
+            if (src_fml->kind == FmlKind::Or)
+                disjuncts = src_fml->children;
+            else
+                disjuncts.push_back(src_fml);
+            for (const FmlRef& disj : disjuncts) {
+                // Decompose And into conjuncts (or treat atom as a single conjunct).
+                std::vector<FmlRef> conjuncts;
+                if (disj->kind == FmlKind::And)
+                    conjuncts = disj->children;
+                else
+                    conjuncts.push_back(disj);
+                std::string tname = "eq_bridge_" + std::to_string(ebr_idx++);
+                out << "theorem " << tname << " : ";
+                for (const FmlRef& atom : conjuncts)
+                    out << fml_to_lean(atom, nm) << " → ";
+                out << concl << " := by grind\n";
+                theorem_names.push_back(tname);
             }
         }
     }
 
     // ── Theory lemmas ──────────────────────────────────────────────────────
-    // For each theory lemma we also store how to apply it in the contradiction
-    // theorem.  Most theorems use the trivial "have NAME := NAME" form, but
-    // eq-bridge unit clauses are stated as implications SOURCE_OR → decide(...)
-    // and must be applied: have NAME : decide(...) := NAME (by have hyp_j := hyp_j; grind)
-    std::vector<std::string> contradiction_applications;  // parallel to theorem_names
-
-    // Seed with axiom applications already in theorem_names (hyps).
-    for (const auto& name : theorem_names)
-        contradiction_applications.push_back("");  // trivial form
-
+    // All theory lemmas are simple clauses provable by grind in isolation —
+    // either a disjunction of decide-wrapped atoms (EUF tautology) or a
+    // simple implication chain for unit clauses (pure EUF transitivity).
+    const auto& perm_deps_vec = ctx.euf.proof_unit_perm_deps();
     for (size_t i = 0; i < proof_conflicts.size(); ++i) {
         const auto& clause = proof_conflicts[i];
         std::string tname = "cl_" + std::to_string(i);
 
-        // Unit clauses arise when all equalities in the EUF explanation were
-        // permanent (eq-bridge or preproc-forced).  If every such permanent
-        // equality has a known eq-bridge source Or, state the theorem as an
-        // implication chain so grind only needs to reason about the specific
-        // disjunction(s) that implied the bridged equality:
-        //   theorem cl_N : SRC_OR_1 → SRC_OR_2 → ... → decide (lhs = rhs) := by grind
-        // This is a pure EUF tautology; grind proves it without any axiom context.
-        // In the contradiction theorem we apply it against the relevant hypothesis:
-        //   have cl_N : decide (lhs = rhs) := cl_N (by have hyp_j := hyp_j; grind) ...
-        if (clause.size() == 1 && i < ctx.euf.proof_unit_perm_deps().size()
-                && !ctx.euf.proof_unit_perm_deps()[i].empty()) {
-            const auto& perm_deps = ctx.euf.proof_unit_perm_deps()[i];
+        // Unit clause with perm deps: emit as a simple EUF transitivity chain.
+        //   theorem cl_N : decide(pa0=pb0) → decide(pa1=pb1) → ... → decide(lhs=rhs)
+        //       := by grind
+        // grind proves this as a pure EUF tautology (transitivity + congruence).
+        // bv_decide then applies it propositionally in the contradiction theorem.
+        if (clause.size() == 1 && i < perm_deps_vec.size() && !perm_deps_vec[i].empty()) {
             int lit = clause[0];
             int var = (lit > 0) ? lit : -lit;
             auto eit = lit_to_atom.find(var);
             if (lit > 0 && eit != lit_to_atom.end()) {
-                // Collect unique source Or formulas for each perm dep.
-                struct SrcInfo { size_t hyp_idx; std::string src_str; };
-                std::vector<SrcInfo> sources;
-                bool all_found = true;
-                for (const auto& [pa, pb] : perm_deps) {
+                NodeId lhs_id = eit->second.lhs, rhs_id = eit->second.rhs;
+                if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
+                out << "theorem " << tname << " : ";
+                for (const auto& [pa, pb] : perm_deps_vec[i]) {
                     NodeId a = pa, b = pb;
                     if (a > b) std::swap(a, b);
-                    auto sit = ctx.eq_bridge_sources.find({a, b});
-                    if (sit == ctx.eq_bridge_sources.end()) { all_found = false; break; }
-                    std::string s = fml_to_lean(sit->second.second, nm);
-                    // Deduplicate: same Or formula might appear via multiple paths.
-                    bool dup = false;
-                    for (const auto& x : sources) if (x.src_str == s) { dup = true; break; }
-                    if (!dup) sources.push_back({sit->second.first + 1, std::move(s)});
+                    out << "decide (" << node_to_lean(a, nm) << " = "
+                        << node_to_lean(b, nm) << ") → ";
                 }
-                if (all_found && !sources.empty()) {
-                    NodeId lhs_id = eit->second.lhs, rhs_id = eit->second.rhs;
-                    if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
-                    std::string concl = "decide (" + node_to_lean(lhs_id, nm)
-                                        + " = " + node_to_lean(rhs_id, nm) + ")";
-                    // Emit: SRC_OR_1 → SRC_OR_2 → ... → decide (lhs = rhs) := by grind
-                    out << "theorem " << tname << " : ";
-                    for (const auto& s : sources) out << s.src_str << " → ";
-                    out << concl << " := by grind\n";
-                    theorem_names.push_back(tname);
-                    // Contradiction application: cl_N arg1 arg2 ...
-                    std::string app = "have " + tname + " : " + concl + " := " + tname;
-                    for (const auto& s : sources) {
-                        app += " (by have hyp" + std::to_string(s.hyp_idx)
-                               + " := hyp" + std::to_string(s.hyp_idx) + "; grind)";
-                    }
-                    contradiction_applications.push_back(app);
-                    continue;
-                }
+                out << "decide (" << node_to_lean(lhs_id, nm) << " = "
+                    << node_to_lean(rhs_id, nm) << ") := by grind\n";
+                theorem_names.push_back(tname);
+                continue;
             }
         }
 
-        // Normal clause emission.
+        // Normal clause: disjunction of decide-wrapped atoms, proved by grind.
         out << "theorem " << tname << " : ";
         bool first = true;
         for (int lit : clause) {
@@ -438,7 +397,6 @@ void LeanEmitter::emit(std::ostream& out,
             if (eit != lit_to_atom.end()) {
                 const EqAtom& atom = eit->second;
                 NodeId lhs_id = atom.lhs, rhs_id = atom.rhs;
-                // Reflexivity: emit propositionally-correct constant.
                 if (lhs_id == rhs_id) {
                     out << (lit > 0 ? "True" : "False");
                     continue;
@@ -461,31 +419,17 @@ void LeanEmitter::emit(std::ostream& out,
                 }
             }
         }
-        // Non-bridge unit clauses (e.g. from preproc forced equalities) are not
-        // universal EUF tautologies; include all hypotheses so grind can derive them.
-        const bool is_unit = (clause.size() == 1) && !proof_fmls.empty();
-        if (!is_unit) {
-            out << " := by grind\n";
-        } else {
-            out << " := by\n";
-            for (size_t j = 0; j < proof_fmls.size(); ++j)
-                out << "  have hyp" << (j + 1) << " := hyp" << (j + 1) << "\n";
-            out << "  grind\n";
-        }
+        out << " := by grind\n";
         theorem_names.push_back(tname);
-        contradiction_applications.push_back("");  // trivial form
     }
 
     // ── Contradiction theorem ──────────────────────────────────────────────
+    // Load every axiom and theorem into the local context, then let bv_decide
+    // do the propositional closure.  All EUF reasoning is pre-encoded in the
+    // standalone theorems above; bv_decide only needs propositional SAT.
     out << "\ntheorem contradiction : False := by\n";
-    for (size_t i = 0; i < theorem_names.size(); ++i) {
-        const std::string& name = theorem_names[i];
-        const std::string& app  = contradiction_applications[i];
-        if (app.empty())
-            out << "  have " << name << " := " << name << "\n";
-        else
-            out << "  " << app << "\n";
-    }
+    for (const std::string& name : theorem_names)
+        out << "  have " << name << " := " << name << "\n";
     out << "  bv_decide\n";
 }
 

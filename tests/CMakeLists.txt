@@ -180,43 +180,42 @@ add_test(
          grep -q 'open Classical' ${CMAKE_BINARY_DIR}/t51_proof.lean"
 )
 
-# t52: --proof with --preprocess-passes 1 must not emit __flat_N proxy names in bridge lemmas.
+# t52: --proof with --preprocess-passes 1 must not emit __flat_N proxy names in unit clauses.
 #      Regression for bug where permanent_eq_pairs_ stored flat NodeIds instead of originals.
+#      Unit clause cl_0 must use user-visible names (e.g. "(f b)") not "__flat_N".
 add_test(
     NAME "smt2/preproc_perm_eq_proof_no_flat_nodes"
     COMMAND bash -c
         "$<TARGET_FILE:llm2smt> --preprocess-passes 1 --proof ${CMAKE_BINARY_DIR}/t52_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t52_preproc_perm_eq_proof.smt2 && \
-         grep -q 'perm_bridge' ${CMAKE_BINARY_DIR}/t52_proof.lean && \
+         grep -q 'theorem cl_0' ${CMAKE_BINARY_DIR}/t52_proof.lean && \
          grep -c '__flat_' ${CMAKE_BINARY_DIR}/t52_proof.lean | grep -q '^0\$'"
 )
 
-# t53: --proof with --eq-bridge: unit cl_N from permanent eq-bridge equalities must be stated
-#      as implications from the specific source Or formula, not as bare unconditional theorems.
-#      E.g. cl_0 : (... ∨ ...) → decide (x0 = x1) := by grind,
-#      applied as: have cl_0 : decide (x0 = x1) := cl_0 (by have hyp1 := hyp1; grind).
-#      Regression for bug where cl_0 : decide (x0 = x1) was emitted without preconditions.
+# t53: --proof with --eq-bridge: eq_bridge lemmas must be emitted for each disjunct of the
+#      source Or formula, as simple implications decide(A) → decide(B) → decide(pa=pb).
+#      Regression: previously emitted complex (Or-formula) → decide(x0=x1) which grind timed out on.
 add_test(
-    NAME "smt2/eq_bridge_proof_unit_clause_has_hyps"
+    NAME "smt2/eq_bridge_proof_simple_bridge_lemmas"
     COMMAND bash -c
         "$<TARGET_FILE:llm2smt> --preprocess-passes 1 --eq-bridge \
          --proof ${CMAKE_BINARY_DIR}/t53_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t53_eq_bridge_proof.smt2 && \
-         grep -q 'cl_0 :.*→ decide' ${CMAKE_BINARY_DIR}/t53_proof.lean && \
-         grep -q 'cl_0 (by have hyp1 := hyp1' ${CMAKE_BINARY_DIR}/t53_proof.lean"
+         grep -q 'eq_bridge_0' ${CMAKE_BINARY_DIR}/t53_proof.lean && \
+         grep -q 'eq_bridge_1' ${CMAKE_BINARY_DIR}/t53_proof.lean"
 )
 
-# t54: --proof with --eq-bridge on 2-diamond chain (eq_diamond3): unit cl_N for x0=x2 must
-#      be stated as implication from BOTH source Or formulas (chained perm deps via transitivity).
-#      Regression for bug where cl_0 had only one hop looked up from eq_bridge_sources directly.
+# t54: --proof with --eq-bridge on 2-diamond chain (eq_diamond3): cl_0 must be a simple
+#      2-hop EUF transitivity decide(x0=x1) → decide(x1=x2) → decide(x0=x2).
+#      Regression: previously emitted complex (Or ∧ Or) → decide(x0=x2) which grind timed out on.
 add_test(
     NAME "smt2/eq_bridge_proof_transitive_unit_clause"
     COMMAND bash -c
         "$<TARGET_FILE:llm2smt> --preprocess-passes 1 --eq-bridge \
          --proof ${CMAKE_BINARY_DIR}/t54_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t54_eq_bridge_diamond3_proof.smt2 && \
-         grep -q 'cl_0 :.*→.*→ decide' ${CMAKE_BINARY_DIR}/t54_proof.lean && \
-         grep -q 'cl_0 (by have hyp1.*grind) (by have hyp1.*grind)' ${CMAKE_BINARY_DIR}/t54_proof.lean"
+         grep -q 'eq_bridge_' ${CMAKE_BINARY_DIR}/t54_proof.lean && \
+         grep -q 'cl_0 :.*→.*→ decide' ${CMAKE_BINARY_DIR}/t54_proof.lean"
 )
 
 # t48-t49: n-ary xor (:left-assoc)
