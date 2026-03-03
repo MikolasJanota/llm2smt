@@ -332,6 +332,8 @@ int EufSolver::cb_add_reason_clause_lit(int propagated_lit) {
 
 void EufSolver::discover_propagations() {
     // Step 1: scan all registered equality atoms for implied ones.
+    // Skipped when propagation_enabled_ is false (ablation mode): conflict
+    // detection (Step 2) still runs so the solver remains correct.
     // Must run before conflict detection so that theory propagation reason
     // clauses are always recorded in proof_conflicts_ even when a disequality
     // conflict is about to be reported (which would cause an early return).
@@ -343,7 +345,7 @@ void EufSolver::discover_propagations() {
     // bv_decide cannot derive the EUF transitivity step and fails with a
     // spurious counterexample.  We mark such atoms in prop_enqueued_ to avoid
     // re-processing them on the next rescan.
-    for (const auto& [lit, atom] : lit_to_atom_) {
+    if (propagation_enabled_) for (const auto& [lit, atom] : lit_to_atom_) {
         if (prop_enqueued_.count(lit)) continue;         // already handled this pass
         bool already_assigned = cur_eq_assigned_.count(lit) > 0;
         if (already_assigned && !record_proofs_) continue; // skip if assigned (non-proof mode)

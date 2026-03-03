@@ -68,6 +68,8 @@ int main(int argc, char** argv) {
        ->needs(proof_flag);
     app.add_flag("--eq-bridge", opts.eq_bridge,
                  "Add common EUF consequences of disjunction branches (eliminates diamond-like exponential blowup)");
+    app.add_flag("!--no-theory-prop", opts.theory_propagation,
+                 "Disable EUF theory propagation (ablation: conflict detection is preserved)");
 
     bool print_stats = false;
     app.add_flag("--stats", print_stats, "Print solver statistics to stderr after solving");
@@ -101,6 +103,9 @@ int main(int argc, char** argv) {
         EufSolver      euf(nm, stats);
         CaDiCaLSolver  sat;
         sat.connect_propagator(euf);
+
+        if (!opts.theory_propagation)
+            euf.set_propagation(false);
 
         const bool proof_mode = !opts.proof_file.empty();
         if (proof_mode) {

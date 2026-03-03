@@ -13,6 +13,7 @@ struct PreprocOptions {
     std::string proof_file;          // empty = no proof output
     bool        proof_minimize = false; // remove unnecessary theory lemmas via UNSAT core
     bool        eq_bridge  = false;  // add common EUF consequences of disjunction branches
+    bool        theory_propagation = true; // enable EUF theory propagation
 };
 
 } // namespace llm2smt
