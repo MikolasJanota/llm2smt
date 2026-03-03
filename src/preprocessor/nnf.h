@@ -61,9 +61,8 @@ inline FmlRef nnf_neg(FmlRef f)
     case FmlKind::False:
         return fml_true();
     case FmlKind::Eq:
-        return fml_not(fml_eq(f->eq_lhs, f->eq_rhs));
     case FmlKind::Pred:
-        return fml_not(fml_pred(f->pred));
+        return fml_not(f);  // wrap existing atom; no need to allocate a fresh copy
     case FmlKind::Not:
         return nnf_pos(f->children[0]);
     case FmlKind::And: {

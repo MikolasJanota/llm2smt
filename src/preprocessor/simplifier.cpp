@@ -210,7 +210,8 @@ FmlRef Simplifier::subst_and_fold(FmlRef f, const Fml& atom, bool forced_positiv
             new_f->children = std::move(new_children);
             return fold(new_f);
         }
-        return fold(f);
+        // No child changed: f is already folded (Phase 1 ran before subst_and_fold).
+        return f;
     }
     }
 }
@@ -221,10 +222,20 @@ FmlRef Simplifier::subst_and_fold(FmlRef f, const Fml& atom, bool forced_positiv
 
 NodeId Simplifier::uf_find(NodeId n)
 {
-    auto it = parent_.find(n);
-    if (it == parent_.end()) return n;
-    NodeId root = uf_find(it->second);
-    it->second = root;  // path compression
+    // Pass 1: walk to root.
+    NodeId root = n;
+    while (true) {
+        auto it = parent_.find(root);
+        if (it == parent_.end()) break;
+        root = it->second;
+    }
+    // Pass 2: path compression — point every node on the path directly to root.
+    while (n != root) {
+        auto it = parent_.find(n);
+        NodeId next = it->second;
+        it->second = root;
+        n = next;
+    }
     return root;
 }
 
