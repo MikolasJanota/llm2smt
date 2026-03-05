@@ -218,6 +218,17 @@ add_test(
          grep -q 'cl_0 :.*→.*→ decide' ${CMAKE_BINARY_DIR}/t54_proof.lean"
 )
 
+# t56: --proof with non-unit conflict clause that has a permanent equality dep.
+#      Regression: previously dropped perm deps for non-unit clauses, causing grind
+#      to fail (it couldn't prove the clause without the premise a=b).
+add_test(
+    NAME "smt2/perm_dep_nonunit_clause_proof"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --preprocess-passes 1 --proof ${CMAKE_BINARY_DIR}/t56_proof.lean \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t56_eq_bridge_perm_dep_nonunit.smt2 && \
+         grep -q 'cl_0 : decide.*→.*∨' ${CMAKE_BINARY_DIR}/t56_proof.lean"
+)
+
 # t55: --proof with Bool-formula argument (b0 : Bool → U applied to (= c1 c2)).
 #      Regression: previously emitted __bool_fml_N as undefined Lean identifier.
 #      Must not contain __bool_fml_ in proof; must contain (c1 = c2) expansion.

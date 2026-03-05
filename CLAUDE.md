@@ -91,6 +91,16 @@ Rules:
 - Never create the tag before the bump commit; always tag the bump commit itself.
 - Patch bumps (`Z`) for bug fixes; minor bumps (`Y`) for new features; major (`X`) for breaking changes.
 
+## Lean proof checking
+
+Always use `~/git/llm2smt/sandbox/check_proof.sh` to verify generated Lean proofs:
+
+```bash
+timeout 120 ~/git/llm2smt/sandbox/check_proof.sh /tmp/proof.lean
+```
+
+No output = success. Any output = Lean error.
+
 ## Lean proof generation
 
 Generated proofs close with:

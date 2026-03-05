@@ -196,11 +196,11 @@ void EufSolver::build_conflict(const std::vector<EqId>& explanation, int diseq_l
     conflict_lit_idx_ = 0;
     if (record_proofs_) {
         proof_conflicts_.push_back(conflict_clause_);
-        // Record perm deps only for unit clauses (where all explanation eqs were permanent).
-        if (conflict_clause_.size() == 1)
-            proof_unit_perm_deps_.push_back(std::move(perm_deps));
-        else
-            proof_unit_perm_deps_.push_back({});
+        // Record permanent-equality deps for ALL conflict clauses.
+        // For unit clauses these become implication premises (transitivity form).
+        // For non-unit clauses they also become premises so that grind can use
+        // congruence over permanent equalities that were dropped from the SAT clause.
+        proof_unit_perm_deps_.push_back(std::move(perm_deps));
     }
 }
 

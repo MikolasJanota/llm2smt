@@ -430,7 +430,18 @@ void LeanEmitter::emit(std::ostream& out,
         }
 
         // Normal clause: disjunction of decide-wrapped atoms, proved by grind.
+        // If permanent equalities were part of the EUF explanation (dropped from
+        // the SAT clause because they have no literal), emit them as implication
+        // premises so grind can use congruence over those equalities.
         out << "theorem " << tname << " : ";
+        if (i < perm_deps_vec.size()) {
+            for (const auto& [pa, pb] : perm_deps_vec[i]) {
+                NodeId a = pa, b = pb;
+                if (a > b) std::swap(a, b);
+                out << "decide (" << node_to_lean(a, nm) << " = "
+                    << node_to_lean(b, nm) << ") → ";
+            }
+        }
         bool first = true;
         for (int lit : clause) {
             if (!first) out << " ∨ ";
