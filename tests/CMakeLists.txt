@@ -218,6 +218,18 @@ add_test(
          grep -q 'cl_0 :.*→.*→ decide' ${CMAKE_BINARY_DIR}/t54_proof.lean"
 )
 
+# t55: --proof with Bool-formula argument (b0 : Bool → U applied to (= c1 c2)).
+#      Regression: previously emitted __bool_fml_N as undefined Lean identifier.
+#      Must not contain __bool_fml_ in proof; must contain (c1 = c2) expansion.
+add_test(
+    NAME "smt2/bool_fml_arg_proof"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t55_proof.lean \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t55_bool_fml_arg_proof.smt2 && \
+         ! grep -q '__bool_fml_' ${CMAKE_BINARY_DIR}/t55_proof.lean && \
+         grep -q 'b0 (c1 = c2)' ${CMAKE_BINARY_DIR}/t55_proof.lean"
+)
+
 # t48-t49: n-ary xor (:left-assoc)
 add_smt2_test(nary_xor_unsat  t48_nary_xor_unsat.smt2  unsat)
 add_smt2_test(nary_xor_sat    t49_nary_xor_sat.smt2    sat)

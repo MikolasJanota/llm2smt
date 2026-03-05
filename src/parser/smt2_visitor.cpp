@@ -245,6 +245,9 @@ NodeId Smt2Visitor::visit_term(
         // Record lit so bool_for() can read the truth value for get-model output
         // (the node is U-sorted but node_to_lit is NodeId→int with no sort restriction).
         ctx_.node_to_lit[node] = lit;
+        // Record the formula for proof emission so node_to_lean can inline-expand it.
+        if (!opts_.proof_file.empty())
+            ctx_.bool_fml_nodes[node] = build_fml(ctx);
         NodeId true_n  = get_bool_term_node(true);
         NodeId false_n = get_bool_term_node(false);
         int eq_true  = ctx_.euf.register_equality(node, true_n);

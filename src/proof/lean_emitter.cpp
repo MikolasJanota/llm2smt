@@ -102,6 +102,24 @@ std::string LeanEmitter::node_to_lean(NodeId n, const NodeManager& nm) const
                    + " then " + node_to_lean(info.then_node, nm)
                    + " else " + node_to_lean(info.else_node, nm) + ")";
         }
+        auto bit = ctx_->bool_fml_nodes.find(n);
+        if (bit != ctx_->bool_fml_nodes.end()) {
+            // Inline-expand __bool_fml_N as a Prop expression (no decide wrapper),
+            // so that equality comparisons with __bool_true/__bool_false (Prop) are
+            // type-correct, and so it can be passed to functions with Bool parameter
+            // sort (mapped to Prop in Lean).
+            const FmlRef& f = bit->second;
+            if (f->kind == FmlKind::Eq) {
+                if (f->eq_lhs == f->eq_rhs) return "True";
+                NodeId lhs = f->eq_lhs, rhs = f->eq_rhs;
+                if (lhs > rhs) std::swap(lhs, rhs);
+                return "(" + node_to_lean(lhs, nm) + " = " + node_to_lean(rhs, nm) + ")";
+            }
+            if (f->kind == FmlKind::Pred)
+                return node_to_lean(f->pred, nm);
+            // Compound formulas: fml_to_lean returns Prop via Bool→Prop coercion.
+            return "(" + fml_to_lean(f, nm) + ")";
+        }
     }
     std::string sanitized = lean_ident(raw_name);
     if (d.children.empty()) return sanitized;
