@@ -241,6 +241,19 @@ add_test(
          grep -q 'b0 (c1 = c2)' ${CMAKE_BINARY_DIR}/t55_proof.lean"
 )
 
+# t57: --proof where SAT assigns equalities before EUF can propagate them.
+#      Regression: the CC explanation for already-assigned atoms included the
+#      self-referential SAT edge, producing tautological reason clauses [+L,-L].
+#      Trivial unit reason clauses with no perm deps must not be emitted (grind
+#      cannot prove them in isolation without local hypothesis context).
+add_test(
+    NAME "smt2/proof_perm_dep_unit_assign"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t57_proof.lean \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t57_proof_perm_dep_unit_assign.smt2 && \
+         ! grep -qP '^theorem cl_\\d+ : decide \\([^)]+\\) := by grind' ${CMAKE_BINARY_DIR}/t57_proof.lean"
+)
+
 # t48-t49: n-ary xor (:left-assoc)
 add_smt2_test(nary_xor_unsat  t48_nary_xor_unsat.smt2  unsat)
 add_smt2_test(nary_xor_sat    t49_nary_xor_sat.smt2    sat)

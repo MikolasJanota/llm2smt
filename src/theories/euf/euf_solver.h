@@ -174,7 +174,8 @@ private:
 
     // Build the reason clause [plit, -e1_lit, -e2_lit, …] for a propagated
     // equality literal.  Permanent equalities (no SAT var) are dropped.
-    std::vector<int> build_reason_clause(int plit, const std::vector<EqId>& expl);
+    std::vector<int> build_reason_clause(int plit, const std::vector<EqId>& expl,
+                                          std::vector<std::pair<NodeId,NodeId>>* out_perm_deps = nullptr);
 };
 
 } // namespace llm2smt

@@ -225,11 +225,13 @@ int EufSolver::cb_add_external_clause_lit() {
 // ============================================================================
 
 int EufSolver::cb_propagate() {
-    // Skip rescan if there is already a conflict pending: the rescan would
-    // only duplicate that conflict (or overwrite it with the same clause).
-    // Leave needs_rescan_ set so the next call after CaDiCaL resolves the
-    // conflict (and notify_backtrack resets has_conflict_) will re-run it.
-    if (needs_rescan_ && !has_conflict_) {
+    // Always run the propagation scan when needed, even if a conflict is already
+    // pending.  The scan (Step 1 of discover_propagations) must record reason
+    // clauses in proof_conflicts_ for proof completeness.  When notify_assignment
+    // detects an early conflict before cb_propagate runs, the scan would be
+    // skipped by the old !has_conflict_ guard, leaving transitivity lemmas out
+    // of the proof and causing bv_decide to fail with a spurious counterexample.
+    if (needs_rescan_) {
         needs_rescan_ = false;
         discover_propagations();
     }
@@ -254,34 +256,68 @@ int EufSolver::cb_add_reason_clause_lit(int propagated_lit) {
 }
 
 void EufSolver::discover_propagations() {
-    // Step 1: check for conflicts with active disequalities first.
-    // If a conflict exists, report it and skip propagation entirely.
-    for (const Disequality& d : active_diseqs_) {
-        if (cc_.are_congruent(d.flat_lhs, d.flat_rhs)) {
-            std::vector<EqId> expl = cc_.explain(d.flat_lhs, d.flat_rhs);
-            build_conflict(expl, d.orig_lit);
-            return;
-        }
-    }
-
-    // Step 2: scan all registered equality atoms for implied ones.
+    // Step 1: scan all registered equality atoms for implied ones.
+    // Must run before conflict detection so that theory propagation reason
+    // clauses are always recorded in proof_conflicts_ even when a disequality
+    // conflict is about to be reported (which would cause an early return).
     // lit_to_atom_ stores only positive literals, so no sign filter needed.
+    //
+    // In proof-recording mode we also process already-assigned atoms: SAT may
+    // have assigned an equality TRUE before the theory could propagate it, so
+    // there would be no reason clause recorded for it.  Without the clause,
+    // bv_decide cannot derive the EUF transitivity step and fails with a
+    // spurious counterexample.  We mark such atoms in prop_enqueued_ to avoid
+    // re-processing them on the next rescan.
     for (const auto& [lit, atom] : lit_to_atom_) {
-        if (prop_enqueued_.count(lit)) continue;         // already queued this pass
-        if (cur_eq_assigned_.count(lit)) continue;       // already in CaDiCaL's trail
+        if (prop_enqueued_.count(lit)) continue;         // already handled this pass
+        bool already_assigned = cur_eq_assigned_.count(lit) > 0;
+        if (already_assigned && !record_proofs_) continue; // skip if assigned (non-proof mode)
         if (!cc_.are_congruent(atom.flat_lhs, atom.flat_rhs)) continue;
 
         std::vector<EqId> expl = cc_.explain(atom.flat_lhs, atom.flat_rhs);
-        reason_clauses_[lit] = build_reason_clause(lit, expl);
-        if (record_proofs_)
-            proof_conflicts_.push_back(reason_clauses_[lit]);
-        prop_queue_.push_back(lit);
-        prop_enqueued_.insert(lit);
+        std::vector<std::pair<NodeId,NodeId>> perm_deps;
+        reason_clauses_[lit] = build_reason_clause(lit, expl,
+                                                    record_proofs_ ? &perm_deps : nullptr);
+        if (record_proofs_) {
+            const auto& rc = reason_clauses_[lit];
+            // Trivial unit clauses (size==1, no perm_deps) for already-assigned
+            // atoms are redundant: the atom is directly in the hypothesis axioms
+            // or bv_decide can derive it from them without a separate lemma.
+            // Emitting such a clause would produce `theorem cl_N : decide(...) := by grind`
+            // which grind cannot prove in isolation (no local hypotheses).
+            if (already_assigned && rc.size() == 1 && perm_deps.empty()) {
+                // skip — redundant with hypothesis axioms
+            } else {
+                proof_conflicts_.push_back(rc);
+                proof_unit_perm_deps_.push_back(std::move(perm_deps));
+            }
+        }
+        prop_enqueued_.insert(lit);  // mark as handled (prevent duplicate recording)
+        if (!already_assigned) {
+            prop_queue_.push_back(lit);
+        }
+    }
+
+    // Step 2: check for conflicts with active disequalities.
+    // Skip if a conflict was already detected by notify_assignment (early
+    // detection path): in that case has_conflict_ is true and build_conflict
+    // has already been called, so we must not overwrite the conflict clause
+    // with a duplicate or corrupt the conflict_lit_idx_ that CaDiCaL will
+    // consume via cb_has_external_clause / cb_add_external_clause_lit.
+    if (!has_conflict_) {
+        for (const Disequality& d : active_diseqs_) {
+            if (cc_.are_congruent(d.flat_lhs, d.flat_rhs)) {
+                std::vector<EqId> expl = cc_.explain(d.flat_lhs, d.flat_rhs);
+                build_conflict(expl, d.orig_lit);
+                return;
+            }
+        }
     }
 }
 
 std::vector<int> EufSolver::build_reason_clause(int plit,
-                                                  const std::vector<EqId>& expl) {
+                                                  const std::vector<EqId>& expl,
+                                                  std::vector<std::pair<NodeId,NodeId>>* out_perm_deps) {
     // Reason clause: plit ∨ ¬e1 ∨ ¬e2 ∨ …
     // If all antecedent equalities hold, the CC derives plit.
     std::vector<int> clause;
@@ -294,12 +330,26 @@ std::vector<int> EufSolver::build_reason_clause(int plit,
         // both in flat_atom_to_lit_ and permanent_flat_eqs_ if register_equality
         // was called before the simplifier decided it was permanent.  Treat as
         // permanent so the reason clause stays non-tautological.
-        if (permanent_flat_eqs_.count(key)) continue;
+        if (permanent_flat_eqs_.count(key)) {
+            // Collect perm_deps when requested (for proof emission).
+            if (out_perm_deps) {
+                auto pit = permanent_flat_to_orig_.find(key);
+                if (pit != permanent_flat_to_orig_.end())
+                    out_perm_deps->push_back(pit->second);
+            }
+            continue;
+        }
         auto it = flat_atom_to_lit_.find(key);
         if (it == flat_atom_to_lit_.end()) {
             assert(false && "explanation equation has no SAT literal and is not permanent");
             continue;
         }
+        // Skip self-referential equation: when the SAT assignment for plit was
+        // processed before the CC had established congruence via permanents, the
+        // CC proof forest received a direct edge for that atom.  explain() then
+        // returns that edge alongside the permanent chain, causing clause [+L, -L].
+        // Skipping the self-edge leaves only the permanent chain in the reason.
+        if (it->second == plit) continue;
         clause.push_back(-(it->second));
     }
     return clause;
