@@ -65,10 +65,20 @@ void EufSolver::notify_assignment(int lit, bool /*is_fixed*/) {
         eq_lit_level_counts_.back()++;
         cur_eq_assigned_.insert(lit);
         cc_.add_equation(atom.flat_lhs, atom.flat_rhs);
-        // Defer the O(|atoms|) propagation scan to cb_propagate, which is called
-        // once per BCP batch rather than once per individual assignment.
-        if (!has_conflict_)
-            needs_rescan_ = true;
+        if (!has_conflict_) {
+            if (record_proofs_) {
+                // In proof mode run the scan immediately: the SAT solver may find
+                // a propositional contradiction via BCP alone and never call
+                // cb_propagate, which would leave proof_conflicts_ empty and
+                // bv_decide unable to reconstruct the EUF transitivity reasoning.
+                needs_rescan_ = false;
+                discover_propagations();
+            } else {
+                // Non-proof mode: defer to cb_propagate (called once per BCP
+                // batch) to avoid O(assignments × atoms) quadratic work.
+                needs_rescan_ = true;
+            }
+        }
     } else {
         // Disequality asserted: a ≠ b
         ++stats_.euf_diseq_assignments;
@@ -280,13 +290,20 @@ void EufSolver::discover_propagations() {
                                                     record_proofs_ ? &perm_deps : nullptr);
         if (record_proofs_) {
             const auto& rc = reason_clauses_[lit];
-            // Trivial unit clauses (size==1, no perm_deps) for already-assigned
-            // atoms are redundant: the atom is directly in the hypothesis axioms
-            // or bv_decide can derive it from them without a separate lemma.
-            // Emitting such a clause would produce `theorem cl_N : decide(...) := by grind`
-            // which grind cannot prove in isolation (no local hypotheses).
-            if (already_assigned && rc.size() == 1 && perm_deps.empty()) {
-                // skip — redundant with hypothesis axioms
+            // Unit clauses (size==1) for already-assigned atoms must always be
+            // skipped.  Two sub-cases:
+            //   (a) perm_deps empty: the atom is directly in the hypothesis axioms
+            //       and bv_decide can use it without a separate lemma.
+            //   (b) perm_deps non-empty: the permanent equalities in the explanation
+            //       are artifacts of the CC union-by-size proof forest traversal
+            //       (the class containing lhs/rhs was merged INTO the other class,
+            //       so the proof path goes through permanent edges that are not
+            //       genuine reason premises for this atom).  The theorem produced
+            //       would be false (perm_deps ⇏ lhs=rhs in general).
+            // In both cases the atom was SAT-assigned directly, so bv_decide can
+            // recover it from the propositional encoding of the hypothesis axioms.
+            if (already_assigned && rc.size() == 1) {
+                // skip — redundant or incorrect for already-assigned unit atoms
             } else {
                 proof_conflicts_.push_back(rc);
                 proof_unit_perm_deps_.push_back(std::move(perm_deps));

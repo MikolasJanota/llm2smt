@@ -254,6 +254,22 @@ add_test(
          ! grep -qP '^theorem cl_\\d+ : decide \\([^)]+\\) := by grind' ${CMAKE_BINARY_DIR}/t57_proof.lean"
 )
 
+# t58: --proof with --preprocess-passes 1 where perm equalities (c0=c1, c3=c2) change
+#      the canonical form of Eq atoms.  The proof snapshot must be taken AFTER the
+#      simplifier runs so that atom representations match the SAT encoding.
+#      Regression: previously the snapshot was taken before simplification, causing
+#      decide(c2=c0) in hyp3 vs decide(c1=c2) in hyp10 — bv_decide treats them as
+#      different opaque atoms and fails with a spurious counterexample.
+add_test(
+    NAME "smt2/proof_preproc_snapshot_after_simp"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --preprocess-passes 1 \
+         --proof ${CMAKE_BINARY_DIR}/t58_proof.lean \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t58_proof_preproc_snapshot.smt2 && \
+         ! grep -q 'decide (c2 = c0)' ${CMAKE_BINARY_DIR}/t58_proof.lean && \
+         grep -q 'decide (c1 = c2)' ${CMAKE_BINARY_DIR}/t58_proof.lean"
+)
+
 # t48-t49: n-ary xor (:left-assoc)
 add_smt2_test(nary_xor_unsat  t48_nary_xor_unsat.smt2  unsat)
 add_smt2_test(nary_xor_sat    t49_nary_xor_sat.smt2    sat)

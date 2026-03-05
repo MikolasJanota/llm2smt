@@ -1072,10 +1072,6 @@ void Smt2Visitor::flush_pending_fmls()
 {
     if (pending_fmls_.empty()) return;
 
-    // Snapshot originals for proof output (before any transformation).
-    if (!opts_.proof_file.empty())
-        proof_fmls_ = pending_fmls_;
-
     // Step A: NNF.
     if (opts_.nnf) {
         for (auto& f : pending_fmls_)
@@ -1136,6 +1132,12 @@ void Smt2Visitor::flush_pending_fmls()
             }
         }
     }
+
+    // Snapshot for proof output: taken after all simplification so that
+    // the formula representation matches the SAT encoding (perm-equality
+    // substitutions have already been applied by the simplifier).
+    if (!opts_.proof_file.empty())
+        proof_fmls_ = pending_fmls_;
 
     // Step C: Encode.
     if (opts_.selectors) {
