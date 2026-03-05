@@ -13,11 +13,33 @@ namespace llm2smt {
 // Helpers
 // ============================================================================
 
+// Lean 4 syntax keywords and common Prelude/Std identifiers that cannot be
+// used as plain declaration names.  Any SMT symbol matching one of these is
+// wrapped in «» guillemets.
+static bool is_lean_reserved(const std::string& s)
+{
+    // Keep this list sorted for easy auditing.
+    static const std::unordered_set<std::string> reserved = {
+        // Lean 4 syntax keywords
+        "abbrev", "attribute", "axiom", "by", "calc", "class", "def",
+        "deriving", "do", "else", "end", "example", "export", "extends",
+        "finally", "for", "from", "fun", "have", "if", "import", "in",
+        "infix", "infixl", "infixr", "instance", "let", "macro", "match",
+        "mutual", "namespace", "noncomputable", "notation", "open", "opaque",
+        "partial", "postfix", "prefix", "private", "protected", "return",
+        "section", "show", "structure", "syntax", "theorem", "then", "try",
+        "unless", "unsafe", "universe", "where", "with",
+        // Common Lean 4 Prelude / Std identifiers that conflict as axiom names
+        "and", "bool", "char", "false", "id", "int", "list", "not", "or",
+        "option", "prod", "string", "true", "type", "unit",
+    };
+    return reserved.count(s) != 0;
+}
+
 // Convert an SMT-LIB symbol name to a valid Lean identifier.
-// Strips |...| quoting.  If the resulting string is a valid plain Lean
-// identifier (letter/underscore start, then alphanumeric/underscore), it is
-// returned as-is.  Otherwise it is wrapped in «» so that any characters
-// (hyphens, '?', spaces, etc.) are accepted by Lean.
+// Strips |...| quoting.  Names that contain non-alphanumeric/underscore
+// characters, or that clash with Lean 4 keywords / Prelude names, are
+// wrapped in «» guillemets so Lean accepts them as raw identifiers.
 static std::string lean_ident(const std::string& name)
 {
     std::string inner = name;
@@ -27,7 +49,7 @@ static std::string lean_ident(const std::string& name)
 
     if (inner.empty()) return "x";
 
-    // Check whether the name is already a valid plain Lean identifier.
+    // Check whether the name is a valid plain Lean identifier syntactically.
     bool plain = std::isalpha(static_cast<unsigned char>(inner[0])) || inner[0] == '_';
     if (plain) {
         for (size_t i = 1; i < inner.size(); ++i) {
@@ -39,9 +61,13 @@ static std::string lean_ident(const std::string& name)
         }
     }
 
-    // Plain identifiers are used as-is; everything else is wrapped in «».
+    // Syntactically non-plain: wrap in «» (guillemets allow arbitrary characters).
     if (!plain)
         return "«" + inner + "»";
+    // Reserved Lean 4 keyword / Prelude name: append _ to get a fresh identifier.
+    // Note: «foo» and foo are the SAME identifier in Lean 4, so wrapping doesn't help.
+    if (is_lean_reserved(inner))
+        return inner + "_";
     return inner;
 }
 
