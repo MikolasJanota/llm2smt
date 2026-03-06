@@ -13,7 +13,10 @@ FmlRef Simplifier::fold(FmlRef f)
     switch (f->kind) {
     case FmlKind::True:
     case FmlKind::False:
+        return f;
     case FmlKind::Eq:
+        if (f->eq_lhs == f->eq_rhs) return fml_true();
+        return f;
     case FmlKind::Pred:
         return f;
 

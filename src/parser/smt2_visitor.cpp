@@ -1100,6 +1100,9 @@ void Smt2Visitor::flush_pending_fmls()
     }
 
     // Step B: Simplifier (unchanged, only if passes > 0).
+    // forced_proof_fmls: forced atoms to append to the proof snapshot.
+    // Collected here so they're available after simp goes out of scope.
+    std::vector<FmlRef> forced_proof_fmls;
     if (opts_.passes > 0) {
         stats_.preproc_fmls_in += static_cast<uint64_t>(pending_fmls_.size());
 
@@ -1130,14 +1133,25 @@ void Smt2Visitor::flush_pending_fmls()
                 std::array<int,1> cl = {forced};
                 ctx_.sat.add_clause(std::span<const int>(cl));
             }
+            // Collect for proof snapshot: the EUF may propagate permanent
+            // equalities (and forced negative atoms) as SAT unit literals
+            // during solving; those literals may appear in theory clause
+            // premises.  Without explicit hypotheses, bv_decide cannot
+            // discharge those premises.
+            if (!opts_.proof_file.empty())
+                forced_proof_fmls.push_back(positive ? atom : fml_not(atom));
         }
     }
 
     // Snapshot for proof output: taken after all simplification so that
     // the formula representation matches the SAT encoding (perm-equality
     // substitutions have already been applied by the simplifier).
-    if (!opts_.proof_file.empty())
+    // Forced atoms are appended as additional hypotheses (see above).
+    if (!opts_.proof_file.empty()) {
         proof_fmls_ = pending_fmls_;
+        for (auto& f : forced_proof_fmls)
+            proof_fmls_.push_back(std::move(f));
+    }
 
     // Step C: Encode.
     if (opts_.selectors) {

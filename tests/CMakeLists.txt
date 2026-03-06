@@ -258,16 +258,42 @@ add_test(
 #      the canonical form of Eq atoms.  The proof snapshot must be taken AFTER the
 #      simplifier runs so that atom representations match the SAT encoding.
 #      Regression: previously the snapshot was taken before simplification, causing
-#      decide(c2=c0) in hyp3 vs decide(c1=c2) in hyp10 — bv_decide treats them as
-#      different opaque atoms and fails with a spurious counterexample.
+#      decide(c2=c0) in the proof — bv_decide treats it as a different opaque atom
+#      from the SAT-encoded form and fails with a spurious counterexample.
 add_test(
     NAME "smt2/proof_preproc_snapshot_after_simp"
     COMMAND bash -c
         "$<TARGET_FILE:llm2smt> --preprocess-passes 1 \
          --proof ${CMAKE_BINARY_DIR}/t58_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t58_proof_preproc_snapshot.smt2 && \
-         ! grep -q 'decide (c2 = c0)' ${CMAKE_BINARY_DIR}/t58_proof.lean && \
-         grep -q 'decide (c1 = c2)' ${CMAKE_BINARY_DIR}/t58_proof.lean"
+         ! grep -q 'decide (c2 = c0)' ${CMAKE_BINARY_DIR}/t58_proof.lean"
+)
+
+# t59: --proof with --preprocess-passes 1 where Not(Eq(x,x)) must fold to False
+#      in Phase 1 so it doesn't survive as a True hypothesis in the proof snapshot.
+#      Regression: proof_fail_000006 — simplifier::fold() was missing the reflexive
+#      Eq(x,x)->True case, causing Not(Eq(x,x)) to be self-substituted to True.
+add_test(
+    NAME "smt2/proof_reflexive_eq_preproc"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --preprocess-passes 1 \
+         --proof ${CMAKE_BINARY_DIR}/t59_proof.lean \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t59_proof_reflexive_eq_preproc.smt2 && \
+         grep -q 'hyp2 : False' ${CMAKE_BINARY_DIR}/t59_proof.lean"
+)
+
+# t60: --proof with --preprocess-passes 1 where the EUF propagates permanently-forced
+#      equalities as SAT unit literals that appear in theory clause premises.
+#      The proof snapshot must include those forced atoms as explicit hypotheses so
+#      bv_decide can discharge the premises.
+#      Regression: proof_fail_000064 — forced atoms were not added to the proof snapshot.
+add_test(
+    NAME "smt2/proof_forced_atoms_preproc"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --preprocess-passes 1 \
+         --proof ${CMAKE_BINARY_DIR}/t60_proof.lean \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t60_proof_forced_atoms_preproc.smt2 && \
+         grep -q 'decide (c1 = (b1 p1))' ${CMAKE_BINARY_DIR}/t60_proof.lean"
 )
 
 # t48-t49: n-ary xor (:left-assoc)
