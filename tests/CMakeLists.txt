@@ -188,7 +188,7 @@ add_test(
     COMMAND bash -c
         "$<TARGET_FILE:llm2smt> --preprocess-passes 1 --proof ${CMAKE_BINARY_DIR}/t52_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t52_preproc_perm_eq_proof.smt2 && \
-         grep -q 'theorem cl_0' ${CMAKE_BINARY_DIR}/t52_proof.lean && \
+         grep -q 'have cl_0' ${CMAKE_BINARY_DIR}/t52_proof.lean && \
          grep -c '__flat_' ${CMAKE_BINARY_DIR}/t52_proof.lean | grep -q '^0\$'"
 )
 
@@ -297,6 +297,30 @@ add_test(
 )
 
 # t48-t49: n-ary xor (:left-assoc)
+# t61: --proof with no preprocessing: EUF theory clause proved inline inside
+#      contradiction (have cl_k := by grind) where hyp axioms are local variables.
+#      Regression: proof_fail_000469 — grind failed on standalone theorem cl_k
+#      because it cannot see global axiom declarations.
+add_test(
+    NAME "smt2/proof_hyp_dep_cl"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t61_proof.lean \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t61_proof_hyp_dep_cl.smt2 && \
+         grep -q 'have cl_' ${CMAKE_BINARY_DIR}/t61_proof.lean && \
+         ! grep -q '^theorem cl_' ${CMAKE_BINARY_DIR}/t61_proof.lean"
+)
+
+# t62: same class of bug as t61, different input.
+#      Regression: proof_fail_000944.
+add_test(
+    NAME "smt2/proof_hyp_dep_cl2"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t62_proof.lean \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t62_proof_hyp_dep_cl2.smt2 && \
+         grep -q 'have cl_' ${CMAKE_BINARY_DIR}/t62_proof.lean && \
+         ! grep -q '^theorem cl_' ${CMAKE_BINARY_DIR}/t62_proof.lean"
+)
+
 add_smt2_test(nary_xor_unsat  t48_nary_xor_unsat.smt2  unsat)
 add_smt2_test(nary_xor_sat    t49_nary_xor_sat.smt2    sat)
 

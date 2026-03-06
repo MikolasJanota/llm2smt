@@ -243,11 +243,20 @@ void LeanEmitter::emit(std::ostream& out,
     }
 
     // ── Assertions ─────────────────────────────────────────────────────────
-    std::vector<std::string> theorem_names;
+    // Three collections used in `theorem contradiction`:
+    //   hyp_names      — hyp axioms loaded first  (have X := X)
+    //   standalone_names — tautology theorems loaded second (have X := X)
+    //   cl_clauses     — EUF theory clauses proved inline (have X : body := by grind)
+    //                    cl_k are NOT standalone: grind cannot prove them without
+    //                    the hypothesis locals that are in scope inside contradiction.
+    std::vector<std::string> hyp_names;
+    std::vector<std::string> standalone_names;
+    std::vector<std::pair<std::string,std::string>> cl_clauses;
+
     for (size_t i = 0; i < proof_fmls.size(); ++i) {
         std::string hname = "hyp" + std::to_string(i + 1);
         out << "axiom " << hname << " : " << fml_to_lean(proof_fmls[i], nm) << "\n";
-        theorem_names.push_back(hname);
+        hyp_names.push_back(hname);
     }
 
     out << "\n";
@@ -277,7 +286,7 @@ void LeanEmitter::emit(std::ostream& out,
             out << "theorem " << tname << " : ¬(" << cond_lean << ") ∨ decide ("
                 << node_to_lean(lhs_id, nm) << " = " << node_to_lean(rhs_id, nm)
                 << ") := by grind\n";
-            theorem_names.push_back(tname);
+            standalone_names.push_back(tname);
         }
         // else-branch clause: cond ∨ decide(canon(ite, else))
         {
@@ -287,7 +296,7 @@ void LeanEmitter::emit(std::ostream& out,
             out << "theorem " << tname << " : (" << cond_lean << ") ∨ decide ("
                 << node_to_lean(lhs_id, nm) << " = " << node_to_lean(rhs_id, nm)
                 << ") := by grind\n";
-            theorem_names.push_back(tname);
+            standalone_names.push_back(tname);
         }
         ++ite_clause_idx;
     }
@@ -350,7 +359,7 @@ void LeanEmitter::emit(std::ostream& out,
                     std::string tname = "ite_bridge_" + std::to_string(bridge_idx++);
                     out << "theorem " << tname << " : " << ite_eq_other
                         << " ∨ ¬(" << proxy_eq_other << ") := by grind\n";
-                    theorem_names.push_back(tname);
+                    standalone_names.push_back(tname);
                 }
             }
         }
@@ -389,25 +398,25 @@ void LeanEmitter::emit(std::ostream& out,
                 for (const FmlRef& atom : conjuncts)
                     out << fml_to_lean(atom, nm) << " → ";
                 out << concl << " := by grind\n";
-                theorem_names.push_back(tname);
+                standalone_names.push_back(tname);
             }
         }
     }
 
-    // ── Theory lemmas ──────────────────────────────────────────────────────
-    // All theory lemmas are simple clauses provable by grind in isolation —
-    // either a disjunction of decide-wrapped atoms (EUF tautology) or a
-    // simple implication chain for unit clauses (pure EUF transitivity).
+    // ── Theory lemmas (collected as inline cl_clauses) ─────────────────────
+    // EUF theory clauses are NOT standalone tautologies — they're valid only
+    // given the problem hypotheses.  Grind cannot prove them from an empty
+    // context (it doesn't see global axioms).  Instead, they're emitted as
+    // inline `have` statements inside `theorem contradiction`, where the
+    // `have hyp_k := hyp_k` bindings make the hypotheses visible to grind.
     const auto& perm_deps_vec = ctx.euf.proof_unit_perm_deps();
     for (size_t i = 0; i < proof_conflicts.size(); ++i) {
         const auto& clause = proof_conflicts[i];
         std::string tname = "cl_" + std::to_string(i);
+        std::string body;
 
-        // Unit clause with perm deps: emit as a simple EUF transitivity chain.
-        //   theorem cl_N : decide(pa0=pb0) → decide(pa1=pb1) → ... → decide(lhs=rhs)
-        //       := by grind
-        // grind proves this as a pure EUF tautology (transitivity + congruence).
-        // bv_decide then applies it propositionally in the contradiction theorem.
+        // Unit clause with perm deps: pure EUF transitivity / congruence chain.
+        //   decide(pa0=pb0) → decide(pa1=pb1) → ... → decide(lhs=rhs)
         if (clause.size() == 1 && i < perm_deps_vec.size() && !perm_deps_vec[i].empty()) {
             int lit = clause[0];
             int var = (lit > 0) ? lit : -lit;
@@ -415,36 +424,31 @@ void LeanEmitter::emit(std::ostream& out,
             if (lit > 0 && eit != lit_to_atom.end()) {
                 NodeId lhs_id = eit->second.lhs, rhs_id = eit->second.rhs;
                 if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
-                out << "theorem " << tname << " : ";
                 for (const auto& [pa, pb] : perm_deps_vec[i]) {
                     NodeId a = pa, b = pb;
                     if (a > b) std::swap(a, b);
-                    out << "decide (" << node_to_lean(a, nm) << " = "
-                        << node_to_lean(b, nm) << ") → ";
+                    body += "decide (" + node_to_lean(a, nm) + " = "
+                          + node_to_lean(b, nm) + ") → ";
                 }
-                out << "decide (" << node_to_lean(lhs_id, nm) << " = "
-                    << node_to_lean(rhs_id, nm) << ") := by grind\n";
-                theorem_names.push_back(tname);
+                body += "decide (" + node_to_lean(lhs_id, nm) + " = "
+                      + node_to_lean(rhs_id, nm) + ")";
+                cl_clauses.push_back({tname, std::move(body)});
                 continue;
             }
         }
 
-        // Normal clause: disjunction of decide-wrapped atoms, proved by grind.
-        // If permanent equalities were part of the EUF explanation (dropped from
-        // the SAT clause because they have no literal), emit them as implication
-        // premises so grind can use congruence over those equalities.
-        out << "theorem " << tname << " : ";
+        // Normal clause: optional perm-dep implications, then a disjunction.
         if (i < perm_deps_vec.size()) {
             for (const auto& [pa, pb] : perm_deps_vec[i]) {
                 NodeId a = pa, b = pb;
                 if (a > b) std::swap(a, b);
-                out << "decide (" << node_to_lean(a, nm) << " = "
-                    << node_to_lean(b, nm) << ") → ";
+                body += "decide (" + node_to_lean(a, nm) + " = "
+                      + node_to_lean(b, nm) + ") → ";
             }
         }
         bool first = true;
         for (int lit : clause) {
-            if (!first) out << " ∨ ";
+            if (!first) body += " ∨ ";
             first = false;
 
             int var = (lit > 0) ? lit : -lit;
@@ -453,37 +457,44 @@ void LeanEmitter::emit(std::ostream& out,
                 const EqAtom& atom = eit->second;
                 NodeId lhs_id = atom.lhs, rhs_id = atom.rhs;
                 if (lhs_id == rhs_id) {
-                    out << (lit > 0 ? "True" : "False");
+                    body += (lit > 0 ? "True" : "False");
                     continue;
                 }
                 if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
                 std::string lhs_str = node_to_lean(lhs_id, nm);
                 std::string rhs_str = node_to_lean(rhs_id, nm);
                 if (lit > 0)
-                    out << "decide (" << lhs_str << " = " << rhs_str << ")";
+                    body += "decide (" + lhs_str + " = " + rhs_str + ")";
                 else
-                    out << "¬(decide (" << lhs_str << " = " << rhs_str << "))";
+                    body += "¬(decide (" + lhs_str + " = " + rhs_str + "))";
             } else {
                 auto nit = lit_to_node.find(var);
                 if (nit != lit_to_node.end()) {
                     std::string node_str = node_to_lean(nit->second, nm);
                     if (lit > 0)
-                        out << "decide (" << node_str << ")";
+                        body += "decide (" + node_str + ")";
                     else
-                        out << "¬(decide (" << node_str << "))";
+                        body += "¬(decide (" + node_str + "))";
                 }
             }
         }
-        out << " := by grind\n";
-        theorem_names.push_back(tname);
+        cl_clauses.push_back({tname, std::move(body)});
     }
 
     // ── Contradiction theorem ──────────────────────────────────────────────
-    // Load every axiom and theorem into the local context, then let bv_decide
-    // do the propositional closure.  All EUF reasoning is pre-encoded in the
-    // standalone theorems above; bv_decide only needs propositional SAT.
+    // 1. Load hypothesis axioms (have hyp_k := hyp_k).  This puts them in
+    //    the local tactic context so grind can use them in step 2.
+    // 2. Prove EUF theory clauses inline (have cl_k : body := by grind).
+    //    Grind now sees hyp1..N as local variables and can discharge clauses
+    //    that are only valid given the problem hypotheses.
+    // 3. Load tautology theorems (have standalone := standalone).
+    // 4. bv_decide closes the propositional contradiction.
     out << "\ntheorem contradiction : False := by\n";
-    for (const std::string& name : theorem_names)
+    for (const std::string& name : hyp_names)
+        out << "  have " << name << " := " << name << "\n";
+    for (const auto& [cname, cbody] : cl_clauses)
+        out << "  have " << cname << " : " << cbody << " := by grind\n";
+    for (const std::string& name : standalone_names)
         out << "  have " << name << " := " << name << "\n";
     out << "  bv_decide\n";
 }
