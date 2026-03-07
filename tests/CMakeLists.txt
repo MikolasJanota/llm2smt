@@ -321,6 +321,18 @@ add_test(
          ! grep -q '^theorem cl_' ${CMAKE_BINARY_DIR}/t62_proof.lean"
 )
 
+# t63: Regression: Bool-sorted predicate atoms in theory clauses were emitted as
+#      decide(True = (h a)) instead of decide((h a)), causing bv_decide to
+#      treat them as distinct atoms when --proof-minimize was used.
+add_test(
+    NAME "smt2/proof_minimize_bool_pred"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t63_proof.lean --proof-minimize \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t63_proof_minimize_bool_pred.smt2 && \
+         ! grep -q 'True = ' ${CMAKE_BINARY_DIR}/t63_proof.lean && \
+         grep -q 'decide ((h' ${CMAKE_BINARY_DIR}/t63_proof.lean"
+)
+
 add_smt2_test(nary_xor_unsat  t48_nary_xor_unsat.smt2  unsat)
 add_smt2_test(nary_xor_sat    t49_nary_xor_sat.smt2    sat)
 

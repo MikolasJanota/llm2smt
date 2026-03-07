@@ -463,10 +463,25 @@ void LeanEmitter::emit(std::ostream& out,
                 if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
                 std::string lhs_str = node_to_lean(lhs_id, nm);
                 std::string rhs_str = node_to_lean(rhs_id, nm);
-                if (lit > 0)
+                // Normalize Bool-bridging sentinel equalities so theory-clause
+                // atoms match the fml_to_lean Pred rendering used in hypotheses.
+                // decide(True = p) → decide(p); decide(False = p) → ¬decide(p)
+                // The literal sign then negates the whole thing as usual.
+                bool sent_true  = (lhs_str == "True"  || rhs_str == "True");
+                bool sent_false = (lhs_str == "False" || rhs_str == "False");
+                const std::string& pred_str =
+                    (lhs_str == "True" || lhs_str == "False") ? rhs_str : lhs_str;
+                if (sent_true) {
+                    body += (lit > 0) ? "decide (" + pred_str + ")"
+                                      : "¬(decide (" + pred_str + "))";
+                } else if (sent_false) {
+                    body += (lit > 0) ? "¬(decide (" + pred_str + "))"
+                                      : "decide (" + pred_str + ")";
+                } else if (lit > 0) {
                     body += "decide (" + lhs_str + " = " + rhs_str + ")";
-                else
+                } else {
                     body += "¬(decide (" + lhs_str + " = " + rhs_str + "))";
+                }
             } else {
                 auto nit = lit_to_node.find(var);
                 if (nit != lit_to_node.end()) {
