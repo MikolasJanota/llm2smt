@@ -98,7 +98,7 @@ std::string LeanEmitter::node_to_lean(NodeId n, const NodeManager& nm) const
         auto it = ctx_->ite_nodes.find(n);
         if (it != ctx_->ite_nodes.end()) {
             const IteInfo& info = it->second;
-            return "(if " + fml_to_lean(info.cond, nm)
+            return "(if " + fml_to_lean_cond(info.cond, nm)
                    + " then " + node_to_lean(info.then_node, nm)
                    + " else " + node_to_lean(info.else_node, nm) + ")";
         }
@@ -130,6 +130,64 @@ std::string LeanEmitter::node_to_lean(NodeId n, const NodeManager& nm) const
     }
     result += ")";
     return result;
+}
+
+// Render formula as a Lean Prop WITHOUT wrapping atomic propositions in
+// `decide (...)`.  Used as the condition of `if cond then X else Y` so that
+// Lean's Classical ite (`@ite`) is used instead of Bool if-then-else.
+// This avoids grind internally simplifying `if decide (p) then ...` to
+// `if p then ...` while the goal atoms still say `if decide (p) then ...`.
+std::string LeanEmitter::fml_to_lean_cond(FmlRef f, const NodeManager& nm) const
+{
+    switch (f->kind) {
+    case FmlKind::True:  return "True";
+    case FmlKind::False: return "False";
+    case FmlKind::Eq: {
+        if (f->eq_lhs == f->eq_rhs) return "True";
+        NodeId lhs = f->eq_lhs, rhs = f->eq_rhs;
+        if (lhs > rhs) std::swap(lhs, rhs);
+        return node_to_lean(lhs, nm) + " = " + node_to_lean(rhs, nm);
+    }
+    case FmlKind::Pred:
+        return node_to_lean(f->pred, nm);
+    case FmlKind::Not:
+        if (f->children[0]->kind == FmlKind::Eq &&
+            f->children[0]->eq_lhs == f->children[0]->eq_rhs)
+            return "False";
+        return "¬(" + fml_to_lean_cond(f->children[0], nm) + ")";
+    case FmlKind::And: {
+        std::string s = "(";
+        for (size_t i = 0; i < f->children.size(); ++i) {
+            if (i > 0) s += " ∧ ";
+            s += fml_to_lean_cond(f->children[i], nm);
+        }
+        return s + ")";
+    }
+    case FmlKind::Or: {
+        std::string s = "(";
+        for (size_t i = 0; i < f->children.size(); ++i) {
+            if (i > 0) s += " ∨ ";
+            s += fml_to_lean_cond(f->children[i], nm);
+        }
+        return s + ")";
+    }
+    case FmlKind::Implies:
+        return "(" + fml_to_lean_cond(f->children[0], nm) + " → "
+               + fml_to_lean_cond(f->children[1], nm) + ")";
+    case FmlKind::Xor:
+        return "¬(" + fml_to_lean_cond(f->children[0], nm) + " ↔ "
+               + fml_to_lean_cond(f->children[1], nm) + ")";
+    case FmlKind::BoolEq:
+        return "(" + fml_to_lean_cond(f->children[0], nm) + " ↔ "
+               + fml_to_lean_cond(f->children[1], nm) + ")";
+    case FmlKind::Ite: {
+        const std::string c = fml_to_lean_cond(f->children[0], nm);
+        const std::string t = fml_to_lean_cond(f->children[1], nm);
+        const std::string e = fml_to_lean_cond(f->children[2], nm);
+        return "((" + c + " → " + t + ") ∧ (¬(" + c + ") → " + e + "))";
+    }
+    }
+    return "True";  // unreachable
 }
 
 std::string LeanEmitter::fml_to_lean(FmlRef f, const NodeManager& nm) const
@@ -213,7 +271,22 @@ void LeanEmitter::emit(std::ostream& out,
                        const std::vector<std::vector<int>>& proof_conflicts)
 {
     ctx_ = &ctx;
+    ite_proxy_for_.clear();
     const NodeManager& nm = ctx.nm;
+
+    // Precompute ite_id → proxy_id from assertions of the form (proxy = ite_node).
+    // We only record the first proxy found for each ite node (sufficient since the
+    // proxy uniquely names the ite result in the original SMT problem).
+    for (const FmlRef& f : proof_fmls) {
+        if (f->kind != FmlKind::Eq) continue;
+        NodeId a = f->eq_lhs, b = f->eq_rhs;
+        if (ctx.ite_nodes.count(a) && !ctx.ite_nodes.count(b)
+                && !ite_proxy_for_.count(a))
+            ite_proxy_for_[a] = b;
+        else if (ctx.ite_nodes.count(b) && !ctx.ite_nodes.count(a)
+                && !ite_proxy_for_.count(b))
+            ite_proxy_for_[b] = a;
+    }
 
     out << "import Std.Tactic.BVDecide\n\n";
     out << "noncomputable section\n";
@@ -243,14 +316,19 @@ void LeanEmitter::emit(std::ostream& out,
     }
 
     // ── Assertions ─────────────────────────────────────────────────────────
-    // Three collections used in `theorem contradiction`:
-    //   hyp_names      — hyp axioms loaded first  (have X := X)
-    //   standalone_names — tautology theorems loaded second (have X := X)
-    //   cl_clauses     — EUF theory clauses proved inline (have X : body := by grind)
-    //                    cl_k are NOT standalone: grind cannot prove them without
-    //                    the hypothesis locals that are in scope inside contradiction.
+    // Collections used in `theorem contradiction`:
+    //   hyp_names        — hyp axioms loaded first  (have X := X)
+    //   ite_sem_inline   — proxy-ite semantics (have X : body := by grind)
+    //                      loaded BEFORE cl_clauses so grind for cl_k sees them
+    //   bridge_inline    — proxy↔ite-inline bridges for shortcut atoms (inline grind)
+    //                      connect decide(ite_inline=X) in hypotheses to
+    //                      decide(proxy=X) in theory clauses for bv_decide
+    //   cl_clauses       — EUF theory clauses proved inline (have X : body := by grind)
+    //   standalone_names — pure tautologies loaded last (have X := X)
     std::vector<std::string> hyp_names;
     std::vector<std::string> standalone_names;
+    std::vector<std::pair<std::string,std::string>> ite_sem_inline;
+    std::vector<std::pair<std::string,std::string>> bridge_inline;
     std::vector<std::pair<std::string,std::string>> cl_clauses;
 
     for (size_t i = 0; i < proof_fmls.size(); ++i) {
@@ -270,33 +348,50 @@ void LeanEmitter::emit(std::ostream& out,
     const auto& lit_to_atom = ctx.euf.lit_to_atom();
 
     // ── Ite semantic clauses ────────────────────────────────────────────────
-    // For each U-sorted ite node, add two clauses that encode its semantics:
-    //   ¬cond ∨ decide(ite = then)   (if cond holds, ite result equals the then-branch)
-    //   cond ∨ decide(ite = else)    (if cond fails, ite result equals the else-branch)
-    // These clauses are provable by grind via if_pos/if_neg.
+    // For each U-sorted ite node, add two clauses encoding its semantics:
+    //   ¬cond ∨ decide(eff = then)   (if cond: eff equals then-branch)
+    //   cond ∨ decide(eff = else)    (if ¬cond: eff equals else-branch)
+    //
+    // "eff" is the proxy constant if one exists (preferred), otherwise the
+    // inlined ite expression.  When a proxy exists, these clauses are NOT
+    // tautologies (they require the proxy=ite hypothesis in scope), so they
+    // are emitted as inline `have` statements inside `contradiction` rather
+    // than as standalone `theorem`s.
     size_t ite_clause_idx = 0;
     for (const auto& [ite_id, info] : ctx.ite_nodes) {
         const std::string cond_lean = fml_to_lean(info.cond, nm);
 
-        // then-branch clause: ¬cond ∨ decide(canon(ite, then))
+        auto proxy_it = ite_proxy_for_.find(ite_id);
+        bool has_proxy = (proxy_it != ite_proxy_for_.end());
+        NodeId eff_id = has_proxy ? proxy_it->second : ite_id;
+
+        // then-branch: ¬cond ∨ decide(canon(eff, then))
         {
-            NodeId lhs_id = ite_id, rhs_id = info.then_node;
+            NodeId lhs_id = eff_id, rhs_id = info.then_node;
             if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
             std::string tname = "ite_pos_" + std::to_string(ite_clause_idx);
-            out << "theorem " << tname << " : ¬(" << cond_lean << ") ∨ decide ("
-                << node_to_lean(lhs_id, nm) << " = " << node_to_lean(rhs_id, nm)
-                << ") := by grind\n";
-            standalone_names.push_back(tname);
+            std::string body = "¬(" + cond_lean + ") ∨ decide ("
+                + node_to_lean(lhs_id, nm) + " = " + node_to_lean(rhs_id, nm) + ")";
+            if (has_proxy) {
+                ite_sem_inline.push_back({tname, std::move(body)});
+            } else {
+                out << "theorem " << tname << " : " << body << " := by grind\n";
+                standalone_names.push_back(tname);
+            }
         }
-        // else-branch clause: cond ∨ decide(canon(ite, else))
+        // else-branch: cond ∨ decide(canon(eff, else))
         {
-            NodeId lhs_id = ite_id, rhs_id = info.else_node;
+            NodeId lhs_id = eff_id, rhs_id = info.else_node;
             if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
             std::string tname = "ite_neg_" + std::to_string(ite_clause_idx);
-            out << "theorem " << tname << " : (" << cond_lean << ") ∨ decide ("
-                << node_to_lean(lhs_id, nm) << " = " << node_to_lean(rhs_id, nm)
-                << ") := by grind\n";
-            standalone_names.push_back(tname);
+            std::string body = "(" + cond_lean + ") ∨ decide ("
+                + node_to_lean(lhs_id, nm) + " = " + node_to_lean(rhs_id, nm) + ")";
+            if (has_proxy) {
+                ite_sem_inline.push_back({tname, std::move(body)});
+            } else {
+                out << "theorem " << tname << " : " << body << " := by grind\n";
+                standalone_names.push_back(tname);
+            }
         }
         ++ite_clause_idx;
     }
@@ -357,9 +452,23 @@ void LeanEmitter::emit(std::ostream& out,
                         "decide (" + node_to_lean(p_lhs, nm) + " = " + node_to_lean(p_rhs, nm) + ")";
 
                     std::string tname = "ite_bridge_" + std::to_string(bridge_idx++);
-                    out << "theorem " << tname << " : " << ite_eq_other
-                        << " ∨ ¬(" << proxy_eq_other << ") := by grind\n";
-                    standalone_names.push_back(tname);
+                    bool has_proxy_for_ite = ite_proxy_for_.count(ite_id) != 0;
+                    if (has_proxy_for_ite) {
+                        // Inline bridge: proved using hyp (proxy=ite_inline) in scope.
+                        // Body: decide(proxy=X) ∨ ¬(decide(ite_inline=X)).
+                        // Grind derives: proxy=ite_inline (from hyp) ∧ ite_inline=X
+                        // → proxy=X, so one disjunct holds (excluded middle).
+                        // bv_decide uses this to connect hypothesis atoms (ite_inline=X)
+                        // with theory clause atoms (proxy=X).
+                        std::string body = proxy_eq_other + " ∨ ¬(" + ite_eq_other + ")";
+                        bridge_inline.push_back({tname, std::move(body)});
+                    } else {
+                        // Standalone: ite has no proxy, so ite_inline=eff and this is a
+                        // pure tautology about the ite semantics.
+                        out << "theorem " << tname << " : " << ite_eq_other
+                            << " ∨ ¬(" << proxy_eq_other << ") := by grind\n";
+                        standalone_names.push_back(tname);
+                    }
                 }
             }
         }
@@ -460,6 +569,21 @@ void LeanEmitter::emit(std::ostream& out,
                     body += (lit > 0 ? "True" : "False");
                     continue;
                 }
+                // Replace ite nodes with their proxy constants so that
+                // theory-clause atoms are opaque names — grind can then handle
+                // them as pure EUF equalities without case-splitting the ite.
+                {
+                    auto pit = ite_proxy_for_.find(lhs_id);
+                    if (pit != ite_proxy_for_.end()) lhs_id = pit->second;
+                }
+                {
+                    auto pit = ite_proxy_for_.find(rhs_id);
+                    if (pit != ite_proxy_for_.end()) rhs_id = pit->second;
+                }
+                if (lhs_id == rhs_id) {
+                    body += (lit > 0 ? "True" : "False");
+                    continue;
+                }
                 if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
                 std::string lhs_str = node_to_lean(lhs_id, nm);
                 std::string rhs_str = node_to_lean(rhs_id, nm);
@@ -507,6 +631,13 @@ void LeanEmitter::emit(std::ostream& out,
     out << "\ntheorem contradiction : False := by\n";
     for (const std::string& name : hyp_names)
         out << "  have " << name << " := " << name << "\n";
+    // Inline ite semantics (proxy-based): proved with hyp context.
+    for (const auto& [cname, cbody] : ite_sem_inline)
+        out << "  have " << cname << " : " << cbody << " := by grind\n";
+    // Inline ite bridges: connect decide(ite_inline=X) in hypotheses to
+    // decide(proxy=X) in theory clauses so bv_decide can use both.
+    for (const auto& [cname, cbody] : bridge_inline)
+        out << "  have " << cname << " : " << cbody << " := by grind\n";
     for (const auto& [cname, cbody] : cl_clauses)
         out << "  have " << cname << " : " << cbody << " := by grind\n";
     for (const std::string& name : standalone_names)

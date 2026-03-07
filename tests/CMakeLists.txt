@@ -333,6 +333,17 @@ add_test(
          grep -q 'decide ((h' ${CMAKE_BINARY_DIR}/t63_proof.lean"
 )
 
+# t64: Regression: ite nodes inlined as `(if cond then a else b)` inside
+#      decide(... = ...) in theory clauses caused grind to fail via
+#      case-splitting.  Fix: use proxy constant name when available.
+add_test(
+    NAME "smt2/proof_ite_proxy_grind"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t64_proof.lean \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t64_proof_ite_proxy_grind.smt2 && \
+         ! grep 'have cl_\\|have ite_pos_\\|have ite_neg_' ${CMAKE_BINARY_DIR}/t64_proof.lean | grep -q '(if '"
+)
+
 add_smt2_test(nary_xor_unsat  t48_nary_xor_unsat.smt2  unsat)
 add_smt2_test(nary_xor_sat    t49_nary_xor_sat.smt2    sat)
 
