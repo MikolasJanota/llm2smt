@@ -9,8 +9,7 @@
 #
 # Example (correctness + proof checking, 200 cases per mode):
 #   scripts/fuzz_modes.sh --ref cvc5 --count 200 --seed 42 \
-#       --check-proof sandbox/check_proof.sh \
-#       --proof-lean-project Experiments3
+#       --check-proof sandbox/check_proof.sh
 #
 # Example (correctness only, parallel):
 #   scripts/fuzz_modes.sh --ref cvc5 --count 500 -j 4

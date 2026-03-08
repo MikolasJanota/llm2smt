@@ -22,8 +22,7 @@ Usage:
     python scripts/fuzz.py --check-model --count 200
 
     # Proof checking: verify Lean proofs for all UNSAT cases
-    python scripts/fuzz.py --check-proof sandbox/check_proof.sh \
-        --proof-lean-project Experiments3 --count 100
+    python scripts/fuzz.py --check-proof sandbox/check_proof.sh --count 100
 
 The reference solver (--ref) must accept an SMT-LIB2 file as its last argument
 and print "sat" or "unsat" on stdout.  Both cvc5 and z3 work out of the box.
@@ -312,10 +311,8 @@ def check_proof(our_cmd: list, smt2_file: str, args, timeout: float) -> tuple[bo
     fd, proof_file = tempfile.mkstemp(suffix=".lean")
     os.close(fd)
     try:
-        # Build: solver --proof <proof_file> [--lean-project NAME] <smt2_file>
+        # Build: solver --proof <proof_file> <smt2_file>
         gen_cmd = ["timeout", str(timeout)] + our_cmd + ["--proof", proof_file]
-        if args.proof_lean_project:
-            gen_cmd += ["--lean-project", args.proof_lean_project]
         gen_cmd.append(smt2_file)
 
         try:
@@ -458,9 +455,6 @@ def main() -> int:
     parser.add_argument("--check-proof", default=None, metavar="SCRIPT",
                         help="When our solver says UNSAT, generate a Lean proof and "
                              "run SCRIPT on it; SCRIPT must exit 0 on success")
-    parser.add_argument("--proof-lean-project", default=None, metavar="NAME",
-                        help="Lean project name passed as --lean-project to our solver "
-                             "when generating proofs (requires --check-proof)")
     args = parser.parse_args()
 
     our_cmd = args.our_solver.split()
