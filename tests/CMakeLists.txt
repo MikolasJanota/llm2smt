@@ -344,6 +344,17 @@ add_test(
          ! grep 'have cl_\\|have ite_pos_\\|have ite_neg_' ${CMAKE_BINARY_DIR}/t64_proof.lean | grep -q '(if '"
 )
 
+# t65: Regression: ite branch atoms excluded from ite_bridge emission caused
+#      bv_decide to treat decide(branch=ite_inline) as independent from
+#      decide(branch=proxy), allowing spurious counterexamples.
+add_test(
+    NAME "smt2/proof_ite_branch_atom_bridge"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t65_proof.lean \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t65_proof_ite_branch_atom_bridge.smt2 && \
+         grep -q 'have ite_bridge_' ${CMAKE_BINARY_DIR}/t65_proof.lean"
+)
+
 add_smt2_test(nary_xor_unsat  t48_nary_xor_unsat.smt2  unsat)
 add_smt2_test(nary_xor_sat    t49_nary_xor_sat.smt2    sat)
 

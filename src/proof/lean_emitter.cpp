@@ -425,17 +425,25 @@ void LeanEmitter::emit(std::ostream& out,
             if (pxit == ite_proxies.end()) continue;
             const std::vector<NodeId>& proxies = pxit->second;
 
-            // Sides that are NOT shortcuts: then-branch, else-branch, proxies.
+            bool has_proxy_for_ite = ite_proxy_for_.count(ite_id) != 0;
+
+            // For proxied ites, emit bridges for ALL atoms involving the ite node,
+            // including then/else branches.  Hypothesis formulas can create opaque
+            // atoms d(branch = ite_inline) that bv_decide treats independently from
+            // d(branch = proxy).  For non-proxied ites, then/else are handled by the
+            // standalone ite_pos/ite_neg theorems so exclude them here.
             std::unordered_set<NodeId> non_shortcut;
-            non_shortcut.insert(info.then_node);
-            non_shortcut.insert(info.else_node);
+            if (!has_proxy_for_ite) {
+                non_shortcut.insert(info.then_node);
+                non_shortcut.insert(info.else_node);
+            }
             for (NodeId p : proxies) non_shortcut.insert(p);
 
             for (const auto& [var, atom] : lit_to_atom) {
                 NodeId a = atom.lhs, b = atom.rhs;
                 if (a != ite_id && b != ite_id) continue;
                 NodeId other = (a == ite_id) ? b : a;
-                if (non_shortcut.count(other)) continue;   // not a shortcut
+                if (non_shortcut.count(other)) continue;
                 if (ctx.ite_nodes.count(other)) continue;  // other ite — skip
 
                 // Canonical ordering for ite = other
@@ -451,20 +459,23 @@ void LeanEmitter::emit(std::ostream& out,
                     const std::string proxy_eq_other =
                         "decide (" + node_to_lean(p_lhs, nm) + " = " + node_to_lean(p_rhs, nm) + ")";
 
-                    std::string tname = "ite_bridge_" + std::to_string(bridge_idx++);
-                    bool has_proxy_for_ite = ite_proxy_for_.count(ite_id) != 0;
                     if (has_proxy_for_ite) {
-                        // Inline bridge: proved using hyp (proxy=ite_inline) in scope.
-                        // Body: decide(proxy=X) ∨ ¬(decide(ite_inline=X)).
-                        // Grind derives: proxy=ite_inline (from hyp) ∧ ite_inline=X
-                        // → proxy=X, so one disjunct holds (excluded middle).
-                        // bv_decide uses this to connect hypothesis atoms (ite_inline=X)
-                        // with theory clause atoms (proxy=X).
-                        std::string body = proxy_eq_other + " ∨ ¬(" + ite_eq_other + ")";
-                        bridge_inline.push_back({tname, std::move(body)});
+                        // Emit BOTH bridge directions inline (proved with hyp in scope):
+                        //   Dir 1: d(ite=X) ∨ ¬d(proxy=X)
+                        //     eliminates spurious: d(proxy=X)=true ∧ d(ite=X)=false
+                        //   Dir 2: d(proxy=X) ∨ ¬d(ite=X)
+                        //     eliminates spurious: d(ite=X)=true ∧ d(proxy=X)=false
+                        // Both reduce to excluded middle given proxy=ite_inline in scope.
+                        // Also needed for branch atoms (then/else): hypothesis formulas
+                        // like d(branch=ite_inline) appear as opaque atoms that bv_decide
+                        // can assign independently of d(branch=proxy).
+                        std::string tname1 = "ite_bridge_" + std::to_string(bridge_idx++);
+                        bridge_inline.push_back({tname1, ite_eq_other + " ∨ ¬(" + proxy_eq_other + ")"});
+                        std::string tname2 = "ite_bridge_" + std::to_string(bridge_idx++);
+                        bridge_inline.push_back({tname2, proxy_eq_other + " ∨ ¬(" + ite_eq_other + ")"});
                     } else {
-                        // Standalone: ite has no proxy, so ite_inline=eff and this is a
-                        // pure tautology about the ite semantics.
+                        // Standalone: ite has no proxy, this is a pure tautology.
+                        std::string tname = "ite_bridge_" + std::to_string(bridge_idx++);
                         out << "theorem " << tname << " : " << ite_eq_other
                             << " ∨ ¬(" << proxy_eq_other << ") := by grind\n";
                         standalone_names.push_back(tname);
