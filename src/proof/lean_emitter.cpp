@@ -71,23 +71,6 @@ static std::string lean_ident(const std::string& name)
     return inner;
 }
 
-// Recursively generate a nested Lean obtain pattern for destructuring a formula.
-// If f is an And with multiple children, generates ⟨pat_for_child0, ...⟩ (nested).
-// Otherwise returns the leaf name (prefix).
-static std::string lean_obtain_pattern(const FmlRef& f, const std::string& prefix)
-{
-    if (f->kind == FmlKind::And && f->children.size() > 1) {
-        std::string pat = "⟨";
-        for (size_t i = 0; i < f->children.size(); ++i) {
-            if (i > 0) pat += ", ";
-            pat += lean_obtain_pattern(f->children[i], prefix + "_" + std::to_string(i));
-        }
-        pat += "⟩";
-        return pat;
-    }
-    return prefix;
-}
-
 // Map an SMT-LIB sort name to its Lean type string.
 // "Bool" → "Prop"; everything else → lean_ident(name).
 static std::string sort_to_lean_type(const std::string& sort_name)
