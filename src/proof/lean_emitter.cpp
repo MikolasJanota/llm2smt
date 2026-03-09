@@ -71,6 +71,23 @@ static std::string lean_ident(const std::string& name)
     return inner;
 }
 
+// Recursively generate a nested Lean obtain pattern for destructuring a formula.
+// If f is an And with multiple children, generates ⟨pat_for_child0, ...⟩ (nested).
+// Otherwise returns the leaf name (prefix).
+static std::string lean_obtain_pattern(const FmlRef& f, const std::string& prefix)
+{
+    if (f->kind == FmlKind::And && f->children.size() > 1) {
+        std::string pat = "⟨";
+        for (size_t i = 0; i < f->children.size(); ++i) {
+            if (i > 0) pat += ", ";
+            pat += lean_obtain_pattern(f->children[i], prefix + "_" + std::to_string(i));
+        }
+        pat += "⟩";
+        return pat;
+    }
+    return prefix;
+}
+
 // Map an SMT-LIB sort name to its Lean type string.
 // "Bool" → "Prop"; everything else → lean_ident(name).
 static std::string sort_to_lean_type(const std::string& sort_name)
@@ -661,36 +678,59 @@ void LeanEmitter::emit(std::ostream& out,
                 }
             }
         }
-        // Collect hypotheses for positive equality literals that are direct
-        // problem assertions.  Some theory clauses are valid only because a
-        // positive literal is permanently asserted (e.g. decide(c3=c0) ∨ ¬…
-        // is only a tautology when c3=c0 holds globally).  Load only the
-        // specific needed hypotheses — do not load all hyps indiscriminately.
+        // Determine which hypotheses this theory clause needs.
+        //
+        // Theory clauses fall into two categories:
+        //   1. Direct-assertion clauses: a positive literal is an equality that
+        //      is explicitly asserted in the problem.  Only that specific hyp is
+        //      needed (e.g. "decide(c3=c0) ∨ ¬(decide(c1=c0))" needs hyp3).
+        //   2. Closure-derived clauses: a positive literal is derivable from the
+        //      conjunction of problem hypotheses via EUF closure, but is NOT
+        //      directly asserted (e.g. "decide(c_2=f1 c_2 c_2) ∨ …" in SEQ
+        //      problems is derived from the problem's equational axiom set).
+        //      Grind needs ALL hypotheses in scope to derive it.
+        //
+        // Heuristic: scan positive equality atoms.  If every non-trivial one is
+        // found in eq_atom_to_hyp, load only those specific hypotheses.  If any
+        // non-trivial positive atom is NOT directly asserted, load all hyps.
         std::vector<std::string> needed_hyps;
+        bool load_all_hyps = false;
         {
             std::unordered_set<std::string> seen;
             for (int lit : clause) {
-                if (lit <= 0) continue;  // only positive literals can be direct assertions
+                if (lit <= 0) continue;  // only positive literals
                 auto eit = lit_to_atom.find(lit);
                 if (eit == lit_to_atom.end()) continue;
                 NodeId a = eit->second.lhs, b = eit->second.rhs;
                 // Apply same proxy substitution used when building the body.
                 { auto pit = ite_proxy_for_.find(a); if (pit != ite_proxy_for_.end()) a = pit->second; }
                 { auto pit = ite_proxy_for_.find(b); if (pit != ite_proxy_for_.end()) b = pit->second; }
-                if (a == b) continue;
+                if (a == b) continue;  // trivial (True) — no hyp needed
                 if (a > b) std::swap(a, b);
                 uint64_t key = ((uint64_t)a << 32) | (uint64_t)b;
                 auto hit = eq_atom_to_hyp.find(key);
-                if (hit == eq_atom_to_hyp.end()) continue;
+                if (hit == eq_atom_to_hyp.end()) {
+                    // Positive atom not directly asserted → derived from hyp closure.
+                    // Must load all hypotheses so grind can see the full context.
+                    load_all_hyps = true;
+                    break;
+                }
                 if (seen.insert(hit->second).second)
                     needed_hyps.push_back(hit->second);
             }
         }
-        out << "theorem " << tname << " : " << body << " := by";
+        // When load_all_hyps is true the positive literal is EUF-derived (not
+        // directly asserted in the problem).  The proof clause was already extended
+        // with all SAT-context equalities as negative disjuncts, so the context
+        // grind needs is self-contained in the clause body.  Loading all hypotheses
+        // would only enlarge grind's search space with Bool-coerced decide(...)
+        // axioms that trigger spurious case splits.  Leave needed_hyps empty so we
+        // fall through to the plain grind path below.
         if (needed_hyps.empty()) {
-            out << " grind\n";
+            out << "theorem " << tname << " : " << body << " := by grind\n";
         } else {
-            out << "\n";
+            // Specific hyp(s) matched: load only those.
+            out << "theorem " << tname << " : " << body << " := by\n";
             for (const auto& h : needed_hyps)
                 out << "  have " << h << " := " << h << "\n";
             out << "  grind\n";
@@ -707,7 +747,7 @@ void LeanEmitter::emit(std::ostream& out,
         out << "  have " << name << " := " << name << "\n";
     for (const std::string& name : standalone_names)
         out << "  have " << name << " := " << name << "\n";
-    out << "  bv_decide\n";
+    out << "  grind\n";
 }
 
 } // namespace llm2smt

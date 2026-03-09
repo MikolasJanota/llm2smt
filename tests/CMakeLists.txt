@@ -161,13 +161,14 @@ add_smt2_test_selectors(selector_or_unsat         t42_selector_or_unsat.smt2    
 # t43: Regression: crash in CaDiCaL analyze() when register_equality is called before
 #      register_permanent_equality for the same pair — tautological conflict/reason clause
 add_smt2_test_preproc(preproc_perm_eq_preregistered_crash  t43_preproc_perm_eq_preregistered_crash.smt2  sat)
-# t44: --proof generates a Lean file containing "by grind"
+# t44: --proof generates a Lean file with standalone theorem cl_k proved by grind
 add_test(
     NAME "smt2/lean_proof_generates"
     COMMAND bash -c
         "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t44_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t44_lean_proof.smt2 && \
-         grep -q 'by grind' ${CMAKE_BINARY_DIR}/t44_proof.lean"
+         grep -q '^theorem cl_' ${CMAKE_BINARY_DIR}/t44_proof.lean && \
+         grep -q 'grind' ${CMAKE_BINARY_DIR}/t44_proof.lean"
 )
 
 # t51: --proof with U-sorted ite inlines (if c then a else b) and adds ite_pos/ite_neg clauses
@@ -313,13 +314,17 @@ add_test(
 
 # t62: same class of bug as t61, different input.
 #      Regression: proof_fail_000944.
+#      t62 has a direct SAT contradiction (c0=c3 vs ¬(c0=c3)), so no EUF
+#      theory clause is needed.  Already-assigned atoms are no longer emitted
+#      as standalone theorem cl_ lemmas (they would require problem hypotheses
+#      to prove and are unnecessary for the final grind step).
 add_test(
     NAME "smt2/proof_hyp_dep_cl2"
     COMMAND bash -c
         "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t62_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t62_proof_hyp_dep_cl2.smt2 && \
-         grep -q '^theorem cl_' ${CMAKE_BINARY_DIR}/t62_proof.lean && \
-         grep -q 'have cl_.* := cl_' ${CMAKE_BINARY_DIR}/t62_proof.lean"
+         grep -q '^theorem contradiction' ${CMAKE_BINARY_DIR}/t62_proof.lean && \
+         ! grep -q '^theorem cl_' ${CMAKE_BINARY_DIR}/t62_proof.lean"
 )
 
 # t63: Regression: Bool-sorted predicate atoms in theory clauses were emitted as

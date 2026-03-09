@@ -204,12 +204,9 @@ void EufSolver::build_conflict(const std::vector<EqId>& explanation, int diseq_l
     stats_.euf_conflict_lits_total += conflict_clause_.size();
     has_conflict_     = true;
     conflict_lit_idx_ = 0;
-    if (record_proofs_) {
+    if (record_proofs_ && !proof_recorded_conflict_diseqs_.count(diseq_lit)) {
+        proof_recorded_conflict_diseqs_.insert(diseq_lit);
         proof_conflicts_.push_back(conflict_clause_);
-        // Record permanent-equality deps for ALL conflict clauses.
-        // For unit clauses these become implication premises (transitivity form).
-        // For non-unit clauses they also become premises so that grind can use
-        // congruence over permanent equalities that were dropped from the SAT clause.
         proof_unit_perm_deps_.push_back(std::move(perm_deps));
     }
 }
@@ -290,21 +287,20 @@ void EufSolver::discover_propagations() {
                                                     record_proofs_ ? &perm_deps : nullptr);
         if (record_proofs_) {
             const auto& rc = reason_clauses_[lit];
-            // Unit clauses (size==1) for already-assigned atoms must always be
-            // skipped.  Two sub-cases:
-            //   (a) perm_deps empty: the atom is directly in the hypothesis axioms
-            //       and bv_decide can use it without a separate lemma.
-            //   (b) perm_deps non-empty: the permanent equalities in the explanation
-            //       are artifacts of the CC union-by-size proof forest traversal
-            //       (the class containing lhs/rhs was merged INTO the other class,
-            //       so the proof path goes through permanent edges that are not
-            //       genuine reason premises for this atom).  The theorem produced
-            //       would be false (perm_deps ⇏ lhs=rhs in general).
-            // In both cases the atom was SAT-assigned directly, so bv_decide can
-            // recover it from the propositional encoding of the hypothesis axioms.
-            if (already_assigned && rc.size() == 1) {
-                // skip — redundant or incorrect for already-assigned unit atoms
-            } else {
+            // Already-assigned atoms are SAT-assigned directly from the problem
+            // hypotheses.  bv_decide can recover them from the propositional
+            // hypothesis axioms without a separate theory lemma.  Crucially, the
+            // CC may have found the congruence path AFTER merging other classes
+            // (including the atom's own SAT assignment), so the reason clause
+            // might use the assignment as part of its own justification — making
+            // it invalid as a standalone Lean theorem.  Always skip.
+            if (already_assigned) {
+                // skip — bv_decide handles it from hypothesis axioms
+            } else if (!proof_recorded_prop_lits_.count(lit)) {
+                // Record each propagation atom at most once per solve.
+                // Rescans (triggered after each backtrack) would otherwise
+                // accumulate duplicate proof clauses and produce a huge file.
+                proof_recorded_prop_lits_.insert(lit);
                 proof_conflicts_.push_back(rc);
                 proof_unit_perm_deps_.push_back(std::move(perm_deps));
             }
