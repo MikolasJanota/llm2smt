@@ -274,18 +274,25 @@ void LeanEmitter::emit(std::ostream& out,
     ite_proxy_for_.clear();
     const NodeManager& nm = ctx.nm;
 
-    // Precompute ite_id → proxy_id from assertions of the form (proxy = ite_node).
-    // We only record the first proxy found for each ite node (sufficient since the
-    // proxy uniquely names the ite result in the original SMT problem).
-    for (const FmlRef& f : proof_fmls) {
+    // Precompute ite_id → proxy_id and ite_id → hyp_name from assertions of
+    // the form (proxy = ite_node).  We only record the first proxy found for
+    // each ite node.  The hyp_name is used to add the single relevant
+    // hypothesis to standalone theorems that need it (judicious context loading).
+    std::unordered_map<NodeId, std::string> ite_proxy_hyp_name;
+    for (size_t i = 0; i < proof_fmls.size(); ++i) {
+        const FmlRef& f = proof_fmls[i];
         if (f->kind != FmlKind::Eq) continue;
         NodeId a = f->eq_lhs, b = f->eq_rhs;
+        std::string hname = "hyp" + std::to_string(i + 1);
         if (ctx.ite_nodes.count(a) && !ctx.ite_nodes.count(b)
-                && !ite_proxy_for_.count(a))
+                && !ite_proxy_for_.count(a)) {
             ite_proxy_for_[a] = b;
-        else if (ctx.ite_nodes.count(b) && !ctx.ite_nodes.count(a)
-                && !ite_proxy_for_.count(b))
+            ite_proxy_hyp_name[a] = hname;
+        } else if (ctx.ite_nodes.count(b) && !ctx.ite_nodes.count(a)
+                && !ite_proxy_for_.count(b)) {
             ite_proxy_for_[b] = a;
+            ite_proxy_hyp_name[b] = hname;
+        }
     }
 
     out << "import Std.Tactic.BVDecide\n\n";
@@ -317,19 +324,17 @@ void LeanEmitter::emit(std::ostream& out,
 
     // ── Assertions ─────────────────────────────────────────────────────────
     // Collections used in `theorem contradiction`:
-    //   hyp_names        — hyp axioms loaded first  (have X := X)
-    //   ite_sem_inline   — proxy-ite semantics (have X : body := by grind)
-    //                      loaded BEFORE cl_clauses so grind for cl_k sees them
-    //   bridge_inline    — proxy↔ite-inline bridges for shortcut atoms (inline grind)
-    //                      connect decide(ite_inline=X) in hypotheses to
-    //                      decide(proxy=X) in theory clauses for bv_decide
-    //   cl_clauses       — EUF theory clauses proved inline (have X : body := by grind)
-    //   standalone_names — pure tautologies loaded last (have X := X)
+    //   hyp_names        — hyp axioms loaded via (have X := X) for bv_decide
+    //   standalone_names — all theory lemmas proved as standalone theorems,
+    //                      loaded via (have X := X) in contradiction
+    //
+    // All EUF theory lemmas (ite_pos_k, ite_neg_k, ite_bridge_k, cl_k) are
+    // emitted as standalone `theorem X : body := by grind` declarations.
+    // Grind sees global `axiom hyp_k` declarations without needing local
+    // `have hyp_k := hyp_k` bindings, so standalone theorems can use
+    // problem hypotheses directly.
     std::vector<std::string> hyp_names;
     std::vector<std::string> standalone_names;
-    std::vector<std::pair<std::string,std::string>> ite_sem_inline;
-    std::vector<std::pair<std::string,std::string>> bridge_inline;
-    std::vector<std::pair<std::string,std::string>> cl_clauses;
 
     for (size_t i = 0; i < proof_fmls.size(); ++i) {
         std::string hname = "hyp" + std::to_string(i + 1);
@@ -339,7 +344,9 @@ void LeanEmitter::emit(std::ostream& out,
 
     out << "\n";
 
-    // ── Build reverse map: SAT literal → NodeId (for Bool-sorted nodes) ───
+    // ── Build reverse maps ──────────────────────────────────────────────────
+
+    // SAT literal → NodeId (for Bool-sorted nodes)
     std::unordered_map<int, NodeId> lit_to_node;
     lit_to_node.reserve(ctx.node_to_lit.size());
     for (const auto& [nid, lit] : ctx.node_to_lit)
@@ -347,16 +354,29 @@ void LeanEmitter::emit(std::ostream& out,
 
     const auto& lit_to_atom = ctx.euf.lit_to_atom();
 
+    // Canonical equality atom (min_id, max_id) → hyp_name for Eq hypotheses.
+    // Used to load only the specific hypothesis needed when a theory lemma
+    // has a positive literal that is directly asserted in the problem.
+    std::unordered_map<uint64_t, std::string> eq_atom_to_hyp;
+    for (size_t i = 0; i < proof_fmls.size(); ++i) {
+        const FmlRef& f = proof_fmls[i];
+        if (f->kind != FmlKind::Eq) continue;
+        NodeId a = f->eq_lhs, b = f->eq_rhs;
+        if (a == b) continue;
+        if (a > b) std::swap(a, b);
+        uint64_t key = ((uint64_t)a << 32) | (uint64_t)b;
+        if (!eq_atom_to_hyp.count(key))
+            eq_atom_to_hyp[key] = hyp_names[i];
+    }
+
     // ── Ite semantic clauses ────────────────────────────────────────────────
     // For each U-sorted ite node, add two clauses encoding its semantics:
     //   ¬cond ∨ decide(eff = then)   (if cond: eff equals then-branch)
     //   cond ∨ decide(eff = else)    (if ¬cond: eff equals else-branch)
     //
     // "eff" is the proxy constant if one exists (preferred), otherwise the
-    // inlined ite expression.  When a proxy exists, these clauses are NOT
-    // tautologies (they require the proxy=ite hypothesis in scope), so they
-    // are emitted as inline `have` statements inside `contradiction` rather
-    // than as standalone `theorem`s.
+    // inlined ite expression.  All are emitted as standalone theorems;
+    // grind sees the global `axiom hyp_k` declarations directly.
     size_t ite_clause_idx = 0;
     for (const auto& [ite_id, info] : ctx.ite_nodes) {
         const std::string cond_lean = fml_to_lean(info.cond, nm);
@@ -372,12 +392,15 @@ void LeanEmitter::emit(std::ostream& out,
             std::string tname = "ite_pos_" + std::to_string(ite_clause_idx);
             std::string body = "¬(" + cond_lean + ") ∨ decide ("
                 + node_to_lean(lhs_id, nm) + " = " + node_to_lean(rhs_id, nm) + ")";
+            out << "theorem " << tname << " : " << body << " := by";
             if (has_proxy) {
-                ite_sem_inline.push_back({tname, std::move(body)});
+                // Proxy-based: need the proxy=ite axiom in scope for grind.
+                const std::string& pname = ite_proxy_hyp_name.at(ite_id);
+                out << "\n  have " << pname << " := " << pname << "\n  grind\n";
             } else {
-                out << "theorem " << tname << " : " << body << " := by grind\n";
-                standalone_names.push_back(tname);
+                out << " grind\n";
             }
+            standalone_names.push_back(tname);
         }
         // else-branch: cond ∨ decide(canon(eff, else))
         {
@@ -386,12 +409,14 @@ void LeanEmitter::emit(std::ostream& out,
             std::string tname = "ite_neg_" + std::to_string(ite_clause_idx);
             std::string body = "(" + cond_lean + ") ∨ decide ("
                 + node_to_lean(lhs_id, nm) + " = " + node_to_lean(rhs_id, nm) + ")";
+            out << "theorem " << tname << " : " << body << " := by";
             if (has_proxy) {
-                ite_sem_inline.push_back({tname, std::move(body)});
+                const std::string& pname = ite_proxy_hyp_name.at(ite_id);
+                out << "\n  have " << pname << " := " << pname << "\n  grind\n";
             } else {
-                out << "theorem " << tname << " : " << body << " := by grind\n";
-                standalone_names.push_back(tname);
+                out << " grind\n";
             }
+            standalone_names.push_back(tname);
         }
         ++ite_clause_idx;
     }
@@ -460,21 +485,28 @@ void LeanEmitter::emit(std::ostream& out,
                         "decide (" + node_to_lean(p_lhs, nm) + " = " + node_to_lean(p_rhs, nm) + ")";
 
                     if (has_proxy_for_ite) {
-                        // Emit BOTH bridge directions inline (proved with hyp in scope):
+                        // Emit BOTH bridge directions as standalone theorems.
+                        // They need the proxy=ite axiom to prove, so load it explicitly.
                         //   Dir 1: d(ite=X) ∨ ¬d(proxy=X)
                         //     eliminates spurious: d(proxy=X)=true ∧ d(ite=X)=false
                         //   Dir 2: d(proxy=X) ∨ ¬d(ite=X)
                         //     eliminates spurious: d(ite=X)=true ∧ d(proxy=X)=false
-                        // Both reduce to excluded middle given proxy=ite_inline in scope.
                         // Also needed for branch atoms (then/else): hypothesis formulas
                         // like d(branch=ite_inline) appear as opaque atoms that bv_decide
                         // can assign independently of d(branch=proxy).
+                        const std::string& pname = ite_proxy_hyp_name.at(ite_id);
                         std::string tname1 = "ite_bridge_" + std::to_string(bridge_idx++);
-                        bridge_inline.push_back({tname1, ite_eq_other + " ∨ ¬(" + proxy_eq_other + ")"});
+                        out << "theorem " << tname1 << " : " << ite_eq_other
+                            << " ∨ ¬(" << proxy_eq_other << ") := by\n"
+                            << "  have " << pname << " := " << pname << "\n  grind\n";
+                        standalone_names.push_back(tname1);
                         std::string tname2 = "ite_bridge_" + std::to_string(bridge_idx++);
-                        bridge_inline.push_back({tname2, proxy_eq_other + " ∨ ¬(" + ite_eq_other + ")"});
+                        out << "theorem " << tname2 << " : " << proxy_eq_other
+                            << " ∨ ¬(" << ite_eq_other << ") := by\n"
+                            << "  have " << pname << " := " << pname << "\n  grind\n";
+                        standalone_names.push_back(tname2);
                     } else {
-                        // Standalone: ite has no proxy, this is a pure tautology.
+                        // Ite has no proxy — pure EUF tautology.
                         std::string tname = "ite_bridge_" + std::to_string(bridge_idx++);
                         out << "theorem " << tname << " : " << ite_eq_other
                             << " ∨ ¬(" << proxy_eq_other << ") := by grind\n";
@@ -523,12 +555,12 @@ void LeanEmitter::emit(std::ostream& out,
         }
     }
 
-    // ── Theory lemmas (collected as inline cl_clauses) ─────────────────────
-    // EUF theory clauses are NOT standalone tautologies — they're valid only
-    // given the problem hypotheses.  Grind cannot prove them from an empty
-    // context (it doesn't see global axioms).  Instead, they're emitted as
-    // inline `have` statements inside `theorem contradiction`, where the
-    // `have hyp_k := hyp_k` bindings make the hypotheses visible to grind.
+    // ── Theory lemmas (standalone theorems proved by grind) ─────────────────
+    // EUF theory clauses are emitted as standalone `theorem cl_k : body := by grind`.
+    // Grind sees global `axiom hyp_k` declarations directly, so no inline
+    // `have hyp_k` bindings are needed.  After all theorems are declared,
+    // `theorem contradiction` loads them via `have cl_k := cl_k` then calls
+    // `bv_decide` for propositional closure.
     const auto& perm_deps_vec = ctx.euf.proof_unit_perm_deps();
     for (size_t i = 0; i < proof_conflicts.size(); ++i) {
         const auto& clause = proof_conflicts[i];
@@ -552,7 +584,8 @@ void LeanEmitter::emit(std::ostream& out,
                 }
                 body += "decide (" + node_to_lean(lhs_id, nm) + " = "
                       + node_to_lean(rhs_id, nm) + ")";
-                cl_clauses.push_back({tname, std::move(body)});
+                out << "theorem " << tname << " : " << body << " := by grind\n";
+                standalone_names.push_back(tname);
                 continue;
             }
         }
@@ -628,29 +661,50 @@ void LeanEmitter::emit(std::ostream& out,
                 }
             }
         }
-        cl_clauses.push_back({tname, std::move(body)});
+        // Collect hypotheses for positive equality literals that are direct
+        // problem assertions.  Some theory clauses are valid only because a
+        // positive literal is permanently asserted (e.g. decide(c3=c0) ∨ ¬…
+        // is only a tautology when c3=c0 holds globally).  Load only the
+        // specific needed hypotheses — do not load all hyps indiscriminately.
+        std::vector<std::string> needed_hyps;
+        {
+            std::unordered_set<std::string> seen;
+            for (int lit : clause) {
+                if (lit <= 0) continue;  // only positive literals can be direct assertions
+                auto eit = lit_to_atom.find(lit);
+                if (eit == lit_to_atom.end()) continue;
+                NodeId a = eit->second.lhs, b = eit->second.rhs;
+                // Apply same proxy substitution used when building the body.
+                { auto pit = ite_proxy_for_.find(a); if (pit != ite_proxy_for_.end()) a = pit->second; }
+                { auto pit = ite_proxy_for_.find(b); if (pit != ite_proxy_for_.end()) b = pit->second; }
+                if (a == b) continue;
+                if (a > b) std::swap(a, b);
+                uint64_t key = ((uint64_t)a << 32) | (uint64_t)b;
+                auto hit = eq_atom_to_hyp.find(key);
+                if (hit == eq_atom_to_hyp.end()) continue;
+                if (seen.insert(hit->second).second)
+                    needed_hyps.push_back(hit->second);
+            }
+        }
+        out << "theorem " << tname << " : " << body << " := by";
+        if (needed_hyps.empty()) {
+            out << " grind\n";
+        } else {
+            out << "\n";
+            for (const auto& h : needed_hyps)
+                out << "  have " << h << " := " << h << "\n";
+            out << "  grind\n";
+        }
+        standalone_names.push_back(tname);
     }
 
     // ── Contradiction theorem ──────────────────────────────────────────────
-    // 1. Load hypothesis axioms (have hyp_k := hyp_k).  This puts them in
-    //    the local tactic context so grind can use them in step 2.
-    // 2. Prove EUF theory clauses inline (have cl_k : body := by grind).
-    //    Grind now sees hyp1..N as local variables and can discharge clauses
-    //    that are only valid given the problem hypotheses.
-    // 3. Load tautology theorems (have standalone := standalone).
-    // 4. bv_decide closes the propositional contradiction.
+    // Load all hypothesis axioms and pre-proved theory theorems into the local
+    // tactic context, then let bv_decide close the propositional contradiction.
+    // All EUF reasoning has already been captured in the standalone theorems.
     out << "\ntheorem contradiction : False := by\n";
     for (const std::string& name : hyp_names)
         out << "  have " << name << " := " << name << "\n";
-    // Inline ite semantics (proxy-based): proved with hyp context.
-    for (const auto& [cname, cbody] : ite_sem_inline)
-        out << "  have " << cname << " : " << cbody << " := by grind\n";
-    // Inline ite bridges: connect decide(ite_inline=X) in hypotheses to
-    // decide(proxy=X) in theory clauses so bv_decide can use both.
-    for (const auto& [cname, cbody] : bridge_inline)
-        out << "  have " << cname << " : " << cbody << " := by grind\n";
-    for (const auto& [cname, cbody] : cl_clauses)
-        out << "  have " << cname << " : " << cbody << " := by grind\n";
     for (const std::string& name : standalone_names)
         out << "  have " << name << " := " << name << "\n";
     out << "  bv_decide\n";

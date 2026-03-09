@@ -103,26 +103,44 @@ No output = success. Any output = Lean error.
 
 ## Lean proof generation
 
-Generated proofs close with:
+All EUF theory lemmas (`cl_k`, `ite_pos_k`, `ite_neg_k`, `ite_bridge_k`) are
+emitted as **standalone `theorem` declarations** proved by `grind`, NOT as
+inline `have` statements inside `theorem contradiction`.  This keeps the
+contradiction proof context small and avoids Lean performance issues.
+
 ```lean
-first | assumption | sat_decide
+-- Theory lemmas: standalone, proved by grind before contradiction.
+theorem cl_0 : decide (a = c) ∨ ¬(decide (a = b)) ∨ ¬(decide (b = c)) := by grind
+theorem cl_1 : decide (x = y) ∨ ¬(decide (x = y)) := by grind   -- trivial
+-- Some lemmas need a specific hypothesis because a positive literal in the
+-- clause is a direct problem assertion (not a pure EUF tautology).
+-- Load only the relevant hypothesis — do not load all hypotheses:
+theorem cl_4 : decide (c3 = c0) ∨ ¬(decide (c1 = c0)) := by
+  have hyp3 := hyp3   -- hyp3 : decide (c3 = c0)  (needed for grind)
+  grind
+-- Ite semantics with proxy constant need the proxy=ite hypothesis:
+theorem ite_pos_0 : ¬(decide c) ∨ decide (proxy = then_node) := by
+  have hyp5 := hyp5   -- hyp5 : decide (proxy = (if c then then_node else else_node))
+  grind
+
+-- Contradiction: load all hyp axioms and pre-proved theorems, then bv_decide.
+theorem contradiction : False := by
+  have hyp1 := hyp1
+  ...
+  have cl_0 := cl_0
+  have cl_1 := cl_1
+  ...
+  bv_decide
 ```
 
-**`sat_decide` must always be the last tactic.**  Do not replace it with
-`grind` or add `grind` as a fallback on the whole goal — `grind` may time out
-on large proof contexts.
-
-`grind` is used **only** to prove individual theory lemmas:
-```lean
-have cl_0 : ... := by grind   -- small EUF clause, grind is fast here
-have cl_1 : ... := by grind
-...
-first | assumption | sat_decide   -- propositional closure; grind NOT here
-```
-
-All EUF reasoning (transitivity, congruence) must be pre-encoded in the
-`have cl_i` lemmas so that `sat_decide` only needs to do propositional
-reasoning over those pre-established clauses.
+**Rules:**
+- `grind` is used **only** to prove individual theory lemmas (standalone theorems).
+- Do NOT put `grind` inside `theorem contradiction` — only `bv_decide` goes there.
+- `bv_decide` does the propositional closure over pre-established theory lemmas.
+- For theory lemmas that need context (their positive literals reference direct
+  assertions), load only the specific hypothesis needed — do not load all hyps.
+- `grind` **cannot** see global `axiom` declarations without an explicit
+  `have hyp_k := hyp_k` in the theorem body — load needed axioms explicitly.
 
 ## Architecture notes
 

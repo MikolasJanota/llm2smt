@@ -297,17 +297,18 @@ add_test(
 )
 
 # t48-t49: n-ary xor (:left-assoc)
-# t61: --proof with no preprocessing: EUF theory clause proved inline inside
-#      contradiction (have cl_k := by grind) where hyp axioms are local variables.
-#      Regression: proof_fail_000469 — grind failed on standalone theorem cl_k
-#      because it cannot see global axiom declarations.
+# t61: --proof with no preprocessing: EUF theory clauses are emitted as standalone
+#      theorems (theorem cl_k : ... := by grind).  When a positive literal in the
+#      clause is a direct problem assertion, the relevant hypothesis is loaded
+#      inside the theorem via (have hyp_j := hyp_j) before grind.
+#      Regression: proof_fail_000469.
 add_test(
     NAME "smt2/proof_hyp_dep_cl"
     COMMAND bash -c
         "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t61_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t61_proof_hyp_dep_cl.smt2 && \
-         grep -q 'have cl_' ${CMAKE_BINARY_DIR}/t61_proof.lean && \
-         ! grep -q '^theorem cl_' ${CMAKE_BINARY_DIR}/t61_proof.lean"
+         grep -q '^theorem cl_' ${CMAKE_BINARY_DIR}/t61_proof.lean && \
+         grep -q 'have cl_.* := cl_' ${CMAKE_BINARY_DIR}/t61_proof.lean"
 )
 
 # t62: same class of bug as t61, different input.
@@ -317,8 +318,8 @@ add_test(
     COMMAND bash -c
         "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t62_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t62_proof_hyp_dep_cl2.smt2 && \
-         grep -q 'have cl_' ${CMAKE_BINARY_DIR}/t62_proof.lean && \
-         ! grep -q '^theorem cl_' ${CMAKE_BINARY_DIR}/t62_proof.lean"
+         grep -q '^theorem cl_' ${CMAKE_BINARY_DIR}/t62_proof.lean && \
+         grep -q 'have cl_.* := cl_' ${CMAKE_BINARY_DIR}/t62_proof.lean"
 )
 
 # t63: Regression: Bool-sorted predicate atoms in theory clauses were emitted as
