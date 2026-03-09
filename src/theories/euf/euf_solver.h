@@ -133,6 +133,10 @@ private:
     std::vector<std::vector<int>> proof_conflicts_;
     // Parallel to proof_conflicts_: permanent eq deps for unit clauses (else empty).
     std::vector<std::vector<std::pair<NodeId,NodeId>>> proof_unit_perm_deps_;
+    // Deduplication guards: track which propagation / conflict atoms already have
+    // a recorded proof clause.  Each atom is recorded at most once per solve.
+    std::unordered_set<int>  proof_recorded_prop_lits_;
+    std::unordered_set<int>  proof_recorded_conflict_diseqs_;
 
     Stats& stats_;
 
