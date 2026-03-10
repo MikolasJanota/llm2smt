@@ -364,10 +364,9 @@ add_test(
 add_smt2_test(nary_xor_unsat  t48_nary_xor_unsat.smt2  unsat)
 add_smt2_test(nary_xor_sat    t49_nary_xor_sat.smt2    sat)
 
-# Regression: theorem contradiction must use bv_decide, never grind.
-# (grind was tried when bv_decide failed on complex problems; that was wrong
-# because grind cannot scale to large propositional contexts and violates the
-# proof architecture invariant that bv_decide does all propositional closure.)
+# Regression: theorem contradiction must use bv_decide (possibly as the first
+# tactic in "first | bv_decide | grind").  A bare grind-only contradiction
+# (without bv_decide) is wrong and violates the proof architecture invariant.
 add_test(
     NAME "smt2/proof_contradiction_uses_bv_decide"
     COMMAND bash -c
@@ -375,6 +374,17 @@ add_test(
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t01_unsat_direct.smt2 && \
          awk '/^theorem contradiction/,0' ${CMAKE_BINARY_DIR}/t_bvd_proof.lean | grep -q 'bv_decide' && \
          ! awk '/^theorem contradiction/,0' ${CMAKE_BINARY_DIR}/t_bvd_proof.lean | grep -q '  grind'"
+)
+
+# t65: SEQ032_size2 — complex QF_UF benchmark where bv_decide produces a spurious
+# counterexample and the grind fallback in theorem contradiction must be used.
+# Regression: previously bv_decide had no fallback and the proof was wrong.
+add_test(
+    NAME "smt2/proof_seq032_grind_fallback"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t65_proof.lean \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t65_seq032_size2.smt2 && \
+         grep -q '  | grind' ${CMAKE_BINARY_DIR}/t65_proof.lean"
 )
 
 # t50: --eq-bridge eliminates exponential blowup on 19-diamond chain (diamond20)

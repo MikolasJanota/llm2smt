@@ -847,15 +847,37 @@ void LeanEmitter::emit(std::ostream& out,
     }
 
     // ── Contradiction theorem ──────────────────────────────────────────────
-    // Load all hypothesis axioms and pre-proved theory theorems into the local
-    // tactic context, then bv_decide closes the propositional contradiction.
-    // All EUF reasoning is captured in the standalone theorems above.
+    // Load hypothesis axioms, then close the contradiction.
+    // Strategy: try loading all standalone theory lemmas and using bv_decide
+    // (fast when it works for simple propositional closures).  Fall back to
+    // grind for complex UF problems where bv_decide produces spurious
+    // counterexamples — grind runs in the clean context with only hyp axioms
+    // so it can apply EUF reasoning directly without being overwhelmed by the
+    // large set of theory lemmas.
+    //
+    // The `first | (...; bv_decide) | grind` structure ensures:
+    //   - bv_decide branch: loads all cl_k/cong_k/trans_k lemmas, then tries
+    //     bv_decide for propositional closure.
+    //   - grind branch: if bv_decide fails, Lean resets the context to just
+    //     the hyp axioms and grind handles full EUF reasoning natively.
     out << "\ntheorem contradiction : False := by\n";
     for (const std::string& name : hyp_names)
         out << "  have " << name << " := " << name << "\n";
-    for (const std::string& name : standalone_names)
-        out << "  have " << name << " := " << name << "\n";
-    out << "  bv_decide\n";
+    if (standalone_names.empty()) {
+        // No theory lemmas — just try bv_decide then grind.
+        out << "  first | bv_decide | grind\n";
+    } else {
+        // Inline the standalone loads into the bv_decide branch so that if
+        // bv_decide fails, grind gets a clean context with only hyp axioms.
+        out << "  first\n";
+        out << "  | (";
+        for (size_t i = 0; i < standalone_names.size(); ++i) {
+            if (i > 0) out << "; ";
+            out << "have " << standalone_names[i] << " := " << standalone_names[i];
+        }
+        out << "; bv_decide)\n";
+        out << "  | grind\n";
+    }
 }
 
 } // namespace llm2smt
