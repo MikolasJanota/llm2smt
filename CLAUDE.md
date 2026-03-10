@@ -123,30 +123,23 @@ theorem ite_pos_0 : ¬(decide c) ∨ decide (proxy = then_node) := by
   have hyp5 := hyp5   -- hyp5 : decide (proxy = (if c then then_node else else_node))
   grind
 
--- Simple case (no theory lemmas): bv_decide with grind fallback.
+-- Contradiction: load all hyp axioms and pre-proved theorems, then bv_decide.
 theorem contradiction : False := by
   have hyp1 := hyp1
-  have hyp2 := hyp2
-  first | bv_decide | grind
-
--- Complex case (with theory lemmas): load lemmas into bv_decide branch only,
--- so if bv_decide fails the grind fallback gets a clean context.
-theorem contradiction : False := by
-  have hyp1 := hyp1
-  first
-  | (have cl_0 := cl_0; have trans_0 := trans_0; ...; have cong_130 := cong_130; bv_decide)
-  | grind
+  ...
+  have cl_0 := cl_0
+  have cl_1 := cl_1
+  ...
+  bv_decide
 ```
 
 **Rules:**
-- `grind` is used to prove individual theory lemmas (standalone theorems).
-- **`theorem contradiction` MUST use `first | ... bv_decide | grind`** (never bare `grind` alone).
-  `bv_decide` is tried first (fast for simple propositional closures); `grind` is the
-  fallback for complex UF problems where `bv_decide` produces spurious counterexamples.
-  When theory lemmas are present, they are inlined into the `bv_decide` branch only, so
-  grind runs in a clean context with only hyp axioms and can apply EUF reasoning natively.
-  The regression test `smt2/proof_contradiction_uses_bv_decide` enforces that `bv_decide`
-  is always present.
+- `grind` is used **only** to prove individual theory lemmas (standalone theorems).
+- **`theorem contradiction` MUST end with `bv_decide`. NEVER use `grind` there.**
+  If `bv_decide` gives a spurious counterexample, the fix is to emit more/better
+  theory lemmas (shorter conflict clauses, congruence lemmas, transitivity lemmas)
+  — NOT to switch `theorem contradiction` to `grind`.
+  A regression test (`smt2/proof_contradiction_uses_bv_decide`) enforces this.
 - `bv_decide` does the propositional closure over pre-established theory lemmas.
 - For theory lemmas that need context (their positive literals reference direct
   assertions), load only the specific hypothesis needed — do not load all hyps.
