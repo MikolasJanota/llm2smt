@@ -135,7 +135,11 @@ theorem contradiction : False := by
 
 **Rules:**
 - `grind` is used **only** to prove individual theory lemmas (standalone theorems).
-- Do NOT put `grind` inside `theorem contradiction` — only `bv_decide` goes there.
+- **`theorem contradiction` MUST end with `bv_decide`. NEVER use `grind` there.**
+  If `bv_decide` gives a spurious counterexample, the fix is to emit more/better
+  theory lemmas (shorter conflict clauses, congruence lemmas, transitivity lemmas)
+  — NOT to switch `theorem contradiction` to `grind`.
+  A regression test (`smt2/proof_contradiction_uses_bv_decide`) enforces this.
 - `bv_decide` does the propositional closure over pre-established theory lemmas.
 - For theory lemmas that need context (their positive literals reference direct
   assertions), load only the specific hypothesis needed — do not load all hyps.
