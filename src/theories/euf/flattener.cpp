@@ -69,6 +69,10 @@ NodeId Flattener::do_flatten(NodeId term, std::vector<FlatEq>& eqs) {
     }
 
     node_to_cc_[term] = cur;
+    // Record the inverse for the full-application result.  Only non-@ original
+    // terms get an entry: intermediate curried nodes use the @ apply symbol and
+    // are excluded so get_orig() never returns a partial-application node.
+    cc_to_orig_[cur] = term;
     return cur;
 }
 

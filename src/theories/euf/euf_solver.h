@@ -85,6 +85,21 @@ public:
         return proof_unit_perm_deps_;
     }
 
+    // A fully-resolved congruence step:
+    //   decide(orig(result_lhs) = orig(result_rhs))  is implied by  ∧ premise_lits
+    // where premise_lits are positive SAT literal ids for the leaf atoms.
+    // The Lean emitter renders this as:
+    //   theorem cong_N : decide(r1=r2) ∨ ¬P1 ∨ ¬P2 ∨ ... := by grind
+    struct CongStep {
+        NodeId result_lhs;
+        NodeId result_rhs;
+        std::vector<int> premise_lits;  // positive SAT literals
+    };
+
+    const std::vector<CongStep>& proof_cong_steps() const {
+        return proof_cong_steps_;
+    }
+
 private:
     NodeManager& nm_;
     CC           cc_;
@@ -145,6 +160,11 @@ private:
     // identical).  Keyed by sorted literal vector for canonical comparison.
     std::set<std::vector<int>>       proof_clause_content_seen_;
 
+    // Congruence steps collected during conflict / propagation proof recording.
+    std::vector<CongStep>    proof_cong_steps_;
+    // Dedup guard for cong steps: keyed by atom_key(result_lhs, result_rhs).
+    std::unordered_set<uint64_t> proof_cong_seen_;
+
     Stats& stats_;
 
     // ── Theory propagation ────────────────────────────────────────────────
@@ -187,6 +207,14 @@ private:
     // equality literal.  Permanent equalities (no SAT var) are dropped.
     std::vector<int> build_reason_clause(int plit, const std::vector<EqId>& expl,
                                           std::vector<std::pair<NodeId,NodeId>>* out_perm_deps = nullptr);
+
+    // Resolve a vector of EqIds (from cc_.explain) to SAT literal ids,
+    // skipping permanent equalities.  Returns sorted, deduplicated literals.
+    std::vector<int> eqids_to_lits(const std::vector<EqId>& eqids) const;
+
+    // Process raw congruence steps (from cc_.explain with out_cong) into
+    // fully-resolved CongStep records and append to proof_cong_steps_.
+    void record_cong_steps(const std::vector<CC::RawCongStep>& raw_congs);
 };
 
 } // namespace llm2smt

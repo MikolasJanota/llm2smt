@@ -98,9 +98,25 @@ public:
     void push_level();
     void pop_level(size_t target_level);
 
+    // A raw congruence step captured during explain():
+    //   result_lhs ≡ result_rhs  because  fn_lhs ≡ fn_rhs  and  arg_lhs ≡ arg_rhs.
+    // Fields are NULL_NODE when that pair is identical (no premise for that slot).
+    struct RawCongStep {
+        NodeId result_lhs = NULL_NODE;
+        NodeId result_rhs = NULL_NODE;
+        NodeId fn_lhs     = NULL_NODE;  // NULL_NODE when fn pair identical
+        NodeId fn_rhs     = NULL_NODE;
+        NodeId arg_lhs    = NULL_NODE;  // NULL_NODE when arg pair identical
+        NodeId arg_rhs    = NULL_NODE;
+    };
+
     // Produce a set of EqIds that jointly justify a ≡ b.
     // Precondition: are_congruent(a, b).
-    std::vector<EqId> explain(NodeId a, NodeId b);
+    // If out_cong is non-null, also appends one RawCongStep per congruence
+    // edge traversed.  The caller can sub-explain the premise pairs to get
+    // the leaf SAT atoms needed to justify each step.
+    std::vector<EqId> explain(NodeId a, NodeId b,
+                              std::vector<RawCongStep>* out_cong = nullptr);
 
     // Resize internal structures to accommodate node id n.
     void ensure_node(NodeId n);
@@ -176,7 +192,8 @@ private:
     // Walk from a up to lca, collecting justifications into result.
     void explain_path(NodeId a, NodeId lca, PathUF& uf,
                       std::vector<std::pair<NodeId,NodeId>>& pending_pairs,
-                      std::vector<EqId>& result);
+                      std::vector<EqId>& result,
+                      std::vector<RawCongStep>* out_cong = nullptr);
 };
 
 } // namespace llm2smt

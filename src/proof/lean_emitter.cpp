@@ -811,6 +811,41 @@ void LeanEmitter::emit(std::ostream& out,
         }
     }
 
+    // ── Congruence lemmas ──────────────────────────────────────────────────
+    // For every congruence step recorded during CDCL proof tracing, emit a
+    // standalone theorem that grind can prove.  Each step says:
+    //   decide(orig(r1) = orig(r2)) ∨ ¬decide(P1) ∨ ¬decide(P2) ∨ ...
+    // The r1/r2 pair is a fully-applied original term (not a partial app).
+    // bv_decide uses these as propositional clauses bridging complex function
+    // atoms to the simple registered SAT atoms.
+    {
+        const Flattener& flattener = ctx.euf.flattener();
+        const auto& cong_steps = ctx.euf.proof_cong_steps();
+        int cong_idx = 0;
+        for (const auto& cs : cong_steps) {
+            NodeId orig_r1 = flattener.get_orig(cs.result_lhs);
+            NodeId orig_r2 = flattener.get_orig(cs.result_rhs);
+            // Skip partial-application flat nodes (no full-term inverse).
+            if (orig_r1 == NULL_NODE || orig_r2 == NULL_NODE) continue;
+            if (orig_r1 == orig_r2) continue;
+            // Canonical order (smaller NodeId first).
+            if (orig_r1 > orig_r2) std::swap(orig_r1, orig_r2);
+            std::string body = "decide (" + node_to_lean(orig_r1, nm) +
+                               " = " + node_to_lean(orig_r2, nm) + ")";
+            for (int prem_lit : cs.premise_lits) {
+                auto eit = lit_to_atom.find(prem_lit);
+                if (eit == lit_to_atom.end()) continue;
+                NodeId lhs = eit->second.lhs, rhs = eit->second.rhs;
+                if (lhs > rhs) std::swap(lhs, rhs);
+                body += " ∨ ¬(decide (" + node_to_lean(lhs, nm) +
+                        " = " + node_to_lean(rhs, nm) + "))";
+            }
+            std::string tname = "cong_" + std::to_string(cong_idx++);
+            out << "theorem " << tname << " : " << body << " := by grind\n";
+            standalone_names.push_back(tname);
+        }
+    }
+
     // ── Contradiction theorem ──────────────────────────────────────────────
     // Load all hypothesis axioms and pre-proved theory theorems into the local
     // tactic context, then bv_decide closes the propositional contradiction.

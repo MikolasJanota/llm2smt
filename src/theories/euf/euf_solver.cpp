@@ -86,8 +86,11 @@ void EufSolver::notify_assignment(int lit, bool /*is_fixed*/) {
         diseq_level_counts_.back()++;
         // Early conflict: the CC may already have merged these nodes.
         if (!has_conflict_ && cc_.are_congruent(atom.flat_lhs, atom.flat_rhs)) {
-            std::vector<EqId> expl = cc_.explain(atom.flat_lhs, atom.flat_rhs);
+            std::vector<CC::RawCongStep> raw_congs;
+            std::vector<EqId> expl = cc_.explain(atom.flat_lhs, atom.flat_rhs,
+                                                  record_proofs_ ? &raw_congs : nullptr);
             build_conflict(expl, lit);
+            if (record_proofs_) record_cong_steps(raw_congs);
         }
     }
 }
@@ -155,13 +158,62 @@ bool EufSolver::cb_check_found_model(const std::vector<int>& /*model*/) {
     ++stats_.euf_check_model_calls;
     for (const Disequality& d : active_diseqs_) {
         if (cc_.are_congruent(d.flat_lhs, d.flat_rhs)) {
-            std::vector<EqId> expl = cc_.explain(d.flat_lhs, d.flat_rhs);
+            std::vector<CC::RawCongStep> raw_congs;
+            std::vector<EqId> expl = cc_.explain(d.flat_lhs, d.flat_rhs,
+                                                  record_proofs_ ? &raw_congs : nullptr);
             build_conflict(expl, d.orig_lit);
+            if (record_proofs_) record_cong_steps(raw_congs);
             return false;
         }
     }
     return true;
 }
+
+// ── Proof helpers ─────────────────────────────────────────────────────────────
+
+std::vector<int> EufSolver::eqids_to_lits(const std::vector<EqId>& eqids) const {
+    std::vector<int> lits;
+    for (EqId eq : eqids) {
+        const Equation& e = cc_.get_equation(eq);
+        if (e.kind != EqKind::Atomic || e.rhs == NULL_NODE) continue;
+        uint64_t key = atom_key(e.lhs, e.rhs);
+        if (permanent_flat_eqs_.count(key)) continue;
+        auto it = flat_atom_to_lit_.find(key);
+        if (it != flat_atom_to_lit_.end())
+            lits.push_back(it->second);
+    }
+    std::sort(lits.begin(), lits.end());
+    lits.erase(std::unique(lits.begin(), lits.end()), lits.end());
+    return lits;
+}
+
+void EufSolver::record_cong_steps(const std::vector<CC::RawCongStep>& raw_congs) {
+    for (const auto& rcs : raw_congs) {
+        if (rcs.result_lhs == NULL_NODE || rcs.result_rhs == NULL_NODE) continue;
+        if (rcs.result_lhs == rcs.result_rhs) continue;
+        uint64_t key = atom_key(rcs.result_lhs, rcs.result_rhs);
+        if (!proof_cong_seen_.insert(key).second) continue;
+
+        // Collect leaf SAT atoms for each premise pair.
+        std::vector<int> prem_lits;
+        if (rcs.fn_lhs != NULL_NODE && rcs.fn_lhs != rcs.fn_rhs) {
+            auto sub = cc_.explain(rcs.fn_lhs, rcs.fn_rhs);
+            auto lits = eqids_to_lits(sub);
+            prem_lits.insert(prem_lits.end(), lits.begin(), lits.end());
+        }
+        if (rcs.arg_lhs != NULL_NODE && rcs.arg_lhs != rcs.arg_rhs) {
+            auto sub = cc_.explain(rcs.arg_lhs, rcs.arg_rhs);
+            auto lits = eqids_to_lits(sub);
+            prem_lits.insert(prem_lits.end(), lits.begin(), lits.end());
+        }
+        std::sort(prem_lits.begin(), prem_lits.end());
+        prem_lits.erase(std::unique(prem_lits.begin(), prem_lits.end()), prem_lits.end());
+
+        proof_cong_steps_.push_back({rcs.result_lhs, rcs.result_rhs, std::move(prem_lits)});
+    }
+}
+
+// ── Conflict clause building ───────────────────────────────────────────────────
 
 void EufSolver::build_conflict(const std::vector<EqId>& explanation, int diseq_lit) {
     // The conflict clause is:
@@ -297,10 +349,13 @@ void EufSolver::discover_propagations() {
         if (already_assigned && !record_proofs_) continue; // skip if assigned (non-proof mode)
         if (!cc_.are_congruent(atom.flat_lhs, atom.flat_rhs)) continue;
 
-        std::vector<EqId> expl = cc_.explain(atom.flat_lhs, atom.flat_rhs);
+        std::vector<CC::RawCongStep> raw_congs;
+        std::vector<EqId> expl = cc_.explain(atom.flat_lhs, atom.flat_rhs,
+                                              record_proofs_ ? &raw_congs : nullptr);
         std::vector<std::pair<NodeId,NodeId>> perm_deps;
         reason_clauses_[lit] = build_reason_clause(lit, expl,
                                                     record_proofs_ ? &perm_deps : nullptr);
+        if (record_proofs_) record_cong_steps(raw_congs);
         if (record_proofs_) {
             const auto& rc = reason_clauses_[lit];
             // Already-assigned atoms are SAT-assigned directly from the problem
@@ -348,8 +403,11 @@ void EufSolver::discover_propagations() {
     if (!has_conflict_) {
         for (const Disequality& d : active_diseqs_) {
             if (cc_.are_congruent(d.flat_lhs, d.flat_rhs)) {
-                std::vector<EqId> expl = cc_.explain(d.flat_lhs, d.flat_rhs);
+                std::vector<CC::RawCongStep> raw_congs;
+                std::vector<EqId> expl = cc_.explain(d.flat_lhs, d.flat_rhs,
+                                                      record_proofs_ ? &raw_congs : nullptr);
                 build_conflict(expl, d.orig_lit);
+                if (record_proofs_) record_cong_steps(raw_congs);
                 return;
             }
         }

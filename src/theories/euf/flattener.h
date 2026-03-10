@@ -40,12 +40,23 @@ public:
         return (it != node_to_cc_.end()) ? it->second : NULL_NODE;
     }
 
+    // Reverse: look up the original (pre-flattening) NodeId for a flat CC node.
+    // Returns NULL_NODE if the flat node has no full-application original
+    // (e.g., it is an intermediate partial-application constant).
+    NodeId get_orig(NodeId flat) const {
+        auto it = cc_to_orig_.find(flat);
+        return (it != cc_to_orig_.end()) ? it->second : NULL_NODE;
+    }
+
 private:
     NodeManager& nm_;
     CC&          cc_;
 
     // Maps original NodeId → flat CC constant NodeId
     std::unordered_map<NodeId, NodeId> node_to_cc_;
+    // Inverse: flat CC constant → original NodeId.
+    // Populated only for fully-applied terms (not intermediate @ nodes).
+    std::unordered_map<NodeId, NodeId> cc_to_orig_;
 
     // Flatten and return the CC constant for this term, accumulating equations.
     NodeId do_flatten(NodeId term, std::vector<FlatEq>& eqs);

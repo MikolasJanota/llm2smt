@@ -360,7 +360,8 @@ NodeId CC::find_lca(NodeId a, NodeId b) {
 void CC::explain_path(NodeId a, NodeId lca,
                        PathUF& uf,
                        std::vector<std::pair<NodeId,NodeId>>& pending_pairs,
-                       std::vector<EqId>& result) {
+                       std::vector<EqId>& result,
+                       std::vector<RawCongStep>* out_cong) {
     NodeId cur = a;
     // Use node identity for termination (not PathUF reps, which change under unite).
     while (cur != lca) {
@@ -388,6 +389,19 @@ void CC::explain_path(NodeId a, NodeId lca,
                     pending_pairs.push_back({e1.app_fn, e2.app_fn});
                 if (e1.app_arg != e2.app_arg)
                     pending_pairs.push_back({e1.app_arg, e2.app_arg});
+                // Record this congruence step so callers can emit proof lemmas.
+                // The caller sub-explains the premise pairs (fn, arg) to get
+                // the leaf SAT atoms that justify this specific congruence.
+                if (out_cong) {
+                    RawCongStep rcs;
+                    rcs.result_lhs = e1.lhs;
+                    rcs.result_rhs = e2.lhs;
+                    rcs.fn_lhs  = (e1.app_fn  != e2.app_fn)  ? e1.app_fn  : NULL_NODE;
+                    rcs.fn_rhs  = (e1.app_fn  != e2.app_fn)  ? e2.app_fn  : NULL_NODE;
+                    rcs.arg_lhs = (e1.app_arg != e2.app_arg) ? e1.app_arg : NULL_NODE;
+                    rcs.arg_rhs = (e1.app_arg != e2.app_arg) ? e2.app_arg : NULL_NODE;
+                    out_cong->push_back(rcs);
+                }
             }
             from_node = cl.from_node;
         }
@@ -403,7 +417,8 @@ void CC::explain_path(NodeId a, NodeId lca,
     }
 }
 
-std::vector<EqId> CC::explain(NodeId a, NodeId b) {
+std::vector<EqId> CC::explain(NodeId a, NodeId b,
+                               std::vector<RawCongStep>* out_cong) {
     assert(are_congruent(a, b) && "nodes are not congruent");
 
     std::vector<EqId> result;
@@ -431,8 +446,8 @@ std::vector<EqId> CC::explain(NodeId a, NodeId b) {
         NodeId lca = find_lca(x, y);
         assert(lca != NULL_NODE && "no LCA found — nodes must be congruent");
 
-        explain_path(x, lca, explain_uf_, explain_worklist_, result);
-        explain_path(y, lca, explain_uf_, explain_worklist_, result);
+        explain_path(x, lca, explain_uf_, explain_worklist_, result, out_cong);
+        explain_path(y, lca, explain_uf_, explain_worklist_, result, out_cong);
     }
 
     // Deduplicate
