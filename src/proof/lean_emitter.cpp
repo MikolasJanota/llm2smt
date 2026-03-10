@@ -1,7 +1,9 @@
 #include "proof/lean_emitter.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -721,16 +723,104 @@ void LeanEmitter::emit(std::ostream& out,
         standalone_names.push_back(tname);
     }
 
+    // ── Transitivity completeness lemmas ──────────────────────────────────
+    // For every pair of registered atoms (A=X, B=X) sharing a common
+    // effective term X, if decide(A=B) is also a registered atom, emit:
+    //   theorem trans_N : decide(A=B) ∨ ¬decide(A=X) ∨ ¬decide(B=X) := by grind
+    // These pure EUF tautologies give bv_decide the propositional backbone to
+    // close the contradiction (the conflict clauses alone may have premises that
+    // are SAT-decision atoms, so bv_decide needs these simpler lemmas to chain).
+    {
+        // Effective node ID after ite-proxy substitution.
+        auto eff = [&](NodeId n) -> NodeId {
+            auto it = ite_proxy_for_.find(n);
+            return it != ite_proxy_for_.end() ? it->second : n;
+        };
+        // Canonical key for an unordered pair of already-effective node IDs.
+        auto pair_key = [](NodeId a, NodeId b) -> uint64_t {
+            if (a > b) std::swap(a, b);
+            return (static_cast<uint64_t>(a) << 32) | static_cast<uint64_t>(b);
+        };
+
+        // Returns true if node n is a Bool-bridging sentinel (True/False).
+        // Sentinel atoms use a different rendering in theory clauses
+        // (decide((h a)) not decide((h a)=True)), so skip them to avoid
+        // emitting transitivity lemmas with mismatched atom forms.
+        auto is_bool_sent = [&](NodeId n) -> bool {
+            const std::string s = node_to_lean(n, nm);
+            return s == "True" || s == "False";
+        };
+
+        // Map effective-pair key → positive literal.
+        std::unordered_map<uint64_t, int> eff_to_lit;
+        for (const auto& [lit, atom] : lit_to_atom) {
+            if (lit <= 0) continue;
+            NodeId ea = eff(atom.lhs), eb = eff(atom.rhs);
+            if (ea == eb) continue;
+            if (is_bool_sent(ea) || is_bool_sent(eb)) continue;
+            eff_to_lit[pair_key(ea, eb)] = lit;
+        }
+
+        // Map effective term → list of (other_eff_term, literal).
+        std::unordered_map<NodeId, std::vector<std::pair<NodeId, int>>> by_term;
+        for (const auto& [lit, atom] : lit_to_atom) {
+            if (lit <= 0) continue;
+            NodeId ea = eff(atom.lhs), eb = eff(atom.rhs);
+            if (ea == eb) continue;
+            if (is_bool_sent(ea) || is_bool_sent(eb)) continue;
+            by_term[ea].emplace_back(eb, lit);
+            by_term[eb].emplace_back(ea, lit);
+        }
+
+        // Emit one trans_N per unique (litAB, min(litAX,litBX), max(litAX,litBX)) triple.
+        std::set<std::array<int, 3>> seen_trans;
+        int trans_idx = 0;
+        for (const auto& [X, eps] : by_term) {
+            for (size_t i = 0; i < eps.size(); ++i) {
+                auto [A, litAX] = eps[i];
+                for (size_t j = i + 1; j < eps.size(); ++j) {
+                    auto [B, litBX] = eps[j];
+                    if (A == B) continue;
+                    auto it = eff_to_lit.find(pair_key(A, B));
+                    if (it == eff_to_lit.end()) continue;
+                    int litAB = it->second;
+                    std::array<int, 3> key = {
+                        litAB,
+                        std::min(litAX, litBX),
+                        std::max(litAX, litBX)};
+                    if (!seen_trans.insert(key).second) continue;
+
+                    // Emit each atom with the smaller NodeId first so that
+                    // all decide(P = Q) expressions use the same canonical
+                    // form as theory-clause atoms.  Without this, bv_decide
+                    // treats decide(a = b) and decide(b = a) as distinct
+                    // opaque Bool variables and cannot close the goal.
+                    auto atom_str = [&](NodeId P, NodeId Q) {
+                        if (P > Q) std::swap(P, Q);
+                        return "decide (" + node_to_lean(P, nm) +
+                               " = " + node_to_lean(Q, nm) + ")";
+                    };
+                    std::string tname = "trans_" + std::to_string(trans_idx++);
+                    out << "theorem " << tname << " : "
+                        << atom_str(A, B) << " ∨ "
+                        << "¬(" << atom_str(A, X) << ") ∨ "
+                        << "¬(" << atom_str(B, X) << ") := by grind\n";
+                    standalone_names.push_back(tname);
+                }
+            }
+        }
+    }
+
     // ── Contradiction theorem ──────────────────────────────────────────────
     // Load all hypothesis axioms and pre-proved theory theorems into the local
-    // tactic context, then let bv_decide close the propositional contradiction.
-    // All EUF reasoning has already been captured in the standalone theorems.
+    // tactic context, then bv_decide closes the propositional contradiction.
+    // All EUF reasoning is captured in the standalone theorems above.
     out << "\ntheorem contradiction : False := by\n";
     for (const std::string& name : hyp_names)
         out << "  have " << name << " := " << name << "\n";
     for (const std::string& name : standalone_names)
         out << "  have " << name << " := " << name << "\n";
-    out << "  grind\n";
+    out << "  bv_decide\n";
 }
 
 } // namespace llm2smt
