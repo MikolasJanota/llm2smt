@@ -204,10 +204,26 @@ void EufSolver::build_conflict(const std::vector<EqId>& explanation, int diseq_l
     stats_.euf_conflict_lits_total += conflict_clause_.size();
     has_conflict_     = true;
     conflict_lit_idx_ = 0;
-    if (record_proofs_ && !proof_recorded_conflict_diseqs_.count(diseq_lit)) {
-        proof_recorded_conflict_diseqs_.insert(diseq_lit);
-        proof_conflicts_.push_back(conflict_clause_);
-        proof_unit_perm_deps_.push_back(std::move(perm_deps));
+    if (record_proofs_) {
+        // Global content dedup: skip if this exact set of literals was already recorded
+        // (e.g., a propagation reason and a conflict clause may be identical).
+        auto ckey = conflict_clause_;
+        std::sort(ckey.begin(), ckey.end());
+        if (!proof_clause_content_seen_.insert(ckey).second) {
+            // exact duplicate — nothing to do
+        } else {
+            auto it = proof_recorded_conflict_diseqs_.find(diseq_lit);
+            if (it == proof_recorded_conflict_diseqs_.end()) {
+                // First occurrence: store it.
+                proof_recorded_conflict_diseqs_[diseq_lit] = proof_conflicts_.size();
+                proof_conflicts_.push_back(conflict_clause_);
+                proof_unit_perm_deps_.push_back(std::move(perm_deps));
+            } else if (conflict_clause_.size() < proof_conflicts_[it->second].size()) {
+                // Shorter clause derived after CDCL backtrack: replace the stored one.
+                proof_conflicts_[it->second] = conflict_clause_;
+                proof_unit_perm_deps_[it->second] = std::move(perm_deps);
+            }
+        }
     }
 }
 
@@ -296,13 +312,25 @@ void EufSolver::discover_propagations() {
             // it invalid as a standalone Lean theorem.  Always skip.
             if (already_assigned) {
                 // skip — bv_decide handles it from hypothesis axioms
-            } else if (!proof_recorded_prop_lits_.count(lit)) {
-                // Record each propagation atom at most once per solve.
-                // Rescans (triggered after each backtrack) would otherwise
-                // accumulate duplicate proof clauses and produce a huge file.
-                proof_recorded_prop_lits_.insert(lit);
-                proof_conflicts_.push_back(rc);
-                proof_unit_perm_deps_.push_back(std::move(perm_deps));
+            } else {
+                // Global content dedup: skip if already recorded by any path.
+                auto ckey = rc;
+                std::sort(ckey.begin(), ckey.end());
+                if (!proof_clause_content_seen_.insert(ckey).second) {
+                    // exact duplicate — nothing to do
+                } else {
+                    auto it2 = proof_recorded_prop_lits_.find(lit);
+                    if (it2 == proof_recorded_prop_lits_.end()) {
+                        // First occurrence: store it.
+                        proof_recorded_prop_lits_[lit] = proof_conflicts_.size();
+                        proof_conflicts_.push_back(rc);
+                        proof_unit_perm_deps_.push_back(std::move(perm_deps));
+                    } else if (rc.size() < proof_conflicts_[it2->second].size()) {
+                        // Shorter clause after backtrack: replace.
+                        proof_conflicts_[it2->second] = rc;
+                        proof_unit_perm_deps_[it2->second] = std::move(perm_deps);
+                    }
+                }
             }
         }
         prop_enqueued_.insert(lit);  // mark as handled (prevent duplicate recording)

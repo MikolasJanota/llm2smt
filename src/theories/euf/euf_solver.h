@@ -1,5 +1,6 @@
 #pragma once
 
+#include <set>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -133,10 +134,16 @@ private:
     std::vector<std::vector<int>> proof_conflicts_;
     // Parallel to proof_conflicts_: permanent eq deps for unit clauses (else empty).
     std::vector<std::vector<std::pair<NodeId,NodeId>>> proof_unit_perm_deps_;
-    // Deduplication guards: track which propagation / conflict atoms already have
-    // a recorded proof clause.  Each atom is recorded at most once per solve.
-    std::unordered_set<int>  proof_recorded_prop_lits_;
-    std::unordered_set<int>  proof_recorded_conflict_diseqs_;
+    // Deduplication: maps literal → index into proof_conflicts_ where the
+    // clause for that literal was stored.  When a shorter clause arrives for
+    // the same literal (after CDCL backtrack + re-derivation), the stored
+    // clause is replaced so bv_decide always gets the strongest version.
+    std::unordered_map<int, size_t>  proof_recorded_prop_lits_;
+    std::unordered_map<int, size_t>  proof_recorded_conflict_diseqs_;
+    // Cross-category dedup: prevents recording the exact same set of literals
+    // twice (e.g., a propagation reason and a conflict clause that happen to be
+    // identical).  Keyed by sorted literal vector for canonical comparison.
+    std::set<std::vector<int>>       proof_clause_content_seen_;
 
     Stats& stats_;
 
