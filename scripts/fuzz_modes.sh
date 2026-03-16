@@ -49,3 +49,6 @@ run_mode "preproc1_nnf"   "$SOLVER --preprocess-passes 1 --nnf"  "${EXTRA[@]}"
 
 # Mode 4: eq-bridge
 run_mode "eq_bridge"      "$SOLVER --eq-bridge"                 "${EXTRA[@]}"
+
+# Mode 5: prop-interval 4 (scan every 4th call)
+run_mode "prop_interval4" "$SOLVER --prop-interval 4"           "${EXTRA[@]}"
