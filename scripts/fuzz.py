@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Fuzzer: generates random QF_UF problems and compares llm2smt against a reference solver.
 Optionally verifies the model produced by our solver when it returns SAT.
