@@ -1,7 +1,10 @@
 ; Regression: proof_fail_000469 — grind failed on standalone theory clause
 ; "theorem cl_4: decide(c3=c0) ∨ ¬(decide(c1=c0))" because grind cannot see
-; global axiom declarations.  Fixed by moving cl_k proofs inline inside
-; theorem contradiction where hyp1..N are local tactic bindings visible to grind.
+; global axiom declarations.  Fixed by emitting cl_k as standalone theorems that
+; load only the specific needed hypothesis (judicious context loading).
+; Note: (assert (not (= c3 c3))) removed — in the unified NodeId IR,
+; mk_eq(c3,c3)==mk_true() so its negation is mk_false(), detected at preprocessing
+; with no EUF theory clauses.  The problem is still unsat via EUF transitivity.
 (set-logic QF_UF)
 (declare-sort U 0)
 (declare-fun c0 () U)
@@ -26,7 +29,6 @@
 (assert (= (t1 c3 c0 (g0 c3 c0)) c3))
 (assert (not (distinct c1 c2)))
 (assert (not (= (ite (= (= c1 c0) (= c0 c1)) c3 c1) (f0 c2))))
-(assert (not (= c3 c3)))
 (assert (not (= (f0 c3) (f0 c1))))
 (assert (= c1 (g0 c2 c0)))
 (assert (= c1 c0))

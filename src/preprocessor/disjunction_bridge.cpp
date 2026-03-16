@@ -33,31 +33,52 @@ struct UF {
     bool same(NodeId a, NodeId b) { return find(a) == find(b); }
 };
 
-// ── Collect equality atoms by recursing through Ands ──────────────────────
+// ── Collect equality atoms by recursing through And trees ─────────────────
 
-static void collect_eqs(FmlRef f, UF& uf)
+static void collect_eqs(NodeId f, UF& uf, const NodeManager& nm)
 {
-    if (f->kind == FmlKind::Eq) {
-        uf.unite(f->eq_lhs, f->eq_rhs);
-    } else if (f->kind == FmlKind::And) {
-        for (const auto& ch : f->children)
-            collect_eqs(ch, uf);
+    if (nm.is_eq(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        uf.unite(c0, c1);
+    } else if (nm.is_and(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        collect_eqs(c0, uf, nm);
+        collect_eqs(c1, uf, nm);
     }
     // Not / Or / Pred / Ite / … — stop (conservative)
 }
 
+// ── Collect top-level disjuncts from a binary Or tree ─────────────────────
+
+static void collect_or_branches(NodeId f, const NodeManager& nm,
+                                  std::vector<NodeId>& branches)
+{
+    if (nm.is_or(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        collect_or_branches(c0, nm, branches);
+        collect_or_branches(c1, nm, branches);
+    } else {
+        branches.push_back(f);
+    }
+}
+
 // ── Bridge a single Or node ────────────────────────────────────────────────
 
-static void bridge_or(FmlRef f, size_t top_idx, std::vector<FmlRef>& out,
+static void bridge_or(NodeId f, size_t top_idx, NodeManager& nm,
+                       std::vector<NodeId>& out,
                        std::vector<BridgeEquality>* eq_out)
 {
-    const auto& branches = f->children;
+    std::vector<NodeId> branches;
+    collect_or_branches(f, nm, branches);
     if (branches.size() < 2) return;
 
     // Build union-find closure for each branch.
     std::vector<UF> uf(branches.size());
     for (size_t i = 0; i < branches.size(); ++i)
-        collect_eqs(branches[i], uf[i]);
+        collect_eqs(branches[i], uf[i], nm);
 
     // Shared nodes = NodeIds appearing in every branch's equality set.
     // Start from branch 0 and intersect with subsequent branches.
@@ -81,7 +102,7 @@ static void bridge_or(FmlRef f, size_t top_idx, std::vector<FmlRef>& out,
                 if (!u.same(a, b)) { common = false; break; }
             }
             if (common) {
-                out.push_back(fml_eq(a, b));
+                out.push_back(nm.mk_eq(a, b));
                 if (eq_out)
                     eq_out->push_back({top_idx, f, a, b});
             }
@@ -91,30 +112,29 @@ static void bridge_or(FmlRef f, size_t top_idx, std::vector<FmlRef>& out,
 
 // ── Recurse through the formula tree to find all Or nodes ─────────────────
 
-static void extract_from(FmlRef f, size_t top_idx, std::vector<FmlRef>& out,
+static void extract_from(NodeId f, size_t top_idx, NodeManager& nm,
+                           std::vector<NodeId>& out,
                            std::vector<BridgeEquality>* eq_out)
 {
-    switch (f->kind) {
-    case FmlKind::Or:
-        bridge_or(f, top_idx, out, eq_out);
-        break;
-    case FmlKind::And:
-        for (const auto& ch : f->children)
-            extract_from(ch, top_idx, out, eq_out);
-        break;
-    default:
-        break;
+    if (nm.is_or(f)) {
+        bridge_or(f, top_idx, nm, out, eq_out);
+    } else if (nm.is_and(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        extract_from(c0, top_idx, nm, out, eq_out);
+        extract_from(c1, top_idx, nm, out, eq_out);
     }
 }
 
 // ── Public entry point ─────────────────────────────────────────────────────
 
-void bridge_disjunctions(std::vector<FmlRef>& fmls,
+void bridge_disjunctions(std::vector<NodeId>& fmls,
+                          NodeManager& nm,
                           std::vector<BridgeEquality>* equalities)
 {
-    std::vector<FmlRef> new_facts;
+    std::vector<NodeId> new_facts;
     for (size_t i = 0; i < fmls.size(); ++i)
-        extract_from(fmls[i], i, new_facts, equalities);
+        extract_from(fmls[i], i, nm, new_facts, equalities);
     fmls.insert(fmls.end(), new_facts.begin(), new_facts.end());
 }
 

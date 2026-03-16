@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <vector>
 #include "core/node.h"
-#include "preprocessor/fml.h"
+#include "core/node_manager.h"
 
 namespace llm2smt {
 
@@ -11,7 +11,7 @@ namespace llm2smt {
 // Used by the proof emitter to produce tight implication-form lemmas.
 struct BridgeEquality {
     size_t top_fml_idx;  // index into the fmls[] vector for the source formula
-    FmlRef source_or;    // the Or sub-formula from which this equality was derived
+    NodeId source_or;    // the Or sub-formula from which this equality was derived
     NodeId lhs, rhs;
 };
 
@@ -39,7 +39,8 @@ struct BridgeEquality {
 //
 // If equalities is non-null, each derived equality is also appended to it
 // (used by the proof emitter to build implication-form lemmas).
-void bridge_disjunctions(std::vector<FmlRef>& fmls,
+void bridge_disjunctions(std::vector<NodeId>& fmls,
+                          NodeManager& nm,
                           std::vector<BridgeEquality>* equalities = nullptr);
 
 } // namespace llm2smt

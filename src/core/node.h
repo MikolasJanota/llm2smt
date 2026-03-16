@@ -7,9 +7,13 @@ namespace llm2smt {
 
 using NodeId   = uint32_t;
 using SymbolId = uint32_t;
+using SortId   = uint32_t;
 
 constexpr NodeId   NULL_NODE   = 0;
 constexpr SymbolId NULL_SYMBOL = 0;
+// BOOL_SORT is the one built-in sort; all user-declared sorts get ids >= 1.
+constexpr SortId   BOOL_SORT   = 0;
+constexpr SortId   NULL_SORT   = UINT32_MAX;  // uninterpreted / unspecified
 
 struct NodeData {
     SymbolId             sym;

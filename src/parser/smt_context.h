@@ -9,7 +9,6 @@
 
 #include "core/node.h"
 #include "core/node_manager.h"
-#include "preprocessor/fml.h"
 #include "theories/euf/euf_solver.h"
 #include "sat/ipasir_up.h"
 
@@ -24,7 +23,7 @@ struct FnDecl {
 
 // Info about a U-sorted ite node, for Lean proof emission.
 struct IteInfo {
-    FmlRef cond;        // Bool condition as a formula
+    NodeId cond;        // Bool condition as a NodeId formula
     NodeId then_node;
     NodeId else_node;
 };
@@ -47,13 +46,13 @@ struct SmtContext {
     // U-sorted ite nodes: __ite_N NodeId → {condition FmlRef, then/else NodeIds}
     std::unordered_map<NodeId, IteInfo> ite_nodes;
 
-    // Bool-formula proxy nodes: __bool_fml_N NodeId → the Bool FmlRef it represents.
+    // Bool-formula proxy nodes: __bool_fml_N NodeId → the Bool NodeId formula it represents.
     // Populated when a Bool-sorted formula is used in a U-sorted position (e.g. b0(x=y)).
-    std::unordered_map<NodeId, FmlRef> bool_fml_nodes;
+    std::unordered_map<NodeId, NodeId> bool_fml_nodes;
 
     // eq-bridge proof sources: canonical pair (min,max) → (top_fml_idx, source_or)
     // Populated only when proof output is requested.
-    std::map<std::pair<NodeId,NodeId>, std::pair<size_t,FmlRef>> eq_bridge_sources;
+    std::map<std::pair<NodeId,NodeId>, std::pair<size_t,NodeId>> eq_bridge_sources;
 
     std::vector<int> assertions;
     std::string      logic;

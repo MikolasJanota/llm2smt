@@ -1,5 +1,6 @@
 #include "parser/smt2_visitor.h"
 
+#include <functional>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -149,10 +150,12 @@ std::any Smt2Visitor::visitCommand(
         uint32_t arity = (sorts.size() > 0)
                          ? static_cast<uint32_t>(sorts.size() - 1)
                          : 0;
-        SymbolId sym = ctx_.nm.declare_symbol(name, arity);
+        bool ret_is_bool = !sorts.empty() && sorts.back()->getText() == "Bool";
+        SortId ret_sort_id = ret_is_bool ? BOOL_SORT : NULL_SORT;
+        SymbolId sym = ctx_.nm.declare_symbol(name, arity, ret_sort_id);
         ctx_.declared_fns[name] = sym;
         // Mark if return sort is Bool
-        if (!sorts.empty() && sorts.back()->getText() == "Bool") {
+        if (ret_is_bool) {
             ctx_.bool_fns.insert(sym);
         }
         // Record declaration order and sort info for get-model
@@ -247,7 +250,7 @@ NodeId Smt2Visitor::visit_term(
         ctx_.node_to_lit[node] = lit;
         // Record the formula for proof emission so node_to_lean can inline-expand it.
         if (!opts_.proof_file.empty())
-            ctx_.bool_fml_nodes[node] = build_fml(ctx);
+            ctx_.bool_fml_nodes[node] = build_fml(ctx);  // NodeId formula
         NodeId true_n  = get_bool_term_node(true);
         NodeId false_n = get_bool_term_node(false);
         int eq_true  = ctx_.euf.register_equality(node, true_n);
@@ -284,7 +287,7 @@ NodeId Smt2Visitor::visit_term(
           ctx_.declared_fn_order.push_back(std::move(d)); }
         // Store ite info for proof emission (inline expansion in Lean).
         if (!opts_.proof_file.empty())
-            ctx_.ite_nodes[result] = IteInfo{build_fml(ctx->term()[0]), then_node, else_node};
+            ctx_.ite_nodes[result] = IteInfo{build_fml(ctx->term()[0]), then_node, else_node};  // cond is NodeId
         int eq_then = ctx_.euf.register_equality(result, then_node);
         { std::array<int,2> cl = {-cond_lit, eq_then}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         int eq_else = ctx_.euf.register_equality(result, else_node);
@@ -765,19 +768,21 @@ int Smt2Visitor::eval_lit(
 }
 
 // ============================================================================
-// Formula building (parse-tree → FmlRef)
+// Formula building (parse-tree → NodeId)
 // ============================================================================
 
-FmlRef Smt2Visitor::build_fml(
+NodeId Smt2Visitor::build_fml(
     smt2parser::SMTLIBv2Parser::TermContext* ctx)
 {
+    NodeManager& nm = ctx_.nm;
+
     if (ctx->GRW_Exclamation()) return build_fml(ctx->term()[0]);
 
     if (ctx->GRW_Let()) {
         let_env_.emplace_back();
         for (auto* vb : ctx->var_binding())
             let_env_.back()[vb->symbol()->getText()] = vb->term();
-        FmlRef result = build_fml(ctx->term()[0]);
+        NodeId result = build_fml(ctx->term()[0]);
         let_env_.pop_back();
         return result;
     }
@@ -788,83 +793,93 @@ FmlRef Smt2Visitor::build_fml(
     std::string op = identifier_name(ctx->qual_identifier()->identifier());
 
     // Boolean constants
-    if (op == "true")  return fml_true();
-    if (op == "false") return fml_false();
+    if (op == "true")  return nm.mk_true();
+    if (op == "false") return nm.mk_false();
 
     // Connectives
     if (op == "not" && ctx->term().size() == 1)
-        return fml_not(build_fml(ctx->term()[0]));
+        return nm.mk_not(build_fml(ctx->term()[0]));
 
     if (op == "and") {
-        std::vector<FmlRef> ch;
-        for (auto* sub : ctx->term()) ch.push_back(build_fml(sub));
-        return fml_and(std::move(ch));
+        auto terms = ctx->term();
+        if (terms.empty()) return nm.mk_true();
+        NodeId result = build_fml(terms[0]);
+        for (size_t i = 1; i < terms.size(); ++i)
+            result = nm.mk_and(result, build_fml(terms[i]));
+        return result;
     }
 
     if (op == "or") {
-        std::vector<FmlRef> ch;
-        for (auto* sub : ctx->term()) ch.push_back(build_fml(sub));
-        return fml_or(std::move(ch));
+        auto terms = ctx->term();
+        if (terms.empty()) return nm.mk_false();
+        NodeId result = build_fml(terms[0]);
+        for (size_t i = 1; i < terms.size(); ++i)
+            result = nm.mk_or(result, build_fml(terms[i]));
+        return result;
     }
 
-    // (=> A B ...) right-assoc: flatten to Or(Not(A), Not(B), ..., last)
+    // (=> A B ...) right-assoc: build as implies chain (A → (B → ... → last))
     if (op == "=>") {
         auto terms = ctx->term();
-        std::vector<FmlRef> disj;
-        for (size_t i = 0; i + 1 < terms.size(); ++i)
-            disj.push_back(fml_not(build_fml(terms[i])));
-        disj.push_back(build_fml(terms.back()));
-        return fml_or(std::move(disj));
+        // Build right-associatively: A → (B → C)
+        NodeId result = build_fml(terms.back());
+        for (int i = static_cast<int>(terms.size()) - 2; i >= 0; --i)
+            result = nm.mk_implies(build_fml(terms[i]), result);
+        return result;
     }
 
     if (op == "xor" && ctx->term().size() >= 2) {
         auto terms = ctx->term();
-        FmlRef result = build_fml(terms[0]);
+        NodeId result = build_fml(terms[0]);
         for (size_t i = 1; i < terms.size(); ++i)
-            result = fml_xor(result, build_fml(terms[i]));
+            result = nm.mk_xor(result, build_fml(terms[i]));
         return result;
     }
 
     if (op == "ite" && ctx->term().size() == 3 && is_bool_sorted(ctx))
-        return fml_ite(build_fml(ctx->term()[0]),
-                       build_fml(ctx->term()[1]),
-                       build_fml(ctx->term()[2]));
+        return nm.mk_ite_bool(build_fml(ctx->term()[0]),
+                               build_fml(ctx->term()[1]),
+                               build_fml(ctx->term()[2]));
 
     // (= Bool Bool) — biconditional
     if (op == "=" && ctx->term().size() == 2 &&
         (is_bool_sorted(ctx->term()[0]) || is_bool_sorted(ctx->term()[1])))
-        return fml_booleq(build_fml(ctx->term()[0]), build_fml(ctx->term()[1]));
+        return nm.mk_iff(build_fml(ctx->term()[0]), build_fml(ctx->term()[1]));
 
     // (= t1 t2) — EUF equality atom: evaluate both sub-terms eagerly
     if (op == "=" && ctx->term().size() == 2) {
         NodeId lhs = visit_term(ctx->term()[0]);
         NodeId rhs = visit_term(ctx->term()[1]);
-        return fml_eq(lhs, rhs);
+        return nm.mk_eq(lhs, rhs);
     }
 
-    // (= t1 t2 ... tn) n >= 3 — chained: fml_and of consecutive equality pairs
+    // (= t1 t2 ... tn) n >= 3 — chained: and of consecutive equality pairs
     if (op == "=" && ctx->term().size() >= 3) {
         auto terms = ctx->term();
-        std::vector<FmlRef> pairs;
+        NodeId result;
         if (is_bool_sorted(terms[0])) {
-            for (size_t i = 0; i + 1 < terms.size(); ++i)
-                pairs.push_back(fml_booleq(build_fml(terms[i]), build_fml(terms[i + 1])));
+            result = nm.mk_iff(build_fml(terms[0]), build_fml(terms[1]));
+            for (size_t i = 1; i + 1 < terms.size(); ++i)
+                result = nm.mk_and(result, nm.mk_iff(build_fml(terms[i]),
+                                                      build_fml(terms[i + 1])));
         } else {
-            for (size_t i = 0; i + 1 < terms.size(); ++i) {
-                NodeId lhs = visit_term(terms[i]);
-                NodeId rhs = visit_term(terms[i + 1]);
-                pairs.push_back(fml_eq(lhs, rhs));
+            NodeId lhs = visit_term(terms[0]);
+            NodeId rhs = visit_term(terms[1]);
+            result = nm.mk_eq(lhs, rhs);
+            for (size_t i = 1; i + 1 < terms.size(); ++i) {
+                lhs = visit_term(terms[i]);
+                rhs = visit_term(terms[i + 1]);
+                result = nm.mk_and(result, nm.mk_eq(lhs, rhs));
             }
         }
-        if (pairs.size() == 1) return pairs[0];
-        return fml_and(std::move(pairs));
+        return result;
     }
 
     // (distinct t1 t2) — single disequality
     if (op == "distinct" && ctx->term().size() == 2) {
         NodeId lhs = visit_term(ctx->term()[0]);
         NodeId rhs = visit_term(ctx->term()[1]);
-        return fml_not(fml_eq(lhs, rhs));
+        return nm.mk_not(nm.mk_eq(lhs, rhs));
     }
 
     // (distinct t1 t2 ... tn) — expand to pairwise And(Not(Eq(...)))
@@ -873,11 +888,12 @@ FmlRef Smt2Visitor::build_fml(
         std::vector<NodeId> nodes;
         nodes.reserve(terms.size());
         for (auto* sub : terms) nodes.push_back(visit_term(sub));
-        std::vector<FmlRef> pairs;
+        NodeId result = nm.mk_not(nm.mk_eq(nodes[0], nodes[1]));
         for (size_t i = 0; i < nodes.size(); ++i)
             for (size_t j = i + 1; j < nodes.size(); ++j)
-                pairs.push_back(fml_not(fml_eq(nodes[i], nodes[j])));
-        return fml_and(std::move(pairs));
+                if (i != 0 || j != 1)
+                    result = nm.mk_and(result, nm.mk_not(nm.mk_eq(nodes[i], nodes[j])));
+        return result;
     }
 
     // Let variable reference (0-ary, not a declared symbol)
@@ -888,7 +904,7 @@ FmlRef Smt2Visitor::build_fml(
         }
     }
 
-    // Bool-sorted 0-ary or n-ary predicate application — Pred atom.
+    // Bool-sorted 0-ary or n-ary predicate application — atom is the NodeId itself.
     // visit_term handles node creation and link_bool_term_to_euf eagerly.
     {
         auto fit = ctx_.declared_fns.find(op);
@@ -896,7 +912,7 @@ FmlRef Smt2Visitor::build_fml(
             if (ctx->term().empty()) {
                 NodeId n = ctx_.nm.mk_const(fit->second);
                 link_bool_term_to_euf(n);
-                return fml_pred(n);
+                return n;  // Bool-sorted node IS the atom
             }
             std::vector<NodeId> args;
             for (auto* sub : ctx->term()) args.push_back(visit_term(sub));
@@ -904,7 +920,7 @@ FmlRef Smt2Visitor::build_fml(
             link_bool_term_to_euf(n);
             if (seen_app_nodes_.insert(n).second)
                 fn_applications_[fit->second].push_back({args, n});
-            return fml_pred(n);
+            return n;  // Bool-sorted node IS the atom
         }
     }
 
@@ -919,152 +935,183 @@ FmlRef Smt2Visitor::build_fml(
 }
 
 // ============================================================================
-// Formula encoding (FmlRef → SAT clauses)
+// Formula encoding (NodeId → SAT clauses)
 // ============================================================================
 
 // Return a SAT literal for a sub-formula; introduce Tseitin variable if needed.
-int Smt2Visitor::lit_of_fml(FmlRef f)
+int Smt2Visitor::lit_of_fml(NodeId f)
 {
-    switch (f->kind) {
-    case FmlKind::True:  return get_true_lit();
-    case FmlKind::False: return -get_true_lit();
-    case FmlKind::Eq:    return ctx_.euf.register_equality(f->eq_lhs, f->eq_rhs);
-    case FmlKind::Pred:  return ctx_.lit_for_node(f->pred);
-    case FmlKind::Not:
-        return -lit_of_fml(f->children[0]);
-    default:
-        break;
+    NodeManager& nm = ctx_.nm;
+
+    if (nm.is_true_node(f))  return get_true_lit();
+    if (nm.is_false_node(f)) return -get_true_lit();
+    if (nm.is_eq(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        return ctx_.euf.register_equality(c0, c1);
     }
+    if (nm.is_atom_node(f)) return ctx_.lit_for_node(f);
+    if (nm.is_not(f))       return -lit_of_fml(nm.get(f).children[0]);
 
     // Compound — check Tseitin cache first.
-    auto cit = fml_lit_cache_.find(f.get());
+    auto cit = fml_lit_cache_.find(f);
     if (cit != fml_lit_cache_.end()) return cit->second;
     int x = ctx_.euf.new_var();
-    fml_lit_cache_[f.get()] = x;
+    fml_lit_cache_[f] = x;
 
-    switch (f->kind) {
-    case FmlKind::And: {
-        std::vector<int> sub;
-        for (auto& ch : f->children) sub.push_back(lit_of_fml(ch));
-        for (int l : sub) { std::array<int,2> cl = {-x, l}; ctx_.sat.add_clause(std::span<const int>(cl)); }
-        std::vector<int> bwd = {x};
-        for (int l : sub) bwd.push_back(-l);
-        ctx_.sat.add_clause(std::span<const int>(bwd));
-        break;
-    }
-    case FmlKind::Or: {
-        std::vector<int> sub;
-        for (auto& ch : f->children) sub.push_back(lit_of_fml(ch));
-        for (int l : sub) { std::array<int,2> cl = {-l, x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
-        std::vector<int> fwd = {-x};
-        for (int l : sub) fwd.push_back(l);
-        ctx_.sat.add_clause(std::span<const int>(fwd));
-        break;
-    }
-    case FmlKind::Ite: {
-        int c = lit_of_fml(f->children[0]);
-        int t = lit_of_fml(f->children[1]);
-        int e = lit_of_fml(f->children[2]);
+    if (nm.is_and(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        int a = lit_of_fml(c0);
+        int b = lit_of_fml(c1);
+        { std::array<int,2> cl = {-x, a}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        { std::array<int,2> cl = {-x, b}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        { std::array<int,3> cl = {x, -a, -b}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+    } else if (nm.is_or(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        int a = lit_of_fml(c0);
+        int b = lit_of_fml(c1);
+        { std::array<int,2> cl = {-a, x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        { std::array<int,2> cl = {-b, x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        { std::array<int,3> cl = {-x, a, b}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+    } else if (nm.is_ite_bool(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        NodeId c2 = nm.get(f).children[2];
+        int c = lit_of_fml(c0);
+        int t = lit_of_fml(c1);
+        int e = lit_of_fml(c2);
         { std::array<int,3> cl = {-c,-t, x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         { std::array<int,3> cl = {-c, t,-x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         { std::array<int,3> cl = { c,-e, x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         { std::array<int,3> cl = { c, e,-x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
-        break;
-    }
-    case FmlKind::Implies: {
-        int a = lit_of_fml(f->children[0]);
-        int b = lit_of_fml(f->children[1]);
+    } else if (nm.is_implies(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        int a = lit_of_fml(c0);
+        int b = lit_of_fml(c1);
         // x ↔ (¬a ∨ b)
-        { std::array<int,2> cl = { a, x};   ctx_.sat.add_clause(std::span<const int>(cl)); }
-        { std::array<int,2> cl = {-b, x};   ctx_.sat.add_clause(std::span<const int>(cl)); }
+        { std::array<int,2> cl = { a, x};    ctx_.sat.add_clause(std::span<const int>(cl)); }
+        { std::array<int,2> cl = {-b, x};    ctx_.sat.add_clause(std::span<const int>(cl)); }
         { std::array<int,3> cl = {-x,-a, b}; ctx_.sat.add_clause(std::span<const int>(cl)); }
-        break;
-    }
-    case FmlKind::Xor: {
-        int a = lit_of_fml(f->children[0]);
-        int b = lit_of_fml(f->children[1]);
+    } else if (nm.is_xor(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        int a = lit_of_fml(c0);
+        int b = lit_of_fml(c1);
         { std::array<int,3> cl = {-x, a, b}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         { std::array<int,3> cl = {-x,-a,-b}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         { std::array<int,3> cl = {-a, b, x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         { std::array<int,3> cl = { a,-b, x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
-        break;
-    }
-    case FmlKind::BoolEq: {
-        int p = lit_of_fml(f->children[0]);
-        int q = lit_of_fml(f->children[1]);
+    } else if (nm.is_iff(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        int p = lit_of_fml(c0);
+        int q = lit_of_fml(c1);
         { std::array<int,3> cl = {-x,-p, q}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         { std::array<int,3> cl = {-x, p,-q}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         { std::array<int,3> cl = {-p,-q, x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         { std::array<int,3> cl = { p, q, x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
-        break;
-    }
-    default:
-        throw std::runtime_error("lit_of_fml: unexpected kind");
+    } else {
+        throw std::runtime_error("lit_of_fml: unexpected node kind");
     }
     return x;
 }
 
-// Assert a FmlRef at the top level (add required SAT clauses).
-void Smt2Visitor::encode_fml(FmlRef f)
+// Assert a NodeId formula at the top level (add required SAT clauses).
+void Smt2Visitor::encode_fml(NodeId f)
 {
-    switch (f->kind) {
-    case FmlKind::True:  return;
-    case FmlKind::False: ctx_.sat.add_clause(std::span<const int>{}); return;
-    case FmlKind::Eq: {
-        int l = ctx_.euf.register_equality(f->eq_lhs, f->eq_rhs);
+    NodeManager& nm = ctx_.nm;
+
+    if (nm.is_true_node(f)) return;
+    if (nm.is_false_node(f)) { ctx_.sat.add_clause(std::span<const int>{}); return; }
+
+    if (nm.is_eq(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        int l = ctx_.euf.register_equality(c0, c1);
         std::array<int,1> cl = {l};
         ctx_.sat.add_clause(std::span<const int>(cl));
         return;
     }
-    case FmlKind::Pred: {
-        std::array<int,1> cl = {ctx_.lit_for_node(f->pred)};
+    if (nm.is_atom_node(f)) {
+        std::array<int,1> cl = {ctx_.lit_for_node(f)};
         ctx_.sat.add_clause(std::span<const int>(cl));
         return;
     }
-    case FmlKind::Not: {
-        std::array<int,1> cl = {-lit_of_fml(f->children[0])};
+    if (nm.is_not(f)) {
+        NodeId child = nm.get(f).children[0];
+        std::array<int,1> cl = {-lit_of_fml(child)};
         ctx_.sat.add_clause(std::span<const int>(cl));
         return;
     }
-    case FmlKind::And:
-        for (auto& ch : f->children) encode_fml(ch);
+    if (nm.is_and(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        encode_fml(c0);
+        encode_fml(c1);
         return;
-    case FmlKind::Or: {
+    }
+    if (nm.is_or(f)) {
+        // Collect all leaves from the binary Or tree.
         std::vector<int> lits;
-        for (auto& ch : f->children) lits.push_back(lit_of_fml(ch));
+        std::function<void(NodeId)> collect = [&](NodeId n) {
+            if (nm.is_or(n)) {
+                NodeId a = nm.get(n).children[0];
+                NodeId b = nm.get(n).children[1];
+                collect(a);
+                collect(b);
+            } else {
+                lits.push_back(lit_of_fml(n));
+            }
+        };
+        collect(nm.get(f).children[0]);
+        collect(nm.get(f).children[1]);
         ctx_.sat.add_clause(std::span<const int>(lits));
         return;
     }
-    case FmlKind::Ite: {
-        int c = lit_of_fml(f->children[0]);
-        int t = lit_of_fml(f->children[1]);
-        int e = lit_of_fml(f->children[2]);
+    if (nm.is_ite_bool(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        NodeId c2 = nm.get(f).children[2];
+        int c = lit_of_fml(c0);
+        int t = lit_of_fml(c1);
+        int e = lit_of_fml(c2);
         { std::array<int,2> cl = {-c, t}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         { std::array<int,2> cl = { c, e}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         return;
     }
-    case FmlKind::Implies: {
-        int a = lit_of_fml(f->children[0]);
-        int b = lit_of_fml(f->children[1]);
+    if (nm.is_implies(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        int a = lit_of_fml(c0);
+        int b = lit_of_fml(c1);
         std::array<int,2> cl = {-a, b};
         ctx_.sat.add_clause(std::span<const int>(cl));
         return;
     }
-    case FmlKind::Xor: {
-        int a = lit_of_fml(f->children[0]);
-        int b = lit_of_fml(f->children[1]);
+    if (nm.is_xor(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        int a = lit_of_fml(c0);
+        int b = lit_of_fml(c1);
         { std::array<int,2> cl = {a, b};   ctx_.sat.add_clause(std::span<const int>(cl)); }
         { std::array<int,2> cl = {-a, -b}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         return;
     }
-    case FmlKind::BoolEq: {
-        int p = lit_of_fml(f->children[0]);
-        int q = lit_of_fml(f->children[1]);
+    if (nm.is_iff(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        int p = lit_of_fml(c0);
+        int q = lit_of_fml(c1);
         { std::array<int,2> cl = {-p, q}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         { std::array<int,2> cl = { p,-q}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         return;
     }
-    }
+    // Fallback: add a unit clause.
+    std::array<int,1> cl = {lit_of_fml(f)};
+    ctx_.sat.add_clause(std::span<const int>(cl));
 }
 
 // Run simplifier (if enabled), assert forced atoms, encode remaining formulas.
@@ -1072,10 +1119,12 @@ void Smt2Visitor::flush_pending_fmls()
 {
     if (pending_fmls_.empty()) return;
 
+    NodeManager& nm = ctx_.nm;
+
     // Step A: NNF.
     if (opts_.nnf) {
         for (auto& f : pending_fmls_)
-            f = to_nnf(f);
+            f = to_nnf(f, nm);
     }
 
     // Step A.5: Equality bridging under disjunctions.
@@ -1084,12 +1133,15 @@ void Smt2Visitor::flush_pending_fmls()
     if (opts_.eq_bridge) {
         const size_t before = pending_fmls_.size();
         std::vector<BridgeEquality> bridge_equalities;
-        bridge_disjunctions(pending_fmls_,
+        bridge_disjunctions(pending_fmls_, nm,
                             !opts_.proof_file.empty() ? &bridge_equalities : nullptr);
         for (size_t i = before; i < pending_fmls_.size(); ++i) {
-            const FmlRef& f = pending_fmls_[i];
-            if (f->kind == FmlKind::Eq)
-                ctx_.euf.register_permanent_equality(f->eq_lhs, f->eq_rhs);
+            NodeId f = pending_fmls_[i];
+            if (nm.is_eq(f)) {
+                NodeId c0 = nm.get(f).children[0];
+                NodeId c1 = nm.get(f).children[1];
+                ctx_.euf.register_permanent_equality(c0, c1);
+            }
         }
         for (const auto& be : bridge_equalities) {
             NodeId a = be.lhs, b = be.rhs;
@@ -1099,22 +1151,21 @@ void Smt2Visitor::flush_pending_fmls()
         pending_fmls_.resize(before);  // already in CC, don't re-encode
     }
 
-    // Step B: Simplifier (unchanged, only if passes > 0).
+    // Step B: Simplifier (only if passes > 0).
     // forced_proof_fmls: forced atoms to append to the proof snapshot.
-    // Collected here so they're available after simp goes out of scope.
-    std::vector<FmlRef> forced_proof_fmls;
+    std::vector<NodeId> forced_proof_fmls;
     if (opts_.passes > 0) {
         stats_.preproc_fmls_in += static_cast<uint64_t>(pending_fmls_.size());
 
-        Simplifier simp;
+        Simplifier simp(nm);
         simp.set_flatten(opts_.flatten);
         simp.run(pending_fmls_, opts_.passes);
 
         stats_.preproc_passes_run    += static_cast<uint64_t>(simp.passes_run());
         stats_.preproc_forced_atoms  += static_cast<uint64_t>(simp.forced_atoms().size());
-        for (const auto& f : pending_fmls_) {
-            if (f->kind == FmlKind::True)  ++stats_.preproc_fmls_true_out;
-            if (f->kind == FmlKind::False) ++stats_.preproc_fmls_false_out;
+        for (NodeId f : pending_fmls_) {
+            if (nm.is_true_node(f))  ++stats_.preproc_fmls_true_out;
+            if (nm.is_false_node(f)) ++stats_.preproc_fmls_false_out;
         }
 
         // Assert every atom that was forced by unit propagation.
@@ -1123,12 +1174,19 @@ void Smt2Visitor::flush_pending_fmls()
         // SAT solver never has to decide or undo it).  All other forced atoms
         // are still asserted as SAT unit clauses.
         for (auto& [atom, positive] : simp.forced_atoms()) {
-            if (atom->kind == FmlKind::Eq && positive) {
-                ctx_.euf.register_permanent_equality(atom->eq_lhs, atom->eq_rhs);
+            if (nm.is_eq(atom) && positive) {
+                NodeId c0 = nm.get(atom).children[0];
+                NodeId c1 = nm.get(atom).children[1];
+                ctx_.euf.register_permanent_equality(c0, c1);
             } else {
-                int lit = (atom->kind == FmlKind::Eq)
-                          ? ctx_.euf.register_equality(atom->eq_lhs, atom->eq_rhs)
-                          : ctx_.lit_for_node(atom->pred);
+                int lit;
+                if (nm.is_eq(atom)) {
+                    NodeId c0 = nm.get(atom).children[0];
+                    NodeId c1 = nm.get(atom).children[1];
+                    lit = ctx_.euf.register_equality(c0, c1);
+                } else {
+                    lit = ctx_.lit_for_node(atom);
+                }
                 int forced = positive ? lit : -lit;
                 std::array<int,1> cl = {forced};
                 ctx_.sat.add_clause(std::span<const int>(cl));
@@ -1139,7 +1197,7 @@ void Smt2Visitor::flush_pending_fmls()
             // premises.  Without explicit hypotheses, bv_decide cannot
             // discharge those premises.
             if (!opts_.proof_file.empty())
-                forced_proof_fmls.push_back(positive ? atom : fml_not(atom));
+                forced_proof_fmls.push_back(positive ? atom : nm.mk_not(atom));
         }
     }
 
@@ -1149,16 +1207,16 @@ void Smt2Visitor::flush_pending_fmls()
     // Forced atoms are appended as additional hypotheses (see above).
     if (!opts_.proof_file.empty()) {
         proof_fmls_ = pending_fmls_;
-        for (auto& f : forced_proof_fmls)
-            proof_fmls_.push_back(std::move(f));
+        for (NodeId f : forced_proof_fmls)
+            proof_fmls_.push_back(f);
     }
 
     // Step C: Encode.
     if (opts_.selectors) {
-        for (auto& f : pending_fmls_)
+        for (NodeId f : pending_fmls_)
             encode_conditioned(f, {});
     } else {
-        for (auto& f : pending_fmls_)
+        for (NodeId f : pending_fmls_)
             encode_fml(f);
     }
     pending_fmls_.clear();
@@ -1169,25 +1227,22 @@ void Smt2Visitor::flush_pending_fmls()
 // Selector variable encoding
 // ============================================================================
 
-bool Smt2Visitor::is_literal_fml(FmlRef f) const
+bool Smt2Visitor::is_literal_fml(NodeId f) const
 {
-    switch (f->kind) {
-    case FmlKind::True:
-    case FmlKind::False:
-    case FmlKind::Eq:
-    case FmlKind::Pred:
-        return true;
-    case FmlKind::Not: {
-        FmlKind ck = f->children[0]->kind;
-        return ck == FmlKind::Eq || ck == FmlKind::Pred;
+    const NodeManager& nm = ctx_.nm;
+    if (nm.is_true_node(f) || nm.is_false_node(f)) return true;
+    if (nm.is_eq(f) || nm.is_atom_node(f)) return true;
+    if (nm.is_not(f)) {
+        NodeId ch = nm.get(f).children[0];
+        return nm.is_eq(ch) || nm.is_atom_node(ch);
     }
-    default:
-        return false;
-    }
+    return false;
 }
 
-void Smt2Visitor::encode_conditioned(FmlRef f, const std::vector<int>& conds)
+void Smt2Visitor::encode_conditioned(NodeId f, const std::vector<int>& conds)
 {
+    NodeManager& nm = ctx_.nm;
+
     auto add_cond_clause = [&](std::vector<int> extra) {
         std::vector<int> cl;
         cl.reserve(conds.size() + extra.size());
@@ -1196,42 +1251,54 @@ void Smt2Visitor::encode_conditioned(FmlRef f, const std::vector<int>& conds)
         ctx_.sat.add_clause(std::span<const int>(cl));
     };
 
-    switch (f->kind) {
-    case FmlKind::True:
-        return;
-    case FmlKind::False:
-        add_cond_clause({});
-        return;
-    case FmlKind::Eq: {
-        int l = ctx_.euf.register_equality(f->eq_lhs, f->eq_rhs);
+    if (nm.is_true_node(f)) return;
+    if (nm.is_false_node(f)) { add_cond_clause({}); return; }
+    if (nm.is_eq(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        int l = ctx_.euf.register_equality(c0, c1);
         add_cond_clause({l});
         return;
     }
-    case FmlKind::Pred: {
-        int l = ctx_.lit_for_node(f->pred);
-        add_cond_clause({l});
+    if (nm.is_atom_node(f)) {
+        add_cond_clause({ctx_.lit_for_node(f)});
         return;
     }
-    case FmlKind::Not: {
-        int l = lit_of_fml(f->children[0]);
-        add_cond_clause({-l});
+    if (nm.is_not(f)) {
+        NodeId child = nm.get(f).children[0];
+        add_cond_clause({-lit_of_fml(child)});
         return;
     }
-    case FmlKind::And:
-        for (auto& ch : f->children)
-            encode_conditioned(ch, conds);
-        return;
-    case FmlKind::Or:
-        encode_or_conditioned(f->children, conds);
-        return;
-    default:
-        // Fallback: get a literal for f and add a conditioned clause.
-        add_cond_clause({lit_of_fml(f)});
+    if (nm.is_and(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        encode_conditioned(c0, conds);
+        encode_conditioned(c1, conds);
         return;
     }
+    if (nm.is_or(f)) {
+        // Collect all disjuncts from the binary Or tree.
+        std::vector<NodeId> children;
+        std::function<void(NodeId)> collect = [&](NodeId n) {
+            if (nm.is_or(n)) {
+                NodeId a = nm.get(n).children[0];
+                NodeId b = nm.get(n).children[1];
+                collect(a);
+                collect(b);
+            } else {
+                children.push_back(n);
+            }
+        };
+        collect(nm.get(f).children[0]);
+        collect(nm.get(f).children[1]);
+        encode_or_conditioned(children, conds);
+        return;
+    }
+    // Fallback: get a literal for f and add a conditioned clause.
+    add_cond_clause({lit_of_fml(f)});
 }
 
-void Smt2Visitor::encode_or_conditioned(const std::vector<FmlRef>& children,
+void Smt2Visitor::encode_or_conditioned(const std::vector<NodeId>& children,
                                          std::vector<int> conds)
 {
     if (children.empty()) {
@@ -1249,7 +1316,7 @@ void Smt2Visitor::encode_or_conditioned(const std::vector<FmlRef>& children,
 
     // Check if all children are literals.
     bool all_lits = true;
-    for (auto& ch : children) {
+    for (NodeId ch : children) {
         if (!is_literal_fml(ch)) { all_lits = false; break; }
     }
 
@@ -1257,15 +1324,15 @@ void Smt2Visitor::encode_or_conditioned(const std::vector<FmlRef>& children,
         std::vector<int> cl;
         cl.reserve(conds.size() + children.size());
         for (int c : conds) cl.push_back(-c);
-        for (auto& ch : children) cl.push_back(lit_of_fml(ch));
+        for (NodeId ch : children) cl.push_back(lit_of_fml(ch));
         ctx_.sat.add_clause(std::span<const int>(cl));
         return;
     }
 
     // Binary split: introduce a fresh selector variable s.
     size_t mid = children.size() / 2;
-    std::vector<FmlRef> left(children.begin(), children.begin() + mid);
-    std::vector<FmlRef> right(children.begin() + mid, children.end());
+    std::vector<NodeId> left(children.begin(), children.begin() + mid);
+    std::vector<NodeId> right(children.begin() + mid, children.end());
 
     int s = ctx_.euf.new_var();
 

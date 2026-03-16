@@ -12,7 +12,6 @@
 #include "core/node.h"
 #include "core/stats.h"
 #include "parser/smt_context.h"
-#include "preprocessor/fml.h"
 #include "preprocessor/preproc_options.h"
 
 namespace llm2smt {
@@ -24,8 +23,8 @@ public:
     std::any visitStart(smt2parser::SMTLIBv2Parser::StartContext*) override;
     std::any visitCommand(smt2parser::SMTLIBv2Parser::CommandContext*) override;
 
-    SolveResult                last_result() const { return last_result_; }
-    const std::vector<FmlRef>& proof_fmls()  const { return proof_fmls_; }
+    SolveResult                  last_result() const { return last_result_; }
+    const std::vector<NodeId>& proof_fmls()  const { return proof_fmls_; }
 
 private:
     SmtContext& ctx_;
@@ -99,37 +98,37 @@ private:
     PreprocOptions opts_;
     Stats&         stats_;
 
-    // FmlRef assertions accumulated during parsing (when preprocessing is on).
-    std::vector<FmlRef> pending_fmls_;
+    // NodeId assertions accumulated during parsing (when preprocessing is on).
+    std::vector<NodeId> pending_fmls_;
 
     // Original (pre-NNF, pre-simplification) assertions for proof output.
-    std::vector<FmlRef> proof_fmls_;
+    std::vector<NodeId> proof_fmls_;
 
-    // Cache: Fml object address → Tseitin SAT literal (for lit_of_fml reuse).
-    std::unordered_map<const Fml*, int> fml_lit_cache_;
+    // Cache: NodeId formula → Tseitin SAT literal (for lit_of_fml reuse).
+    std::unordered_map<NodeId, int> fml_lit_cache_;
 
-    // Build a FmlRef tree from a Bool-sorted parse-tree node.
+    // Build a NodeId formula from a Bool-sorted parse-tree node.
     // Eagerly calls visit_term for U-sorted sub-terms.
-    FmlRef build_fml(smt2parser::SMTLIBv2Parser::TermContext*);
+    NodeId build_fml(smt2parser::SMTLIBv2Parser::TermContext*);
 
-    // Assert a FmlRef by adding the required SAT clauses (top-level assertion).
-    void encode_fml(FmlRef f);
+    // Assert a NodeId formula by adding the required SAT clauses (top-level assertion).
+    void encode_fml(NodeId f);
 
-    // Return (or create) a SAT literal equivalent to a FmlRef sub-formula.
-    int lit_of_fml(FmlRef f);
+    // Return (or create) a SAT literal equivalent to a NodeId sub-formula.
+    int lit_of_fml(NodeId f);
 
     // Encode all pending_fmls_ (run simplifier first if preprocess_passes_ > 0).
     void flush_pending_fmls();
 
     // True iff f is an atom or negated atom (usable as a SAT literal directly).
-    bool is_literal_fml(FmlRef f) const;
+    bool is_literal_fml(NodeId f) const;
 
     // Assert: if all literals in conds are true, then f must hold.
-    void encode_conditioned(FmlRef f, const std::vector<int>& conds);
+    void encode_conditioned(NodeId f, const std::vector<int>& conds);
 
     // Assert: if all conds hold, at least one child in children must hold.
     // Introduces a fresh selector variable to binary-split when a child is non-literal.
-    void encode_or_conditioned(const std::vector<FmlRef>& children,
+    void encode_or_conditioned(const std::vector<NodeId>& children,
                                 std::vector<int> conds);
 
     // ── Model extraction ─────────────────────────────────────────────────

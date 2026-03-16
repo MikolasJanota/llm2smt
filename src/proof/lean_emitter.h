@@ -8,18 +8,17 @@
 #include "core/node.h"
 #include "core/node_manager.h"
 #include "parser/smt_context.h"
-#include "preprocessor/fml.h"
 
 namespace llm2smt {
 
 class LeanEmitter {
 public:
     // Emit a Lean 4 proof to `out`.
-    // proof_fmls: original assertions (pre-NNF/simplification)
+    // proof_fmls: original assertions (pre-NNF/simplification) as NodeIds
     // proof_conflicts: theory lemma clauses from EufSolver::proof_conflicts()
     void emit(std::ostream& out,
               const SmtContext& ctx,
-              const std::vector<FmlRef>& proof_fmls,
+              const std::vector<NodeId>& proof_fmls,
               const std::vector<std::vector<int>>& proof_conflicts);
 
 private:
@@ -36,13 +35,13 @@ private:
     // NodeId → Lean expression string (handles constants, n-ary apps, ite nodes)
     std::string node_to_lean(NodeId n, const NodeManager& nm) const;
 
-    // FmlRef → Lean proposition string (atomic Eq/Pred wrapped in `decide (...)`)
-    std::string fml_to_lean(const FmlRef& f, const NodeManager& nm) const;
+    // NodeId → Lean proposition string (atomic Eq/atom wrapped in `decide (...)`)
+    std::string fml_to_lean(NodeId f, const NodeManager& nm) const;
 
-    // FmlRef → Lean Prop condition string (atomic Eq/Pred NOT wrapped in decide).
+    // NodeId → Lean Prop condition string (atomic Eq/atom NOT wrapped in decide).
     // Used for ite conditions so grind sees `if p then ...` (Prop) rather than
     // `if decide (p) then ...` (Bool), avoiding Bool→Prop normalisation mismatches.
-    std::string fml_to_lean_cond(const FmlRef& f, const NodeManager& nm) const;
+    std::string fml_to_lean_cond(NodeId f, const NodeManager& nm) const;
 
     // Build Lean type string for a function (e.g., "U → U → V" or "U → U → Prop")
     static std::string fn_type(const FnDecl& fn, bool is_pred);

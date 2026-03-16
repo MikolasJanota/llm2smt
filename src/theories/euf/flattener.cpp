@@ -18,6 +18,11 @@ NodeId Flattener::fresh_const() {
 }
 
 NodeId Flattener::do_flatten(NodeId term, std::vector<FlatEq>& eqs) {
+    // Bool-sorted predicate atoms (user predicates) are allowed — they're
+    // treated as opaque U-sorted elements for EUF equality bridging.
+    // Only built-in connective nodes must not enter the flattener.
+    assert((!nm_.is_bool(term) || nm_.is_atom_node(term))
+           && "Flattener must not receive Bool connective nodes");
     // Check cache
     auto it = node_to_cc_.find(term);
     if (it != node_to_cc_.end()) return it->second;

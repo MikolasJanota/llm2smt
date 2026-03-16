@@ -47,7 +47,7 @@ static bool is_lean_reserved(const std::string& s)
         "and", "bool", "char", "false", "id", "int", "list", "not", "or",
         "option", "prod", "string", "true", "type", "unit",
     };
-    return reserved.count(s) != 0;
+    return reserved.contains(s);
 }
 
 // Convert an SMT-LIB symbol name to a valid Lean identifier.
@@ -64,11 +64,11 @@ static std::string lean_ident(const std::string& name)
     if (inner.empty()) return "x";
 
     // Check whether the name is a valid plain Lean identifier syntactically.
-    bool plain = std::isalpha(static_cast<unsigned char>(inner[0])) || inner[0] == '_';
+    bool plain = (std::isalpha(static_cast<unsigned char>(inner[0])) != 0) || inner[0] == '_';
     if (plain) {
         for (size_t i = 1; i < inner.size(); ++i) {
             char c = inner[i];
-            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_') {
+            if ((std::isalnum(static_cast<unsigned char>(c)) == 0) && c != '_') {
                 plain = false;
                 break;
             }
@@ -122,17 +122,17 @@ std::string LeanEmitter::node_to_lean(NodeId n, const NodeManager& nm) const
             // so that equality comparisons with __bool_true/__bool_false (Prop) are
             // type-correct, and so it can be passed to functions with Bool parameter
             // sort (mapped to Prop in Lean).
-            const FmlRef& f = bit->second;
-            if (f->kind == FmlKind::Eq) {
-                if (f->eq_lhs == f->eq_rhs) return "True";
-                NodeId lhs = f->eq_lhs, rhs = f->eq_rhs;
-                if (lhs > rhs) std::swap(lhs, rhs);
+            NodeId fml = bit->second;
+            if (nm.is_eq(fml)) {
+                NodeId lhs = nm.get(fml).children[0], rhs = nm.get(fml).children[1];
+                if (lhs == rhs) return "True";
+                // mk_eq already canonicalized (min first)
                 return "(" + node_to_lean(lhs, nm) + " = " + node_to_lean(rhs, nm) + ")";
             }
-            if (f->kind == FmlKind::Pred)
-                return node_to_lean(f->pred, nm);
+            if (nm.is_atom_node(fml))
+                return node_to_lean(fml, nm);
             // Compound formulas: fml_to_lean returns Prop via Bool→Prop coercion.
-            return "(" + fml_to_lean(f, nm) + ")";
+            return "(" + fml_to_lean(fml, nm) + ")";
         }
     }
     std::string sanitized = lean_ident(raw_name);
@@ -151,121 +151,107 @@ std::string LeanEmitter::node_to_lean(NodeId n, const NodeManager& nm) const
 // Lean's Classical ite (`@ite`) is used instead of Bool if-then-else.
 // This avoids grind internally simplifying `if decide (p) then ...` to
 // `if p then ...` while the goal atoms still say `if decide (p) then ...`.
-std::string LeanEmitter::fml_to_lean_cond(const FmlRef& f, const NodeManager& nm) const
+std::string LeanEmitter::fml_to_lean_cond(NodeId f, const NodeManager& nm) const
 {
-    switch (f->kind) {
-    case FmlKind::True:  return "True";
-    case FmlKind::False: return "False";
-    case FmlKind::Eq: {
-        if (f->eq_lhs == f->eq_rhs) return "True";
-        NodeId lhs = f->eq_lhs, rhs = f->eq_rhs;
-        if (lhs > rhs) std::swap(lhs, rhs);
+    if (nm.is_true_node(f))  return "True";
+    if (nm.is_false_node(f)) return "False";
+    if (nm.is_eq(f)) {
+        NodeId lhs = nm.get(f).children[0], rhs = nm.get(f).children[1];
+        if (lhs == rhs) return "True";
+        // mk_eq already canonicalized (min first)
         return node_to_lean(lhs, nm) + " = " + node_to_lean(rhs, nm);
     }
-    case FmlKind::Pred:
-        return node_to_lean(f->pred, nm);
-    case FmlKind::Not:
-        if (f->children[0]->kind == FmlKind::Eq &&
-            f->children[0]->eq_lhs == f->children[0]->eq_rhs)
+    if (nm.is_atom_node(f))
+        return node_to_lean(f, nm);
+    if (nm.is_not(f)) {
+        NodeId c = nm.get(f).children[0];
+        if (nm.is_eq(c) && nm.get(c).children[0] == nm.get(c).children[1])
             return "False";
-        return "¬(" + fml_to_lean_cond(f->children[0], nm) + ")";
-    case FmlKind::And: {
-        std::string s = "(";
-        for (size_t i = 0; i < f->children.size(); ++i) {
-            if (i > 0) s += " ∧ ";
-            s += fml_to_lean_cond(f->children[i], nm);
-        }
-        return s + ")";
+        return "¬(" + fml_to_lean_cond(c, nm) + ")";
     }
-    case FmlKind::Or: {
-        std::string s = "(";
-        for (size_t i = 0; i < f->children.size(); ++i) {
-            if (i > 0) s += " ∨ ";
-            s += fml_to_lean_cond(f->children[i], nm);
-        }
-        return s + ")";
+    if (nm.is_and(f)) {
+        NodeId c0 = nm.get(f).children[0], c1 = nm.get(f).children[1];
+        return "(" + fml_to_lean_cond(c0, nm) + " ∧ " + fml_to_lean_cond(c1, nm) + ")";
     }
-    case FmlKind::Implies:
-        return "(" + fml_to_lean_cond(f->children[0], nm) + " → "
-               + fml_to_lean_cond(f->children[1], nm) + ")";
-    case FmlKind::Xor:
-        return "¬(" + fml_to_lean_cond(f->children[0], nm) + " ↔ "
-               + fml_to_lean_cond(f->children[1], nm) + ")";
-    case FmlKind::BoolEq:
-        return "(" + fml_to_lean_cond(f->children[0], nm) + " ↔ "
-               + fml_to_lean_cond(f->children[1], nm) + ")";
-    case FmlKind::Ite: {
-        const std::string c = fml_to_lean_cond(f->children[0], nm);
-        const std::string t = fml_to_lean_cond(f->children[1], nm);
-        const std::string e = fml_to_lean_cond(f->children[2], nm);
+    if (nm.is_or(f)) {
+        NodeId c0 = nm.get(f).children[0], c1 = nm.get(f).children[1];
+        return "(" + fml_to_lean_cond(c0, nm) + " ∨ " + fml_to_lean_cond(c1, nm) + ")";
+    }
+    if (nm.is_implies(f)) {
+        NodeId c0 = nm.get(f).children[0], c1 = nm.get(f).children[1];
+        return "(" + fml_to_lean_cond(c0, nm) + " → " + fml_to_lean_cond(c1, nm) + ")";
+    }
+    if (nm.is_xor(f)) {
+        NodeId c0 = nm.get(f).children[0], c1 = nm.get(f).children[1];
+        return "¬(" + fml_to_lean_cond(c0, nm) + " ↔ " + fml_to_lean_cond(c1, nm) + ")";
+    }
+    if (nm.is_iff(f)) {
+        NodeId c0 = nm.get(f).children[0], c1 = nm.get(f).children[1];
+        return "(" + fml_to_lean_cond(c0, nm) + " ↔ " + fml_to_lean_cond(c1, nm) + ")";
+    }
+    if (nm.is_ite_bool(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        NodeId c2 = nm.get(f).children[2];
+        const std::string c = fml_to_lean_cond(c0, nm);
+        const std::string t = fml_to_lean_cond(c1, nm);
+        const std::string e = fml_to_lean_cond(c2, nm);
         return "((" + c + " → " + t + ") ∧ (¬(" + c + ") → " + e + "))";
-    }
     }
     return "True";  // unreachable
 }
 
-std::string LeanEmitter::fml_to_lean(const FmlRef& f, const NodeManager& nm) const
+std::string LeanEmitter::fml_to_lean(NodeId f, const NodeManager& nm) const
 {
-    switch (f->kind) {
-    case FmlKind::True:
-        return "True";
-    case FmlKind::False:
-        return "False";
-    case FmlKind::Eq: {
+    if (nm.is_true_node(f))  return "True";
+    if (nm.is_false_node(f)) return "False";
+    if (nm.is_eq(f)) {
+        NodeId lhs = nm.get(f).children[0], rhs = nm.get(f).children[1];
         // a = a is always true; emit "True" so bv_decide doesn't treat it as
         // an opaque atom that it could assign false (reflexivity is not built in).
-        if (f->eq_lhs == f->eq_rhs) return "True";
-        // Canonical order by NodeId so that a=b and b=a produce the same
-        // string — bv_decide must not see them as distinct opaque atoms.
-        NodeId lhs = f->eq_lhs, rhs = f->eq_rhs;
-        if (lhs > rhs) std::swap(lhs, rhs);
+        if (lhs == rhs) return "True";
+        // mk_eq already canonicalized (min first)
         return "decide (" + node_to_lean(lhs, nm) + " = " + node_to_lean(rhs, nm) + ")";
     }
-    case FmlKind::Pred:
-        return "decide (" + node_to_lean(f->pred, nm) + ")";
-    case FmlKind::Not:
+    if (nm.is_atom_node(f))
+        return "decide (" + node_to_lean(f, nm) + ")";
+    if (nm.is_not(f)) {
+        NodeId c = nm.get(f).children[0];
         // ¬(a = a) is always false; emit "False" so bv_decide can't satisfy it.
-        if (f->children[0]->kind == FmlKind::Eq &&
-            f->children[0]->eq_lhs == f->children[0]->eq_rhs)
+        if (nm.is_eq(c) && nm.get(c).children[0] == nm.get(c).children[1])
             return "False";
-        return "¬(" + fml_to_lean(f->children[0], nm) + ")";
-    case FmlKind::And: {
-        std::string s = "(";
-        for (size_t i = 0; i < f->children.size(); ++i) {
-            if (i > 0) s += " ∧ ";
-            s += fml_to_lean(f->children[i], nm);
-        }
-        s += ")";
-        return s;
+        return "¬(" + fml_to_lean(c, nm) + ")";
     }
-    case FmlKind::Or: {
-        std::string s = "(";
-        for (size_t i = 0; i < f->children.size(); ++i) {
-            if (i > 0) s += " ∨ ";
-            s += fml_to_lean(f->children[i], nm);
-        }
-        s += ")";
-        return s;
+    if (nm.is_and(f)) {
+        NodeId c0 = nm.get(f).children[0], c1 = nm.get(f).children[1];
+        return "(" + fml_to_lean(c0, nm) + " ∧ " + fml_to_lean(c1, nm) + ")";
     }
-    case FmlKind::Implies:
-        return "(" + fml_to_lean(f->children[0], nm) + " → "
-               + fml_to_lean(f->children[1], nm) + ")";
-    case FmlKind::Xor:
+    if (nm.is_or(f)) {
+        NodeId c0 = nm.get(f).children[0], c1 = nm.get(f).children[1];
+        return "(" + fml_to_lean(c0, nm) + " ∨ " + fml_to_lean(c1, nm) + ")";
+    }
+    if (nm.is_implies(f)) {
+        NodeId c0 = nm.get(f).children[0], c1 = nm.get(f).children[1];
+        return "(" + fml_to_lean(c0, nm) + " → " + fml_to_lean(c1, nm) + ")";
+    }
+    if (nm.is_xor(f)) {
+        NodeId c0 = nm.get(f).children[0], c1 = nm.get(f).children[1];
         // xor(a,b) ≡ ¬(a ↔ b)  — avoids non-standard Xor identifier
-        return "¬(" + fml_to_lean(f->children[0], nm) + " ↔ "
-               + fml_to_lean(f->children[1], nm) + ")";
-    case FmlKind::BoolEq:
-        return "(" + fml_to_lean(f->children[0], nm) + " ↔ "
-               + fml_to_lean(f->children[1], nm) + ")";
-    case FmlKind::Ite: {
-        // ite(c,t,e) ≡ (c → t) ∧ (¬c → e)  — avoids `if` which requires Decidable c.
-        // The condition is expanded twice; parenthesise each occurrence so that
-        // negation in the else-arm binds correctly for any condition shape.
-        const std::string c = fml_to_lean(f->children[0], nm);
-        const std::string t = fml_to_lean(f->children[1], nm);
-        const std::string e = fml_to_lean(f->children[2], nm);
-        return "((" + c + " → " + t + ") ∧ (¬(" + c + ") → " + e + "))";
+        return "¬(" + fml_to_lean(c0, nm) + " ↔ " + fml_to_lean(c1, nm) + ")";
     }
+    if (nm.is_iff(f)) {
+        NodeId c0 = nm.get(f).children[0], c1 = nm.get(f).children[1];
+        return "(" + fml_to_lean(c0, nm) + " ↔ " + fml_to_lean(c1, nm) + ")";
+    }
+    if (nm.is_ite_bool(f)) {
+        NodeId c0 = nm.get(f).children[0];
+        NodeId c1 = nm.get(f).children[1];
+        NodeId c2 = nm.get(f).children[2];
+        // ite(c,t,e) ≡ (c → t) ∧ (¬c → e)  — avoids `if` which requires Decidable c.
+        const std::string c = fml_to_lean(c0, nm);
+        const std::string t = fml_to_lean(c1, nm);
+        const std::string e = fml_to_lean(c2, nm);
+        return "((" + c + " → " + t + ") ∧ (¬(" + c + ") → " + e + "))";
     }
     return "True";  // unreachable
 }
@@ -281,7 +267,7 @@ std::string LeanEmitter::fn_type(const FnDecl& fn, bool is_pred)
 
 void LeanEmitter::emit(std::ostream& out,
                        const SmtContext& ctx,
-                       const std::vector<FmlRef>& proof_fmls,
+                       const std::vector<NodeId>& proof_fmls,
                        const std::vector<std::vector<int>>& proof_conflicts)
 {
     ctx_ = &ctx;
@@ -294,9 +280,9 @@ void LeanEmitter::emit(std::ostream& out,
     // hypothesis to standalone theorems that need it (judicious context loading).
     std::unordered_map<NodeId, std::string> ite_proxy_hyp_name;
     for (size_t i = 0; i < proof_fmls.size(); ++i) {
-        const FmlRef& f = proof_fmls[i];
-        if (f->kind != FmlKind::Eq) continue;
-        NodeId a = f->eq_lhs, b = f->eq_rhs;
+        NodeId f = proof_fmls[i];
+        if (!nm.is_eq(f)) continue;
+        NodeId a = nm.get(f).children[0], b = nm.get(f).children[1];
         std::string hname = "hyp" + std::to_string(i + 1);
         if (ctx.ite_nodes.count(a) && !ctx.ite_nodes.count(b)
                 && !ite_proxy_for_.count(a)) {
@@ -373,9 +359,9 @@ void LeanEmitter::emit(std::ostream& out,
     // has a positive literal that is directly asserted in the problem.
     std::unordered_map<uint64_t, std::string> eq_atom_to_hyp;
     for (size_t i = 0; i < proof_fmls.size(); ++i) {
-        const FmlRef& f = proof_fmls[i];
-        if (f->kind != FmlKind::Eq) continue;
-        NodeId a = f->eq_lhs, b = f->eq_rhs;
+        NodeId f = proof_fmls[i];
+        if (!nm.is_eq(f)) continue;
+        NodeId a = nm.get(f).children[0], b = nm.get(f).children[1];
         if (a == b) continue;
         uint64_t key = node_pair_key(a, b);
         if (!eq_atom_to_hyp.count(key))
@@ -447,9 +433,9 @@ void LeanEmitter::emit(std::ostream& out,
     {
         // Step 1: collect proxy nodes for each ite node from proof_fmls.
         std::unordered_map<NodeId, std::vector<NodeId>> ite_proxies;
-        for (const FmlRef& f : proof_fmls) {
-            if (f->kind != FmlKind::Eq) continue;
-            NodeId a = f->eq_lhs, b = f->eq_rhs;
+        for (NodeId f : proof_fmls) {
+            if (!nm.is_eq(f)) continue;
+            NodeId a = nm.get(f).children[0], b = nm.get(f).children[1];
             if (ctx.ite_nodes.count(a) && !ctx.ite_nodes.count(b))
                 ite_proxies[a].push_back(b);
             else if (ctx.ite_nodes.count(b) && !ctx.ite_nodes.count(a))
@@ -544,23 +530,41 @@ void LeanEmitter::emit(std::ostream& out,
             // Conclusion: decide(pa=pb) — canonical pair is already min<max.
             std::string concl = "decide (" + node_to_lean(pa, nm)
                                  + " = " + node_to_lean(pb, nm) + ")";
-            FmlRef src_fml = bridge_info.second;
-            // Decompose Or into disjuncts (or treat atom as a single disjunct).
-            std::vector<FmlRef> disjuncts;
-            if (src_fml->kind == FmlKind::Or)
-                disjuncts = src_fml->children;
-            else
-                disjuncts.push_back(src_fml);
-            for (const FmlRef& disj : disjuncts) {
-                // Decompose And into conjuncts (or treat atom as a single conjunct).
-                std::vector<FmlRef> conjuncts;
-                if (disj->kind == FmlKind::And)
-                    conjuncts = disj->children;
-                else
-                    conjuncts.push_back(disj);
+            NodeId src_fml = bridge_info.second;
+            // Collect Or leaves from the binary Or tree.
+            std::vector<NodeId> disjuncts;
+            {
+                std::vector<NodeId> stk = {src_fml};
+                while (!stk.empty()) {
+                    NodeId n = stk.back(); stk.pop_back();
+                    if (nm.is_or(n)) {
+                        NodeId c0 = nm.get(n).children[0], c1 = nm.get(n).children[1];
+                        stk.push_back(c1);
+                        stk.push_back(c0);
+                    } else {
+                        disjuncts.push_back(n);
+                    }
+                }
+            }
+            for (NodeId disj : disjuncts) {
+                // Collect And leaves from the binary And tree.
+                std::vector<NodeId> conjuncts;
+                {
+                    std::vector<NodeId> stk = {disj};
+                    while (!stk.empty()) {
+                        NodeId n = stk.back(); stk.pop_back();
+                        if (nm.is_and(n)) {
+                            NodeId c0 = nm.get(n).children[0], c1 = nm.get(n).children[1];
+                            stk.push_back(c1);
+                            stk.push_back(c0);
+                        } else {
+                            conjuncts.push_back(n);
+                        }
+                    }
+                }
                 std::string tname = "eq_bridge_" + std::to_string(ebr_idx++);
                 out << "theorem " << tname << " : ";
-                for (const FmlRef& atom : conjuncts)
+                for (NodeId atom : conjuncts)
                     out << fml_to_lean(atom, nm) << " → ";
                 out << concl << " := by grind\n";
                 standalone_names.push_back(tname);

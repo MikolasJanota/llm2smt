@@ -14,6 +14,7 @@ namespace llm2smt {
 struct SymbolInfo {
     std::string name;
     uint32_t    arity;
+    SortId      return_sort = NULL_SORT;
 };
 
 // Transparent hash for std::unordered_map<std::string,...> that accepts
@@ -29,7 +30,7 @@ class SymbolTable {
 public:
     SymbolTable() {
         // Reserve index 0 as NULL_SYMBOL
-        symbols_.push_back({"<null>", 0});
+        symbols_.push_back({"<null>", 0, NULL_SORT});
     }
 
     // Intern a symbol name; if already declared with the same arity, return existing id.
@@ -37,7 +38,8 @@ public:
     // Hot path (existing symbol): zero heap allocations (transparent find).
     // Cold path (new symbol): one allocation for symbols_ entry; the map key
     // is aliased from that stored string to avoid a second allocation.
-    SymbolId intern(std::string_view name, uint32_t arity) {
+    SymbolId intern(std::string_view name, uint32_t arity,
+                    SortId return_sort = NULL_SORT) {
         auto it = name_to_id_.find(name);  // no allocation — transparent hash
         if (it != name_to_id_.end()) {
             SymbolId id = it->second;
@@ -49,8 +51,8 @@ public:
             return id;
         }
         SymbolId id = static_cast<SymbolId>(symbols_.size());
-        symbols_.push_back({std::string(name), arity});          // 1 allocation
-        name_to_id_.emplace(symbols_.back().name, id);           // copies stored string
+        symbols_.push_back({std::string(name), arity, return_sort}); // 1 allocation
+        name_to_id_.emplace(symbols_.back().name, id);                // copies stored string
         return id;
     }
 

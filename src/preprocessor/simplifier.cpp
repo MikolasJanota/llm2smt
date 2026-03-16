@@ -4,219 +4,192 @@
 
 namespace llm2smt {
 
+Simplifier::Simplifier(NodeManager& nm) : nm_(nm) {}
+
 // ============================================================================
 // Constant folding + optional And/Or flattening
 // ============================================================================
 
-FmlRef Simplifier::fold(FmlRef f)
+NodeId Simplifier::fold(NodeId f)
 {
-    switch (f->kind) {
-    case FmlKind::True:
-    case FmlKind::False:
-        return f;
-    case FmlKind::Eq:
-        if (f->eq_lhs == f->eq_rhs) return fml_true();
-        return f;
-    case FmlKind::Pred:
-        return f;
+    if (nm_.is_true_node(f) || nm_.is_false_node(f)) return f;
+    if (nm_.is_eq(f) || is_atom(f)) return f;
 
-    case FmlKind::Not: {
-        FmlRef fc = fold(f->children[0]);
-        if (fc->kind == FmlKind::True)  return fml_false();
-        if (fc->kind == FmlKind::False) return fml_true();
-        if (fc->kind == FmlKind::Not)   return fc->children[0];
-        if (fc.get() == f->children[0].get()) return f;
-        return fml_not(fc);
+    if (nm_.is_not(f)) {
+        NodeId child = nm_.get(f).children[0];
+        NodeId fc    = fold(child);
+        if (nm_.is_true_node(fc))  return nm_.mk_false();
+        if (nm_.is_false_node(fc)) return nm_.mk_true();
+        if (nm_.is_not(fc))        return nm_.get(fc).children[0]; // ¬¬x = x
+        if (fc == child) return f;
+        return nm_.mk_not(fc);
     }
 
-    case FmlKind::And: {
-        // Lazy allocation: scan for the first change; only then build new_ch.
-        // This avoids any heap allocation when the formula is already stable.
-        for (size_t i = 0; i < f->children.size(); ++i) {
-            FmlRef fc = fold(f->children[i]);
-            if (fc->kind == FmlKind::False) return fml_false();
-            const bool changed = fc->kind == FmlKind::True
-                              || (flatten_ && fc->kind == FmlKind::And)
-                              || fc.get() != f->children[i].get();
-            if (!changed) continue;
+    if (nm_.is_and(f)) {
+        NodeId c0 = nm_.get(f).children[0];
+        NodeId c1 = nm_.get(f).children[1];
 
-            // Build output: unchanged prefix + current + fold remaining.
-            std::vector<FmlRef> new_ch;
-            new_ch.reserve(f->children.size());
-            for (size_t j = 0; j < i; ++j)
-                new_ch.push_back(f->children[j]);
+        std::vector<NodeId> leaves;
+        bool found_false = false;
 
-            auto push = [&](FmlRef c) {
-                if (c->kind == FmlKind::True) return;
-                if (flatten_ && c->kind == FmlKind::And)
-                    for (auto& sub : c->children) new_ch.push_back(sub);
-                else
-                    new_ch.push_back(std::move(c));
-            };
-            push(std::move(fc));
-            for (size_t j = i + 1; j < f->children.size(); ++j) {
-                FmlRef fj = fold(f->children[j]);
-                if (fj->kind == FmlKind::False) return fml_false();
-                push(std::move(fj));
+        auto collect = [&](auto& self, NodeId n) -> void {
+            if (found_false) return;
+            NodeId fn = fold(n);
+            if (nm_.is_false_node(fn)) { found_false = true; return; }
+            if (nm_.is_true_node(fn))  return;  // identity element, skip
+            if (flatten_ && nm_.is_and(fn)) {
+                NodeId fa = nm_.get(fn).children[0];
+                NodeId fb = nm_.get(fn).children[1];
+                self(self, fa);
+                self(self, fb);
+            } else {
+                leaves.push_back(fn);
             }
-            if (new_ch.empty()) return fml_true();
-            if (new_ch.size() == 1) return new_ch[0];
-            return fml_and(std::move(new_ch));
-        }
-        return f;
+        };
+
+        collect(collect, c0);
+        collect(collect, c1);
+
+        if (found_false) return nm_.mk_false();
+        if (leaves.empty()) return nm_.mk_true();
+        if (leaves.size() == 1) return leaves[0];
+        if (leaves.size() == 2 && leaves[0] == c0 && leaves[1] == c1) return f;
+        NodeId result = nm_.mk_and(leaves[0], leaves[1]);
+        for (size_t i = 2; i < leaves.size(); ++i)
+            result = nm_.mk_and(result, leaves[i]);
+        return result;
     }
 
-    case FmlKind::Or: {
-        // Symmetric to And.
-        for (size_t i = 0; i < f->children.size(); ++i) {
-            FmlRef fc = fold(f->children[i]);
-            if (fc->kind == FmlKind::True) return fml_true();
-            const bool changed = fc->kind == FmlKind::False
-                              || (flatten_ && fc->kind == FmlKind::Or)
-                              || fc.get() != f->children[i].get();
-            if (!changed) continue;
+    if (nm_.is_or(f)) {
+        NodeId c0 = nm_.get(f).children[0];
+        NodeId c1 = nm_.get(f).children[1];
 
-            std::vector<FmlRef> new_ch;
-            new_ch.reserve(f->children.size());
-            for (size_t j = 0; j < i; ++j)
-                new_ch.push_back(f->children[j]);
+        std::vector<NodeId> leaves;
+        bool found_true = false;
 
-            auto push = [&](FmlRef c) {
-                if (c->kind == FmlKind::False) return;
-                if (flatten_ && c->kind == FmlKind::Or)
-                    for (auto& sub : c->children) new_ch.push_back(sub);
-                else
-                    new_ch.push_back(std::move(c));
-            };
-            push(std::move(fc));
-            for (size_t j = i + 1; j < f->children.size(); ++j) {
-                FmlRef fj = fold(f->children[j]);
-                if (fj->kind == FmlKind::True) return fml_true();
-                push(std::move(fj));
+        auto collect = [&](auto& self, NodeId n) -> void {
+            if (found_true) return;
+            NodeId fn = fold(n);
+            if (nm_.is_true_node(fn))  { found_true = true; return; }
+            if (nm_.is_false_node(fn)) return;  // identity element, skip
+            if (flatten_ && nm_.is_or(fn)) {
+                NodeId fa = nm_.get(fn).children[0];
+                NodeId fb = nm_.get(fn).children[1];
+                self(self, fa);
+                self(self, fb);
+            } else {
+                leaves.push_back(fn);
             }
-            if (new_ch.empty()) return fml_false();
-            if (new_ch.size() == 1) return new_ch[0];
-            return fml_or(std::move(new_ch));
-        }
-        return f;
+        };
+
+        collect(collect, c0);
+        collect(collect, c1);
+
+        if (found_true) return nm_.mk_true();
+        if (leaves.empty()) return nm_.mk_false();
+        if (leaves.size() == 1) return leaves[0];
+        if (leaves.size() == 2 && leaves[0] == c0 && leaves[1] == c1) return f;
+        NodeId result = nm_.mk_or(leaves[0], leaves[1]);
+        for (size_t i = 2; i < leaves.size(); ++i)
+            result = nm_.mk_or(result, leaves[i]);
+        return result;
     }
 
-    case FmlKind::Ite: {
-        assert(f->children.size() == 3);
-        FmlRef c = fold(f->children[0]);
-        if (c->kind == FmlKind::True)  return fold(f->children[1]);
-        if (c->kind == FmlKind::False) return fold(f->children[2]);
-        FmlRef t  = fold(f->children[1]);
-        FmlRef el = fold(f->children[2]);
-        if (t.get() == el.get())                                      return t;  // Ite(C,F,F) ≡ F
-        if (t->kind == FmlKind::True  && el->kind == FmlKind::True)  return fml_true();
-        if (t->kind == FmlKind::False && el->kind == FmlKind::False) return fml_false();
-        if (t->kind == FmlKind::True  && el->kind == FmlKind::False) return c;
-        if (t->kind == FmlKind::False && el->kind == FmlKind::True)  return fml_not(c);
-        if (c.get() == f->children[0].get() &&
-            t.get() == f->children[1].get() &&
-            el.get() == f->children[2].get()) return f;
-        return fml_ite(c, t, el);
+    if (nm_.is_ite_bool(f)) {
+        NodeId c0 = nm_.get(f).children[0];
+        NodeId c1 = nm_.get(f).children[1];
+        NodeId c2 = nm_.get(f).children[2];
+        NodeId c  = fold(c0);
+        if (nm_.is_true_node(c))  return fold(c1);
+        if (nm_.is_false_node(c)) return fold(c2);
+        NodeId t  = fold(c1);
+        NodeId el = fold(c2);
+        if (t == el)                                           return t;
+        if (nm_.is_true_node(t)  && nm_.is_true_node(el))    return nm_.mk_true();
+        if (nm_.is_false_node(t) && nm_.is_false_node(el))   return nm_.mk_false();
+        if (nm_.is_true_node(t)  && nm_.is_false_node(el))   return c;
+        if (nm_.is_false_node(t) && nm_.is_true_node(el))    return nm_.mk_not(c);
+        if (c == c0 && t == c1 && el == c2) return f;
+        return nm_.mk_ite_bool(c, t, el);
     }
 
-    case FmlKind::Implies: {
-        assert(f->children.size() == 2);
-        FmlRef a = fold(f->children[0]);
-        FmlRef b = fold(f->children[1]);
-        if (a.get() == b.get())        return fml_true();   // P → P
-        if (a->kind == FmlKind::False) return fml_true();
-        if (a->kind == FmlKind::True)  return b;
-        if (b->kind == FmlKind::True)  return fml_true();
-        if (b->kind == FmlKind::False) return fml_not(a);
-        if (a.get() == f->children[0].get() && b.get() == f->children[1].get()) return f;
-        return fml_implies(a, b);
+    if (nm_.is_implies(f)) {
+        NodeId c0 = nm_.get(f).children[0];
+        NodeId c1 = nm_.get(f).children[1];
+        NodeId a  = fold(c0);
+        NodeId b  = fold(c1);
+        if (a == b)               return nm_.mk_true();   // P → P
+        if (nm_.is_false_node(a)) return nm_.mk_true();
+        if (nm_.is_true_node(a))  return b;
+        if (nm_.is_true_node(b))  return nm_.mk_true();
+        if (nm_.is_false_node(b)) return nm_.mk_not(a);
+        if (a == c0 && b == c1) return f;
+        return nm_.mk_implies(a, b);
     }
 
-    case FmlKind::Xor: {
-        assert(f->children.size() == 2);
-        FmlRef a = fold(f->children[0]);
-        FmlRef b = fold(f->children[1]);
-        if (a.get() == b.get())                                       return fml_false(); // P ⊕ P
-        if (a->kind == FmlKind::True  && b->kind == FmlKind::True)  return fml_false();
-        if (a->kind == FmlKind::False && b->kind == FmlKind::False) return fml_false();
-        if (a->kind == FmlKind::True  && b->kind == FmlKind::False) return fml_true();
-        if (a->kind == FmlKind::False && b->kind == FmlKind::True)  return fml_true();
-        if (a->kind == FmlKind::True)  return fml_not(b);
-        if (a->kind == FmlKind::False) return b;
-        if (b->kind == FmlKind::True)  return fml_not(a);
-        if (b->kind == FmlKind::False) return a;
-        if (a.get() == f->children[0].get() && b.get() == f->children[1].get()) return f;
-        return fml_xor(a, b);
+    if (nm_.is_xor(f)) {
+        NodeId c0 = nm_.get(f).children[0];
+        NodeId c1 = nm_.get(f).children[1];
+        NodeId a  = fold(c0);
+        NodeId b  = fold(c1);
+        if (a == b)               return nm_.mk_false();  // P ⊕ P = false
+        if (nm_.is_true_node(a))  return nm_.mk_not(b);
+        if (nm_.is_false_node(a)) return b;
+        if (nm_.is_true_node(b))  return nm_.mk_not(a);
+        if (nm_.is_false_node(b)) return a;
+        if (a == c0 && b == c1) return f;
+        return nm_.mk_xor(a, b);
     }
 
-    case FmlKind::BoolEq: {
-        assert(f->children.size() == 2);
-        FmlRef a = fold(f->children[0]);
-        FmlRef b = fold(f->children[1]);
-        if (a.get() == b.get())        return fml_true();   // P ↔ P
-        if (a->kind == FmlKind::True)  return b;
-        if (a->kind == FmlKind::False) return fml_not(b);
-        if (b->kind == FmlKind::True)  return a;
-        if (b->kind == FmlKind::False) return fml_not(a);
-        if (a.get() == f->children[0].get() && b.get() == f->children[1].get()) return f;
-        return fml_booleq(a, b);
+    if (nm_.is_iff(f)) {
+        NodeId c0 = nm_.get(f).children[0];
+        NodeId c1 = nm_.get(f).children[1];
+        NodeId a  = fold(c0);
+        NodeId b  = fold(c1);
+        if (a == b)               return nm_.mk_true();   // P ↔ P = true
+        if (nm_.is_true_node(a))  return b;
+        if (nm_.is_false_node(a)) return nm_.mk_not(b);
+        if (nm_.is_true_node(b))  return a;
+        if (nm_.is_false_node(b)) return nm_.mk_not(a);
+        if (a == c0 && b == c1) return f;
+        return nm_.mk_iff(a, b);
     }
-    }
-    return f; // unreachable
+
+    return f;  // unreachable for well-formed input
 }
 
 // ============================================================================
 // Substitution + folding
 // ============================================================================
 
-// Returns whether `f` is the same atom as `atom` (ignoring sign).
-static bool is_matching_atom(const Fml& f, const Fml& atom)
+NodeId Simplifier::subst_and_fold(NodeId f, NodeId atom, bool forced_positive)
 {
-    return (f.kind == FmlKind::Eq || f.kind == FmlKind::Pred)
-        && fml_atoms_equal(f, atom);
-}
+    // If f is exactly the atom: replace with its forced value.
+    if (f == atom)
+        return forced_positive ? nm_.mk_true() : nm_.mk_false();
 
-FmlRef Simplifier::subst_and_fold(FmlRef f, const Fml& atom, bool forced_positive)
-{
-    // If f is the atom itself: replace with its forced value.
-    if (is_matching_atom(*f, atom))
-        return forced_positive ? fml_true() : fml_false();
+    // Leaf nodes that are not the target atom are left unchanged.
+    if (nm_.is_true_node(f) || nm_.is_false_node(f)) return f;
+    if (nm_.is_eq(f) || is_atom(f)) return f;
 
-    switch (f->kind) {
-    case FmlKind::True:
-    case FmlKind::False:
-    case FmlKind::Eq:
-    case FmlKind::Pred:
-        return f;  // different atom, leave it
+    // Compound node: recurse into children.
+    // Copy NodeData before any nm_ call to avoid dangling refs on vector realloc.
+    const NodeData d = nm_.get(f);
 
-    default: {
-        // Lazy: find first changed child; only then allocate a new node.
-        for (size_t i = 0; i < f->children.size(); ++i) {
-            FmlRef nc = subst_and_fold(f->children[i], atom, forced_positive);
-            if (nc.get() == f->children[i].get()) continue;
+    std::vector<NodeId> new_children;
+    new_children.reserve(d.children.size());
+    bool any_change = false;
 
-            // First change at index i.
-            std::vector<FmlRef> new_children;
-            new_children.reserve(f->children.size());
-            for (size_t j = 0; j < i; ++j)
-                new_children.push_back(f->children[j]);
-            new_children.push_back(std::move(nc));
-            for (size_t j = i + 1; j < f->children.size(); ++j)
-                new_children.push_back(
-                    subst_and_fold(f->children[j], atom, forced_positive));
-
-            auto new_f = std::make_shared<Fml>();
-            new_f->kind     = f->kind;
-            new_f->eq_lhs   = f->eq_lhs;
-            new_f->eq_rhs   = f->eq_rhs;
-            new_f->pred     = f->pred;
-            new_f->children = std::move(new_children);
-            return fold(new_f);
-        }
-        // No child changed: f is already folded (Phase 1 ran before subst_and_fold).
-        return f;
+    for (NodeId child : d.children) {
+        NodeId nc = subst_and_fold(child, atom, forced_positive);
+        if (nc != child) any_change = true;
+        new_children.push_back(nc);
     }
-    }
+
+    if (!any_change) return f;
+
+    NodeId new_f = nm_.mk_app(d.sym, new_children);
+    return fold(new_f);
 }
 
 // ============================================================================
@@ -234,10 +207,10 @@ NodeId Simplifier::uf_find(NodeId n)
     }
     // Pass 2: path compression — point every node on the path directly to root.
     while (n != root) {
-        auto it = parent_.find(n);
-        NodeId next = it->second;
+        auto it   = parent_.find(n);
+        NodeId nx = it->second;
         it->second = root;
-        n = next;
+        n = nx;
     }
     return root;
 }
@@ -249,85 +222,68 @@ void Simplifier::uf_union(NodeId a, NodeId b)
     if (ra != rb) parent_[ra] = rb;
 }
 
-// Rewrite Eq(x,y) → Eq(find(x), find(y)) throughout f.
-// If find(x)==find(y) the atom collapses to True.
+// Rewrite mk_eq(x,y) → mk_eq(find(x), find(y)) throughout f.
+// If find(x)==find(y) the atom collapses to True (via mk_eq's reflexivity rule).
 // Compound nodes whose children changed are re-folded.
-FmlRef Simplifier::normalize_eq_fml(FmlRef f)
+NodeId Simplifier::normalize_eq_fml(NodeId f)
 {
-    if (f->kind == FmlKind::Eq) {
-        NodeId nx = uf_find(f->eq_lhs);
-        NodeId ny = uf_find(f->eq_rhs);
-        if (nx == ny) return fml_true();
-        if (nx == f->eq_lhs && ny == f->eq_rhs) return f;
-        if (nx == f->eq_rhs && ny == f->eq_lhs) return f;
-        return fml_eq(nx, ny);
+    if (nm_.is_eq(f)) {
+        NodeId lhs  = nm_.get(f).children[0];
+        NodeId rhs  = nm_.get(f).children[1];
+        NodeId nx   = uf_find(lhs);
+        NodeId ny   = uf_find(rhs);
+        NodeId norm = nm_.mk_eq(nx, ny);  // handles reflexivity + canonical ordering
+        return norm;  // equals f when nx==lhs && ny==rhs (already canonical)
     }
-    if (f->children.empty()) return f;  // True, False, Pred — nothing to normalize
 
-    // Lazy: find first changed child; only then allocate a new node.
-    for (size_t i = 0; i < f->children.size(); ++i) {
-        FmlRef nc = normalize_eq_fml(f->children[i]);
-        if (nc.get() == f->children[i].get()) continue;
+    if (nm_.is_true_node(f) || nm_.is_false_node(f) || is_atom(f)) return f;
 
-        // First change at index i.
-        std::vector<FmlRef> new_ch;
-        new_ch.reserve(f->children.size());
-        for (size_t j = 0; j < i; ++j)
-            new_ch.push_back(f->children[j]);
-        new_ch.push_back(std::move(nc));
-        for (size_t j = i + 1; j < f->children.size(); ++j)
-            new_ch.push_back(normalize_eq_fml(f->children[j]));
+    // Copy NodeData before any nm_ calls.
+    const NodeData d = nm_.get(f);
 
-        auto new_f = std::make_shared<Fml>();
-        new_f->kind     = f->kind;
-        new_f->eq_lhs   = f->eq_lhs;
-        new_f->eq_rhs   = f->eq_rhs;
-        new_f->pred     = f->pred;
-        new_f->children = std::move(new_ch);
-        return fold(new_f);
+    std::vector<NodeId> new_children;
+    new_children.reserve(d.children.size());
+    bool any_change = false;
+
+    for (NodeId child : d.children) {
+        NodeId nc = normalize_eq_fml(child);
+        if (nc != child) any_change = true;
+        new_children.push_back(nc);
     }
-    return f;
-}
 
-// ============================================================================
-// Helpers
-// ============================================================================
+    if (!any_change) return f;
 
-bool Simplifier::already_forced(const Fml& atom) const
-{
-    for (auto& fa : forced_)
-        if (fml_atoms_equal(*fa.atom, atom))
-            return true;
-    return false;
+    NodeId new_f = nm_.mk_app(d.sym, new_children);
+    return fold(new_f);
 }
 
 // ============================================================================
 // Unit propagation pass
 // ============================================================================
 
-bool Simplifier::run_pass(std::vector<FmlRef>& assertions)
+bool Simplifier::run_pass(std::vector<NodeId>& assertions)
 {
     bool changed = false;
 
-    // Phase 1: constant-fold (and flatten) everything.
+    // Phase 1: constant-fold (and optionally flatten) everything.
     for (auto& f : assertions) {
-        FmlRef folded = fold(f);
-        if (folded.get() != f.get()) {
+        NodeId folded = fold(f);
+        if (folded != f) {
             f       = folded;
             changed = true;
         }
     }
 
     // Phase 2: collect unit atoms.
-    // A unit is a formula that is exactly an atom or Not(atom).
-    struct Unit { FmlRef atom; bool positive; };
+    // A unit is an assertion that is exactly an atom or not(atom).
+    struct Unit { NodeId atom; bool positive; };
     std::vector<Unit> units;
-    for (auto& f : assertions) {
-        if (f->kind == FmlKind::Eq || f->kind == FmlKind::Pred) {
+    for (const auto& f : assertions) {
+        if (nm_.is_eq(f) || is_atom(f)) {
             units.push_back({f, true});
-        } else if (f->kind == FmlKind::Not) {
-            auto& ch = f->children[0];
-            if (ch->kind == FmlKind::Eq || ch->kind == FmlKind::Pred)
+        } else if (nm_.is_not(f)) {
+            NodeId ch = nm_.get(f).children[0];
+            if (nm_.is_eq(ch) || is_atom(ch))
                 units.push_back({ch, false});
         }
     }
@@ -336,19 +292,21 @@ bool Simplifier::run_pass(std::vector<FmlRef>& assertions)
 
     // Phase 3: propagate each new unit into all other assertions.
     for (auto& [atom, positive] : units) {
-        if (already_forced(*atom)) continue;
+        if (!forced_set_.insert(atom).second) continue;  // already forced
         forced_.push_back({atom, positive});
 
-        // For positive Eq atoms, record the merge in the union-find so that
-        // Phase 4 can collapse transitive equalities (e.g. Eq(a,c) once
-        // both Eq(a,b) and Eq(b,c) are forced).
-        if (atom->kind == FmlKind::Eq && positive)
-            uf_union(atom->eq_lhs, atom->eq_rhs);
+        // For positive Eq units, record the merge in the union-find so that
+        // Phase 4 can collapse transitive equalities.
+        if (nm_.is_eq(atom) && positive) {
+            NodeId lhs = nm_.get(atom).children[0];
+            NodeId rhs = nm_.get(atom).children[1];
+            uf_union(lhs, rhs);
+        }
 
         for (auto& f : assertions) {
-            if (f->kind == FmlKind::True || f->kind == FmlKind::False) continue;
-            FmlRef new_f = subst_and_fold(f, *atom, positive);
-            if (new_f.get() != f.get()) {
+            if (nm_.is_true_node(f) || nm_.is_false_node(f)) continue;
+            NodeId new_f = subst_and_fold(f, atom, positive);
+            if (new_f != f) {
                 f       = new_f;
                 changed = true;
             }
@@ -359,9 +317,9 @@ bool Simplifier::run_pass(std::vector<FmlRef>& assertions)
     // Handles transitivity: if a=b and b=c are forced, Eq(a,c) collapses to True.
     if (!parent_.empty()) {
         for (auto& f : assertions) {
-            if (f->kind == FmlKind::True || f->kind == FmlKind::False) continue;
-            FmlRef nf = normalize_eq_fml(f);
-            if (nf.get() != f.get()) {
+            if (nm_.is_true_node(f) || nm_.is_false_node(f)) continue;
+            NodeId nf = normalize_eq_fml(f);
+            if (nf != f) {
                 f       = nf;
                 changed = true;
             }
@@ -375,7 +333,7 @@ bool Simplifier::run_pass(std::vector<FmlRef>& assertions)
 // Top-level driver
 // ============================================================================
 
-void Simplifier::run(std::vector<FmlRef>& assertions, int passes)
+void Simplifier::run(std::vector<NodeId>& assertions, int passes)
 {
     for (int i = 0; i < passes; ++i) {
         if (!run_pass(assertions)) break;
