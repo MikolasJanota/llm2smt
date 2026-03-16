@@ -59,6 +59,10 @@ public:
     // Conflict detection is always active regardless of this setting.
     void set_propagation(bool v) { propagation_enabled_ = v; }
 
+    // Run the propagation scan every N discover_propagations() calls.
+    // 1 = every call (default); N > 1 reduces overhead on SAT instances.
+    void set_prop_interval(int n) { prop_interval_ = n; }
+
     // Access internals (for testing)
     CC&          cc()          { return cc_; }
     NodeManager& nm()          { return nm_; }
@@ -194,11 +198,14 @@ private:
     // after a full BCP batch), avoiding O(K × N) quadratic work.
     bool needs_rescan_ = false;
 
-    // Ablation flag: when false, Step 2 of discover_propagations() (the
-    // proactive equality-implication scan) is skipped.  Conflict detection
-    // (Step 1, notify_assignment early check, cb_check_found_model) is
-    // unaffected so correctness is preserved.
+    // Theory propagation control.
+    // propagation_enabled_: when false, the equality-implication scan is
+    //   skipped entirely (ablation mode); conflict detection is unaffected.
+    // prop_interval_: run the scan every N calls (1 = every call, default).
+    // prop_call_count_: call counter used to implement the interval.
     bool propagation_enabled_ = true;
+    int  prop_interval_       = 1;
+    int  prop_call_count_     = 0;
 
     // Make a 64-bit key for an unordered pair of NodeIds
     static uint64_t atom_key(NodeId a, NodeId b) {

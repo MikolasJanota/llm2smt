@@ -14,6 +14,7 @@ struct PreprocOptions {
     bool        proof_minimize = false; // remove unnecessary theory lemmas via UNSAT core
     bool        eq_bridge  = false;  // add common EUF consequences of disjunction branches
     bool        theory_propagation = true; // enable EUF theory propagation
+    int         prop_interval = 1;         // run propagation scan every N discover_propagations calls (1 = every call)
 };
 
 } // namespace llm2smt

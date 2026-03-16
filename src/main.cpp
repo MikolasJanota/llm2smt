@@ -70,6 +70,9 @@ int main(int argc, char** argv) {
                  "Add common EUF consequences of disjunction branches (eliminates diamond-like exponential blowup)");
     app.add_flag("!--no-theory-prop", opts.theory_propagation,
                  "Disable EUF theory propagation (ablation: conflict detection is preserved)");
+    app.add_option("--prop-interval", opts.prop_interval,
+                   "Run EUF propagation scan every N calls (default 1 = every call; higher = less frequent)")
+       ->check(CLI::PositiveNumber);
 
     bool print_stats = false;
     app.add_flag("--stats", print_stats, "Print solver statistics to stderr after solving");
@@ -106,6 +109,7 @@ int main(int argc, char** argv) {
 
         if (!opts.theory_propagation)
             euf.set_propagation(false);
+        euf.set_prop_interval(opts.prop_interval);
 
         const bool proof_mode = !opts.proof_file.empty();
         if (proof_mode) {
