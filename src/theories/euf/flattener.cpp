@@ -1,6 +1,7 @@
 #include "theories/euf/flattener.h"
 
 #include <cassert>
+#include <span>
 #include <string>
 
 namespace llm2smt {
@@ -35,13 +36,7 @@ NodeId Flattener::do_flatten(NodeId term, std::vector<FlatEq>& eqs) {
     // n-ary application: curry to binary via left-nesting with "@" apply symbol.
     // g(t1, t2, ..., tn) becomes (@((@(g_flat, t1_flat)), t2_flat), ..., tn_flat)
     // First, get flat CC constant for the function symbol itself (as a 0-arity node)
-    SymbolId fn_sym = data.sym;
-    NodeId fn_const;
-    {
-        // Create a 0-arity node for the function symbol if not already present
-        NodeId sym_node = nm_.mk_const(fn_sym);
-        fn_const = do_flatten(sym_node, eqs);
-    }
+    NodeId fn_const = do_flatten(nm_.mk_const(data.sym), eqs);
 
     // Now iteratively curry: start with fn_const, apply each argument
     NodeId cur = fn_const;
@@ -55,16 +50,13 @@ NodeId Flattener::do_flatten(NodeId term, std::vector<FlatEq>& eqs) {
         std::vector<NodeId> app_children = {cur, arg_flat};
         NodeId app_node = nm_.mk_app(at, std::span<const NodeId>(app_children));
 
-        NodeId app_const;
         auto it2 = node_to_cc_.find(app_node);
-        if (it2 != node_to_cc_.end()) {
-            app_const = it2->second;
-        } else {
-            app_const = fresh_const();
-            node_to_cc_[app_node] = app_const;
-            FlatEq feq{app_const, cur, arg_flat};
-            eqs.push_back(feq);
-        }
+        NodeId app_const = it2 != node_to_cc_.end() ? it2->second : [&] {
+            NodeId c = fresh_const();
+            node_to_cc_[app_node] = c;
+            eqs.push_back({c, cur, arg_flat});
+            return c;
+        }();
         cur = app_const;
     }
 

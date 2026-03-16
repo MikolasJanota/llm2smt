@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ostream>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -8,7 +9,6 @@
 #include "core/node_manager.h"
 #include "parser/smt_context.h"
 #include "preprocessor/fml.h"
-#include "theories/euf/euf_solver.h"
 
 namespace llm2smt {
 
@@ -37,15 +37,15 @@ private:
     std::string node_to_lean(NodeId n, const NodeManager& nm) const;
 
     // FmlRef → Lean proposition string (atomic Eq/Pred wrapped in `decide (...)`)
-    std::string fml_to_lean(FmlRef f, const NodeManager& nm) const;
+    std::string fml_to_lean(const FmlRef& f, const NodeManager& nm) const;
 
     // FmlRef → Lean Prop condition string (atomic Eq/Pred NOT wrapped in decide).
     // Used for ite conditions so grind sees `if p then ...` (Prop) rather than
     // `if decide (p) then ...` (Bool), avoiding Bool→Prop normalisation mismatches.
-    std::string fml_to_lean_cond(FmlRef f, const NodeManager& nm) const;
+    std::string fml_to_lean_cond(const FmlRef& f, const NodeManager& nm) const;
 
     // Build Lean type string for a function (e.g., "U → U → V" or "U → U → Prop")
-    std::string fn_type(const FnDecl& fn, bool is_pred) const;
+    static std::string fn_type(const FnDecl& fn, bool is_pred);
 };
 
 } // namespace llm2smt

@@ -3,13 +3,25 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <climits>
+#include <cstdint>
 #include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
+#include "theories/euf/flattener.h"
+
 namespace llm2smt {
+
+// Canonical 64-bit key for an unordered pair of NodeIds (min << kNodeIdBits | max).
+static constexpr int kNodeIdBits = sizeof(NodeId) * CHAR_BIT;
+static uint64_t node_pair_key(NodeId a, NodeId b)
+{
+    if (a > b) std::swap(a, b);
+    return (static_cast<uint64_t>(a) << kNodeIdBits) | static_cast<uint64_t>(b);
+}
 
 // ============================================================================
 // Helpers
@@ -139,7 +151,7 @@ std::string LeanEmitter::node_to_lean(NodeId n, const NodeManager& nm) const
 // Lean's Classical ite (`@ite`) is used instead of Bool if-then-else.
 // This avoids grind internally simplifying `if decide (p) then ...` to
 // `if p then ...` while the goal atoms still say `if decide (p) then ...`.
-std::string LeanEmitter::fml_to_lean_cond(FmlRef f, const NodeManager& nm) const
+std::string LeanEmitter::fml_to_lean_cond(const FmlRef& f, const NodeManager& nm) const
 {
     switch (f->kind) {
     case FmlKind::True:  return "True";
@@ -192,7 +204,7 @@ std::string LeanEmitter::fml_to_lean_cond(FmlRef f, const NodeManager& nm) const
     return "True";  // unreachable
 }
 
-std::string LeanEmitter::fml_to_lean(FmlRef f, const NodeManager& nm) const
+std::string LeanEmitter::fml_to_lean(const FmlRef& f, const NodeManager& nm) const
 {
     switch (f->kind) {
     case FmlKind::True:
@@ -258,7 +270,7 @@ std::string LeanEmitter::fml_to_lean(FmlRef f, const NodeManager& nm) const
     return "True";  // unreachable
 }
 
-std::string LeanEmitter::fn_type(const FnDecl& fn, bool is_pred) const
+std::string LeanEmitter::fn_type(const FnDecl& fn, bool is_pred)
 {
     std::string result;
     for (const std::string& ps : fn.param_sorts)
@@ -318,7 +330,7 @@ void LeanEmitter::emit(std::ostream& out,
         // Ite nodes are inlined as `(if cond then t else e)` in node_to_lean,
         // so they need no Lean axiom declaration.
         if (fname == "__bool_true" || fname == "__bool_false"
-            || fname.rfind("__ite_", 0) == 0)
+            || fname.starts_with("__ite_"))
             continue;
         bool is_bool = (decl.return_sort == "Bool");
         out << "axiom " << lean_ident(fname) << " : " << fn_type(decl, is_bool) << "\n";
@@ -365,8 +377,7 @@ void LeanEmitter::emit(std::ostream& out,
         if (f->kind != FmlKind::Eq) continue;
         NodeId a = f->eq_lhs, b = f->eq_rhs;
         if (a == b) continue;
-        if (a > b) std::swap(a, b);
-        uint64_t key = ((uint64_t)a << 32) | (uint64_t)b;
+        uint64_t key = node_pair_key(a, b);
         if (!eq_atom_to_hyp.count(key))
             eq_atom_to_hyp[key] = hyp_names[i];
     }
@@ -679,7 +690,6 @@ void LeanEmitter::emit(std::ostream& out,
         // found in eq_atom_to_hyp, load only those specific hypotheses.  If any
         // non-trivial positive atom is NOT directly asserted, load all hyps.
         std::vector<std::string> needed_hyps;
-        bool load_all_hyps = false;
         {
             std::unordered_set<std::string> seen;
             for (int lit : clause) {
@@ -691,26 +701,19 @@ void LeanEmitter::emit(std::ostream& out,
                 { auto pit = ite_proxy_for_.find(a); if (pit != ite_proxy_for_.end()) a = pit->second; }
                 { auto pit = ite_proxy_for_.find(b); if (pit != ite_proxy_for_.end()) b = pit->second; }
                 if (a == b) continue;  // trivial (True) — no hyp needed
-                if (a > b) std::swap(a, b);
-                uint64_t key = ((uint64_t)a << 32) | (uint64_t)b;
+                uint64_t key = node_pair_key(a, b);
                 auto hit = eq_atom_to_hyp.find(key);
                 if (hit == eq_atom_to_hyp.end()) {
-                    // Positive atom not directly asserted → derived from hyp closure.
-                    // Must load all hypotheses so grind can see the full context.
-                    load_all_hyps = true;
+                    // Positive atom not directly asserted → EUF-derived. The clause body
+                    // is self-contained; plain grind handles it without extra hypotheses.
+                    needed_hyps.clear();
                     break;
                 }
                 if (seen.insert(hit->second).second)
                     needed_hyps.push_back(hit->second);
             }
         }
-        // When load_all_hyps is true the positive literal is EUF-derived (not
-        // directly asserted in the problem).  The proof clause was already extended
-        // with all SAT-context equalities as negative disjuncts, so the context
-        // grind needs is self-contained in the clause body.  Loading all hypotheses
-        // would only enlarge grind's search space with Bool-coerced decide(...)
-        // axioms that trigger spurious case splits.  Leave needed_hyps empty so we
-        // fall through to the plain grind path below.
+        // Empty needed_hyps → plain grind (either all atoms matched or one was EUF-derived).
         if (needed_hyps.empty()) {
             out << "theorem " << tname << " : " << body << " := by grind\n";
         } else {
@@ -737,10 +740,7 @@ void LeanEmitter::emit(std::ostream& out,
             return it != ite_proxy_for_.end() ? it->second : n;
         };
         // Canonical key for an unordered pair of already-effective node IDs.
-        auto pair_key = [](NodeId a, NodeId b) -> uint64_t {
-            if (a > b) std::swap(a, b);
-            return (static_cast<uint64_t>(a) << 32) | static_cast<uint64_t>(b);
-        };
+        auto pair_key = node_pair_key;
 
         // Returns true if node n is a Bool-bridging sentinel (True/False).
         // Sentinel atoms use a different rendering in theory clauses
