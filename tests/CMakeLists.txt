@@ -385,6 +385,9 @@ add_smt2_test(chained_eq_unsat         t45_chained_eq_unsat.smt2          unsat)
 add_smt2_test(chained_eq_sat           t46_chained_eq_sat.smt2            sat)
 add_smt2_test(chained_eq_nested_unsat  t47_chained_eq_nested_unsat.smt2   unsat)
 
+# t66: Regression: deeply-nested let (300 levels) must not stack-overflow in build_fml
+add_smt2_test_preproc(nested_let_deep  t66_nested_let_deep.smt2  unsat)
+
 # ── Unit test binaries ────────────────────────────────────────────────────────
 add_executable(test_node_manager test_node_manager.cpp)
 target_link_libraries(test_node_manager PRIVATE core GTest::gtest_main)

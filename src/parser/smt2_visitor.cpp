@@ -224,13 +224,20 @@ NodeId Smt2Visitor::visit_term(
     // (! term :attr...) — strip annotation
     if (ctx->GRW_Exclamation()) return visit_term(ctx->term()[0]);
 
-    // Let expression
+    // Let expression — handle nested lets iteratively to avoid stack overflow.
     if (ctx->GRW_Let()) {
-        let_env_.emplace_back();
-        for (auto* vb : ctx->var_binding())
-            let_env_.back()[vb->symbol()->getText()] = vb->term();
-        NodeId result = visit_term(ctx->term()[0]);
-        let_env_.pop_back();
+        int frames = 0;
+        while (ctx->GRW_Let() || ctx->GRW_Exclamation()) {
+            if (ctx->GRW_Exclamation()) { ctx = ctx->term()[0]; continue; }
+            let_env_.emplace_back();
+            for (auto* vb : ctx->var_binding())
+                let_env_.back()[vb->symbol()->getText()] = vb->term();
+            ctx = ctx->term()[0];
+            ++frames;
+        }
+        NodeId result = visit_term(ctx);
+        for (int i = 0; i < frames; ++i)
+            let_env_.pop_back();
         return result;
     }
 
@@ -347,13 +354,20 @@ void Smt2Visitor::assert_formula(
     // (! term :attr...) — strip annotation
     if (ctx->GRW_Exclamation()) { assert_formula(ctx->term()[0]); return; }
 
-    // Let expression: push bindings, recurse on body, pop.
+    // Let expression: push bindings iteratively to avoid stack overflow.
     if (ctx->GRW_Let()) {
-        let_env_.emplace_back();
-        for (auto* vb : ctx->var_binding())
-            let_env_.back()[vb->symbol()->getText()] = vb->term();
-        assert_formula(ctx->term()[0]);
-        let_env_.pop_back();
+        int frames = 0;
+        while (ctx->GRW_Let() || ctx->GRW_Exclamation()) {
+            if (ctx->GRW_Exclamation()) { ctx = ctx->term()[0]; continue; }
+            let_env_.emplace_back();
+            for (auto* vb : ctx->var_binding())
+                let_env_.back()[vb->symbol()->getText()] = vb->term();
+            ctx = ctx->term()[0];
+            ++frames;
+        }
+        assert_formula(ctx);
+        for (int i = 0; i < frames; ++i)
+            let_env_.pop_back();
         return;
     }
 
@@ -494,13 +508,20 @@ void Smt2Visitor::collect_clause_lits(
     // (! term :attr...) — strip annotation
     if (ctx->GRW_Exclamation()) { collect_clause_lits(ctx->term()[0], lits); return; }
 
-    // Let expression: push, collect from body, pop.
+    // Let expression: push bindings iteratively to avoid stack overflow.
     if (ctx->GRW_Let()) {
-        let_env_.emplace_back();
-        for (auto* vb : ctx->var_binding())
-            let_env_.back()[vb->symbol()->getText()] = vb->term();
-        collect_clause_lits(ctx->term()[0], lits);
-        let_env_.pop_back();
+        int frames = 0;
+        while (ctx->GRW_Let() || ctx->GRW_Exclamation()) {
+            if (ctx->GRW_Exclamation()) { ctx = ctx->term()[0]; continue; }
+            let_env_.emplace_back();
+            for (auto* vb : ctx->var_binding())
+                let_env_.back()[vb->symbol()->getText()] = vb->term();
+            ctx = ctx->term()[0];
+            ++frames;
+        }
+        collect_clause_lits(ctx, lits);
+        for (int i = 0; i < frames; ++i)
+            let_env_.pop_back();
         return;
     }
 
@@ -523,13 +544,20 @@ int Smt2Visitor::eval_lit(
     // (! term :attr...) — strip annotation
     if (ctx->GRW_Exclamation()) return eval_lit(ctx->term()[0]);
 
-    // Let expression
+    // Let expression — handle nested lets iteratively to avoid stack overflow.
     if (ctx->GRW_Let()) {
-        let_env_.emplace_back();
-        for (auto* vb : ctx->var_binding())
-            let_env_.back()[vb->symbol()->getText()] = vb->term();
-        int result = eval_lit(ctx->term()[0]);
-        let_env_.pop_back();
+        int frames = 0;
+        while (ctx->GRW_Let() || ctx->GRW_Exclamation()) {
+            if (ctx->GRW_Exclamation()) { ctx = ctx->term()[0]; continue; }
+            let_env_.emplace_back();
+            for (auto* vb : ctx->var_binding())
+                let_env_.back()[vb->symbol()->getText()] = vb->term();
+            ctx = ctx->term()[0];
+            ++frames;
+        }
+        int result = eval_lit(ctx);
+        for (int i = 0; i < frames; ++i)
+            let_env_.pop_back();
         return result;
     }
 
@@ -797,12 +825,20 @@ NodeId Smt2Visitor::build_fml(
 
     if (ctx->GRW_Exclamation()) return build_fml(ctx->term()[0]);
 
+    // Handle nested lets iteratively to avoid stack overflow on deeply-nested let chains.
     if (ctx->GRW_Let()) {
-        let_env_.emplace_back();
-        for (auto* vb : ctx->var_binding())
-            let_env_.back()[vb->symbol()->getText()] = vb->term();
-        NodeId result = build_fml(ctx->term()[0]);
-        let_env_.pop_back();
+        int frames = 0;
+        while (ctx->GRW_Let() || ctx->GRW_Exclamation()) {
+            if (ctx->GRW_Exclamation()) { ctx = ctx->term()[0]; continue; }
+            let_env_.emplace_back();
+            for (auto* vb : ctx->var_binding())
+                let_env_.back()[vb->symbol()->getText()] = vb->term();
+            ctx = ctx->term()[0];
+            ++frames;
+        }
+        NodeId result = build_fml(ctx);
+        for (int i = 0; i < frames; ++i)
+            let_env_.pop_back();
         return result;
     }
 
