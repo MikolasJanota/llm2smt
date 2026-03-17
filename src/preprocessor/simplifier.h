@@ -61,6 +61,22 @@ private:
     std::unordered_set<NodeId>         forced_set_;  // shadow set for O(1) dedup
     int                                passes_run_ = 0;
 
+    // Memoization cache for fold(): NodeId → folded NodeId.
+    // fold() is pure (NodeManager nodes are immutable), so the result is stable.
+    std::unordered_map<NodeId, NodeId> fold_cache_;
+
+    // Cache for subst_many_and_fold(): cleared before each batch substitution.
+    std::unordered_map<NodeId, NodeId> subst_cache_;
+
+    // Cache for normalize_eq_fml(): cleared at the start of each Phase 4.
+    // Pure given fixed UF state (parent_ is read-only during Phase 4).
+    std::unordered_map<NodeId, NodeId> norm_cache_;
+
+    // Substitute all atoms in `subst` simultaneously (atom → True/False), then fold.
+    // Memoized via subst_cache_ for a single batch (caller must clear before use).
+    NodeId subst_many_and_fold(NodeId f,
+                               const std::unordered_map<NodeId, NodeId>& subst);
+
     // Equality union-find over NodeIds (for transitivity-aware normalization).
     std::unordered_map<NodeId, NodeId> parent_;
     NodeId uf_find(NodeId n);       // path-compressing find

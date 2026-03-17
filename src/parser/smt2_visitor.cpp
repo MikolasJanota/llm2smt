@@ -172,10 +172,29 @@ std::any Smt2Visitor::visitCommand(
     else if (ctx->cmd_assert()) {
         auto terms = ctx->term();
         if (terms.empty()) throw std::runtime_error("assert: missing term");
-        if (opts_.passes > 0 || opts_.nnf || !opts_.proof_file.empty() || opts_.eq_bridge)
+        if (opts_.passes > 0 || opts_.nnf || !opts_.proof_file.empty() || opts_.eq_bridge) {
+            // Optimization: top-level (distinct t1 ... tn) with n≥3 is split into
+            // n*(n-1)/2 individual NOT(EQ) assertions so the simplifier never
+            // receives a single O(n²)-deep AND tree.
+            auto* term0 = terms[0];
+            if (term0->qual_identifier() != nullptr) {
+                std::string top_op = identifier_name(term0->qual_identifier()->identifier());
+                if (top_op == "distinct" && term0->term().size() >= 3) {
+                    auto sub_terms = term0->term();
+                    std::vector<NodeId> nodes;
+                    nodes.reserve(sub_terms.size());
+                    for (auto* sub : sub_terms) nodes.push_back(visit_term(sub));
+                    NodeManager& nm = ctx_.nm;
+                    for (size_t i = 0; i < nodes.size(); ++i)
+                        for (size_t j = i + 1; j < nodes.size(); ++j)
+                            pending_fmls_.push_back(nm.mk_not(nm.mk_eq(nodes[i], nodes[j])));
+                    return nullptr;
+                }
+            }
             pending_fmls_.push_back(build_fml(terms[0]));
-        else
+        } else {
             assert_formula(terms[0]);
+        }
     }
     else if (ctx->cmd_checkSat()) {
         flush_pending_fmls();
@@ -1173,13 +1192,13 @@ void Smt2Visitor::flush_pending_fmls()
         // needed — the CC carries the merge permanently at level 0, and the
         // SAT solver never has to decide or undo it).  All other forced atoms
         // are still asserted as SAT unit clauses.
-        for (auto& [atom, positive] : simp.forced_atoms()) {
+        for (const auto& [atom, positive] : simp.forced_atoms()) {
             if (nm.is_eq(atom) && positive) {
                 NodeId c0 = nm.get(atom).children[0];
                 NodeId c1 = nm.get(atom).children[1];
                 ctx_.euf.register_permanent_equality(c0, c1);
             } else {
-                int lit;
+                int lit = 0;
                 if (nm.is_eq(atom)) {
                     NodeId c0 = nm.get(atom).children[0];
                     NodeId c1 = nm.get(atom).children[1];
@@ -1243,7 +1262,7 @@ void Smt2Visitor::encode_conditioned(NodeId f, const std::vector<int>& conds)
 {
     NodeManager& nm = ctx_.nm;
 
-    auto add_cond_clause = [&](std::vector<int> extra) {
+    auto add_cond_clause = [&](const std::vector<int>& extra) {
         std::vector<int> cl;
         cl.reserve(conds.size() + extra.size());
         for (int c : conds) cl.push_back(-c);
@@ -1337,14 +1356,14 @@ void Smt2Visitor::encode_or_conditioned(const std::vector<NodeId>& children,
     int s = ctx_.euf.new_var();
 
     // If s=false (i.e. -s in clause), left half must hold.
-    std::vector<int> conds_left = conds;
-    conds_left.push_back(s);       // clause will negate: add -s
-    encode_or_conditioned(left, conds_left);
-
     // If s=true (i.e. +s in clause), right half must hold.
+    // Reuse the by-value conds for one side; copy for the other.
     std::vector<int> conds_right = conds;
-    conds_right.push_back(-s);     // clause will negate: add +s
-    encode_or_conditioned(right, conds_right);
+    conds_right.push_back(-s);
+
+    conds.push_back(s);
+    encode_or_conditioned(left,  std::move(conds));
+    encode_or_conditioned(right, std::move(conds_right));
 }
 
 // ============================================================================

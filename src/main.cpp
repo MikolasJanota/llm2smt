@@ -1,4 +1,5 @@
 #include <csignal>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -22,11 +23,23 @@
 #include "proof/proof_minimizer.h"
 #include "sat/cadical_solver.h"
 
+// Global state used by the atexit handler so stats are printed even when
+// the process is killed (SIGTERM / timeout).
+static llm2smt::Stats* g_stats      = nullptr;
+static bool             g_print_stats = false;
+
+static void print_stats_atexit() {
+    if (g_print_stats && g_stats)
+        g_stats->print(std::cerr);
+}
+
 static void sigterm_handler(int) {
     // write() is async-signal-safe; std::cout is not (buffered, not safe in handlers).
-    // _Exit skips destructors and stdio flushing, but write() bypasses the buffer.
     write(STDOUT_FILENO, "unknown\n", 8);
-    _Exit(0);
+    // exit() triggers atexit handlers (including print_stats_atexit).
+    // Using exit() instead of _Exit() is technically not async-signal-safe, but
+    // this is the standard approach for solver timeouts and acceptable in practice.
+    std::exit(0);
 }
 
 int main(int argc, char** argv) {
@@ -74,8 +87,7 @@ int main(int argc, char** argv) {
                    "Run EUF propagation scan every N calls (default 1 = every call; higher = less frequent)")
        ->check(CLI::PositiveNumber);
 
-    bool print_stats = false;
-    app.add_flag("--stats", print_stats, "Print solver statistics to stderr after solving");
+    app.add_flag("--stats", g_print_stats, "Print solver statistics to stderr after solving");
 
     CLI11_PARSE(app, argc, argv);
 
@@ -98,6 +110,8 @@ int main(int argc, char** argv) {
         }
 
         Stats          stats;
+        g_stats = &stats;
+        std::atexit(print_stats_atexit);
         NodeManager    nm;
         // euf must be declared before sat so that sat is destroyed first.
         // CaDiCaL's destructor calls disconnect_external_propagator() which
@@ -141,7 +155,10 @@ int main(int argc, char** argv) {
             emitter.emit(proof_out, ctx, visitor.proof_fmls(), conflicts);
         }
 
-        if (print_stats) stats.print(std::cerr);
+        if (g_print_stats) {
+            stats.print(std::cerr);
+            g_stats = nullptr;  // prevent double-print from atexit handler
+        }
 
         return 0;
 
