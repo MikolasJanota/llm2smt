@@ -100,7 +100,7 @@ static void bridge_or(NodeId f, size_t top_idx, NodeManager& nm,
     for (size_t i = 1; i < branches.size(); ++i) {
         std::unordered_set<NodeId> tmp;
         for (NodeId n : shared)
-            if (uf[i].nodes.count(n)) tmp.insert(n);
+            if (uf[i].nodes.contains(n)) tmp.insert(n);
         shared = std::move(tmp);
         if (shared.empty()) return;  // fast exit
     }

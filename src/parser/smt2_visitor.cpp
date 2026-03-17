@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <iostream>
+#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -878,14 +879,14 @@ NodeId Smt2Visitor::build_fml(
         // Flatten nested ANDs iteratively to avoid stack overflow on deeply-nested formulas.
         using TC = smt2parser::SMTLIBv2Parser::TermContext;
         std::vector<TC*> work, flat;
-        for (auto it = terms.rbegin(); it != terms.rend(); ++it) work.push_back(*it);
+        for (auto* t : terms | std::views::reverse) work.push_back(t);
         while (!work.empty()) {
             TC* t = work.back(); work.pop_back();
             while (t->GRW_Exclamation()) t = t->term()[0];
             if (!t->GRW_Let() && t->qual_identifier() != nullptr &&
                 identifier_name(t->qual_identifier()->identifier()) == "and") {
                 auto sub = t->term();
-                for (auto it = sub.rbegin(); it != sub.rend(); ++it) work.push_back(*it);
+                for (auto* s : sub | std::views::reverse) work.push_back(s);
             } else {
                 flat.push_back(t);
             }
@@ -902,14 +903,14 @@ NodeId Smt2Visitor::build_fml(
         // Flatten nested ORs iteratively to avoid stack overflow on deeply-nested formulas.
         using TC = smt2parser::SMTLIBv2Parser::TermContext;
         std::vector<TC*> work, flat;
-        for (auto it = terms.rbegin(); it != terms.rend(); ++it) work.push_back(*it);
+        for (auto* t : terms | std::views::reverse) work.push_back(t);
         while (!work.empty()) {
             TC* t = work.back(); work.pop_back();
             while (t->GRW_Exclamation()) t = t->term()[0];
             if (!t->GRW_Let() && t->qual_identifier() != nullptr &&
                 identifier_name(t->qual_identifier()->identifier()) == "or") {
                 auto sub = t->term();
-                for (auto it = sub.rbegin(); it != sub.rend(); ++it) work.push_back(*it);
+                for (auto* s : sub | std::views::reverse) work.push_back(s);
             } else {
                 flat.push_back(t);
             }
@@ -958,7 +959,7 @@ NodeId Smt2Visitor::build_fml(
     // (= t1 t2 ... tn) n >= 3 — chained: and of consecutive equality pairs
     if (op == "=" && ctx->term().size() >= 3) {
         auto terms = ctx->term();
-        NodeId result;
+        NodeId result = 0;
         if (is_bool_sorted(terms[0])) {
             result = nm.mk_iff(build_fml(terms[0]), build_fml(terms[1]));
             for (size_t i = 1; i + 1 < terms.size(); ++i)
@@ -1432,9 +1433,10 @@ void Smt2Visitor::encode_or_conditioned(const std::vector<NodeId>& children,
     }
 
     // Binary split: introduce a fresh selector variable s.
-    size_t mid = children.size() / 2;
-    std::vector<NodeId> left(children.begin(), children.begin() + mid);
-    std::vector<NodeId> right(children.begin() + mid, children.end());
+    size_t mid    = children.size() / 2;
+    auto   mid_it = children.begin() + static_cast<ptrdiff_t>(mid);
+    std::vector<NodeId> left(children.begin(), mid_it);
+    std::vector<NodeId> right(mid_it, children.end());
 
     int s = ctx_.euf.new_var();
 

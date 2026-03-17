@@ -1,6 +1,8 @@
 #include "preprocessor/simplifier.h"
 
+#include <array>
 #include <cassert>
+#include <ranges>
 #include <span>
 
 namespace llm2smt {
@@ -190,7 +192,7 @@ NodeId Simplifier::fold(NodeId root)
         NodeId n     = stk.back().n;
         bool   ready = stk.back().ready;
 
-        if (fold_cache_.count(n)) { stk.pop_back(); continue; }
+        if (fold_cache_.contains(n)) { stk.pop_back(); continue; }
 
         if (!ready) {
             // Mark ready before pushing children (survives potential realloc).
@@ -198,12 +200,12 @@ NodeId Simplifier::fold(NodeId root)
             // Leaf nodes need no child traversal.
             if (!nm_.is_true_node(n) && !nm_.is_false_node(n) &&
                 !nm_.is_eq(n)        && !is_atom(n)) {
-                const NodeData& d   = nm_.get(n);
-                const uint32_t  nch = static_cast<uint32_t>(d.children.size());
-                NodeId          ch[3];
+                const NodeData&          d   = nm_.get(n);
+                const uint32_t           nch = static_cast<uint32_t>(d.children.size());
+                std::array<NodeId, 3>    ch{};
                 for (uint32_t i = 0; i < nch; ++i) ch[i] = d.children[i];
                 for (uint32_t i = 0; i < nch; ++i)
-                    if (!fold_cache_.count(ch[i]))
+                    if (!fold_cache_.contains(ch[i]))
                         stk.push_back({ch[i], false});
             }
         } else {
@@ -237,21 +239,21 @@ NodeId Simplifier::subst_many_and_fold(NodeId root,
             subst_cache_[f] = (it != subst.end()) ? it->second : f;
             return;
         }
-        const NodeData& d   = nm_.get(f);
-        SymbolId         sym = d.sym;
-        NodeId           old_ch[3];
-        const uint32_t   nch = static_cast<uint32_t>(d.children.size());
+        const NodeData&       d   = nm_.get(f);
+        SymbolId               sym = d.sym;
+        std::array<NodeId, 3>  old_ch{};
+        const uint32_t         nch = static_cast<uint32_t>(d.children.size());
         assert(nch <= 3 && "Boolean connectives have at most 3 children");
         for (uint32_t i = 0; i < nch; ++i) old_ch[i] = d.children[i];
 
-        NodeId new_ch[3];
-        bool   any_change = false;
+        std::array<NodeId, 3> new_ch{};
+        bool                  any_change = false;
         for (uint32_t i = 0; i < nch; ++i) {
             new_ch[i] = subst_cache_.at(old_ch[i]);
             if (new_ch[i] != old_ch[i]) any_change = true;
         }
         if (!any_change) { subst_cache_[f] = f; return; }
-        subst_cache_[f] = fold(nm_.mk_app(sym, std::span<const NodeId>(new_ch, nch)));
+        subst_cache_[f] = fold(nm_.mk_app(sym, std::span<const NodeId>(new_ch.data(), nch)));
     };
 
     struct Frame { NodeId n; bool ready; };
@@ -262,18 +264,18 @@ NodeId Simplifier::subst_many_and_fold(NodeId root,
         NodeId n     = stk.back().n;
         bool   ready = stk.back().ready;
 
-        if (subst_cache_.count(n)) { stk.pop_back(); continue; }
+        if (subst_cache_.contains(n)) { stk.pop_back(); continue; }
 
         if (!ready) {
             stk.back().ready = true;
             if (!nm_.is_true_node(n) && !nm_.is_false_node(n) &&
                 !nm_.is_eq(n)        && !is_atom(n)) {
-                const NodeData& d   = nm_.get(n);
-                const uint32_t  nch = static_cast<uint32_t>(d.children.size());
-                NodeId          ch[3];
+                const NodeData&       d   = nm_.get(n);
+                const uint32_t        nch = static_cast<uint32_t>(d.children.size());
+                std::array<NodeId, 3> ch{};
                 for (uint32_t i = 0; i < nch; ++i) ch[i] = d.children[i];
                 for (uint32_t i = 0; i < nch; ++i)
-                    if (!subst_cache_.count(ch[i]))
+                    if (!subst_cache_.contains(ch[i]))
                         stk.push_back({ch[i], false});
             }
         } else {
@@ -302,16 +304,16 @@ NodeId Simplifier::subst_and_fold(NodeId f, NodeId atom, bool forced_positive)
     // Compound node: recurse into children.
     // Snapshot sym + children into stack locals before any nm_ call that might
     // reallocate the nodes_ vector.  All Boolean connectives have ≤3 children.
-    const NodeData& d  = nm_.get(f);
-    SymbolId         sym = d.sym;
-    NodeId           old_ch[3];
-    const uint32_t   nch = static_cast<uint32_t>(d.children.size());
+    const NodeData&       d   = nm_.get(f);
+    SymbolId               sym = d.sym;
+    std::array<NodeId, 3>  old_ch{};
+    const uint32_t         nch = static_cast<uint32_t>(d.children.size());
     assert(nch <= 3 && "Boolean connectives have at most 3 children");
     for (uint32_t i = 0; i < nch; ++i) old_ch[i] = d.children[i];
     // d is no longer safe to use after this point (nm_ calls may reallocate).
 
-    NodeId new_ch[3];
-    bool any_change = false;
+    std::array<NodeId, 3> new_ch{};
+    bool                  any_change = false;
     for (uint32_t i = 0; i < nch; ++i) {
         new_ch[i] = subst_and_fold(old_ch[i], atom, forced_positive);
         if (new_ch[i] != old_ch[i]) any_change = true;
@@ -319,7 +321,7 @@ NodeId Simplifier::subst_and_fold(NodeId f, NodeId atom, bool forced_positive)
 
     if (!any_change) return f;
 
-    return fold(nm_.mk_app(sym, std::span<const NodeId>(new_ch, nch)));
+    return fold(nm_.mk_app(sym, std::span<const NodeId>(new_ch.data(), nch)));
 }
 
 // ============================================================================
@@ -370,21 +372,21 @@ NodeId Simplifier::normalize_eq_fml(NodeId root)
         if (nm_.is_true_node(f) || nm_.is_false_node(f) || is_atom(f)) {
             norm_cache_[f] = f; return;
         }
-        const NodeData& d   = nm_.get(f);
-        SymbolId         sym = d.sym;
-        NodeId           old_ch[3];
-        const uint32_t   nch = static_cast<uint32_t>(d.children.size());
+        const NodeData&       d   = nm_.get(f);
+        SymbolId               sym = d.sym;
+        std::array<NodeId, 3>  old_ch{};
+        const uint32_t         nch = static_cast<uint32_t>(d.children.size());
         assert(nch <= 3 && "Boolean connectives have at most 3 children");
         for (uint32_t i = 0; i < nch; ++i) old_ch[i] = d.children[i];
 
-        NodeId new_ch[3];
-        bool   any_change = false;
+        std::array<NodeId, 3> new_ch{};
+        bool                  any_change = false;
         for (uint32_t i = 0; i < nch; ++i) {
             new_ch[i] = norm_cache_.at(old_ch[i]);
             if (new_ch[i] != old_ch[i]) any_change = true;
         }
         if (!any_change) { norm_cache_[f] = f; return; }
-        norm_cache_[f] = fold(nm_.mk_app(sym, std::span<const NodeId>(new_ch, nch)));
+        norm_cache_[f] = fold(nm_.mk_app(sym, std::span<const NodeId>(new_ch.data(), nch)));
     };
 
     struct Frame { NodeId n; bool ready; };
@@ -395,19 +397,19 @@ NodeId Simplifier::normalize_eq_fml(NodeId root)
         NodeId n     = stk.back().n;
         bool   ready = stk.back().ready;
 
-        if (norm_cache_.count(n)) { stk.pop_back(); continue; }
+        if (norm_cache_.contains(n)) { stk.pop_back(); continue; }
 
         if (!ready) {
             stk.back().ready = true;
             // eq nodes are formula-level leaves (don't recurse into U-sorted children).
             if (!nm_.is_true_node(n) && !nm_.is_false_node(n) &&
                 !nm_.is_eq(n)        && !is_atom(n)) {
-                const NodeData& d   = nm_.get(n);
-                const uint32_t  nch = static_cast<uint32_t>(d.children.size());
-                NodeId          ch[3];
+                const NodeData&       d   = nm_.get(n);
+                const uint32_t        nch = static_cast<uint32_t>(d.children.size());
+                std::array<NodeId, 3> ch{};
                 for (uint32_t i = 0; i < nch; ++i) ch[i] = d.children[i];
                 for (uint32_t i = 0; i < nch; ++i)
-                    if (!norm_cache_.count(ch[i]))
+                    if (!norm_cache_.contains(ch[i]))
                         stk.push_back({ch[i], false});
             }
         } else {

@@ -30,7 +30,7 @@ public:
     explicit Simplifier(NodeManager& nm);
 
     // Constant-fold (and optionally flatten) a single formula.
-    NodeId fold(NodeId f);
+    NodeId fold(NodeId root);
 
     // Substitute atom (or its negation) → True/False in f, then fold.
     // forced_positive=true means the atom is known to be true.
@@ -74,7 +74,7 @@ private:
 
     // Substitute all atoms in `subst` simultaneously (atom → True/False), then fold.
     // Memoized via subst_cache_ for a single batch (caller must clear before use).
-    NodeId subst_many_and_fold(NodeId f,
+    NodeId subst_many_and_fold(NodeId root,
                                const std::unordered_map<NodeId, NodeId>& subst);
 
     // Equality union-find over NodeIds (for transitivity-aware normalization).
@@ -85,7 +85,7 @@ private:
     void   uf_union(NodeId a, NodeId b);
 
     // Rewrite every mk_eq(x,y) in f to mk_eq(find(x), find(y)), folding as needed.
-    NodeId normalize_eq_fml(NodeId f);
+    NodeId normalize_eq_fml(NodeId root);
 
     // True iff f is a Bool-sorted predicate atom (not a connective).
     bool is_atom(NodeId f) const { return nm_.is_atom_node(f); }
