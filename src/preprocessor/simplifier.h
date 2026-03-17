@@ -78,6 +78,8 @@ private:
                                const std::unordered_map<NodeId, NodeId>& subst);
 
     // Equality union-find over NodeIds (for transitivity-aware normalization).
+    // Accumulates across all passes: equalities forced in pass k remain in
+    // parent_ for passes k+1, k+2, … (transitive equalities are permanent).
     std::unordered_map<NodeId, NodeId> parent_;
     NodeId uf_find(NodeId n);       // path-compressing find
     void   uf_union(NodeId a, NodeId b);

@@ -173,8 +173,10 @@ std::any Smt2Visitor::visitCommand(
         auto terms = ctx->term();
         if (terms.empty()) throw std::runtime_error("assert: missing term");
         if (opts_.passes > 0 || opts_.nnf || !opts_.proof_file.empty() || opts_.eq_bridge) {
-            // Optimization: top-level (distinct t1 ... tn) with n≥3 is split into
-            // n*(n-1)/2 individual NOT(EQ) assertions so the simplifier never
+            // When preprocessing is active, assertions accumulate in pending_fmls_
+            // for later simplification rather than being encoded immediately.
+            // As an optimization, top-level (distinct t1 ... tn) with n≥3 is split
+            // into n*(n-1)/2 individual NOT(EQ) assertions so the simplifier never
             // receives a single O(n²)-deep AND tree.
             auto* term0 = terms[0];
             if (term0->qual_identifier() != nullptr) {
