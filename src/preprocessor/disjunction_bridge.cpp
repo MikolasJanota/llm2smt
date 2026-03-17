@@ -16,10 +16,20 @@ struct UF {
 
     NodeId find(NodeId x)
     {
-        auto it = parent.find(x);
-        if (it == parent.end()) return x;
-        it->second = find(it->second);  // path compression
-        return it->second;
+        // Iterative two-pass path compression (avoids stack overflow on long chains).
+        NodeId root = x;
+        while (true) {
+            auto it = parent.find(root);
+            if (it == parent.end()) break;
+            root = it->second;
+        }
+        while (x != root) {
+            auto it = parent.find(x);
+            NodeId next = it->second;
+            it->second = root;
+            x = next;
+        }
+        return root;
     }
 
     void unite(NodeId a, NodeId b)
@@ -37,17 +47,18 @@ struct UF {
 
 static void collect_eqs(NodeId f, UF& uf, const NodeManager& nm)
 {
-    if (nm.is_eq(f)) {
-        NodeId c0 = nm.get(f).children[0];
-        NodeId c1 = nm.get(f).children[1];
-        uf.unite(c0, c1);
-    } else if (nm.is_and(f)) {
-        NodeId c0 = nm.get(f).children[0];
-        NodeId c1 = nm.get(f).children[1];
-        collect_eqs(c0, uf, nm);
-        collect_eqs(c1, uf, nm);
+    std::vector<NodeId> work;
+    work.push_back(f);
+    while (!work.empty()) {
+        NodeId n = work.back(); work.pop_back();
+        if (nm.is_eq(n)) {
+            uf.unite(nm.get(n).children[0], nm.get(n).children[1]);
+        } else if (nm.is_and(n)) {
+            work.push_back(nm.get(n).children[0]);
+            work.push_back(nm.get(n).children[1]);
+        }
+        // Not / Or / Pred / Ite / … — stop (conservative)
     }
-    // Not / Or / Pred / Ite / … — stop (conservative)
 }
 
 // ── Collect top-level disjuncts from a binary Or tree ─────────────────────
@@ -55,13 +66,16 @@ static void collect_eqs(NodeId f, UF& uf, const NodeManager& nm)
 static void collect_or_branches(NodeId f, const NodeManager& nm,
                                   std::vector<NodeId>& branches)
 {
-    if (nm.is_or(f)) {
-        NodeId c0 = nm.get(f).children[0];
-        NodeId c1 = nm.get(f).children[1];
-        collect_or_branches(c0, nm, branches);
-        collect_or_branches(c1, nm, branches);
-    } else {
-        branches.push_back(f);
+    std::vector<NodeId> work;
+    work.push_back(f);
+    while (!work.empty()) {
+        NodeId n = work.back(); work.pop_back();
+        if (nm.is_or(n)) {
+            work.push_back(nm.get(n).children[0]);
+            work.push_back(nm.get(n).children[1]);
+        } else {
+            branches.push_back(n);
+        }
     }
 }
 
@@ -116,13 +130,16 @@ static void extract_from(NodeId f, size_t top_idx, NodeManager& nm,
                            std::vector<NodeId>& out,
                            std::vector<BridgeEquality>* eq_out)
 {
-    if (nm.is_or(f)) {
-        bridge_or(f, top_idx, nm, out, eq_out);
-    } else if (nm.is_and(f)) {
-        NodeId c0 = nm.get(f).children[0];
-        NodeId c1 = nm.get(f).children[1];
-        extract_from(c0, top_idx, nm, out, eq_out);
-        extract_from(c1, top_idx, nm, out, eq_out);
+    std::vector<NodeId> work;
+    work.push_back(f);
+    while (!work.empty()) {
+        NodeId n = work.back(); work.pop_back();
+        if (nm.is_or(n)) {
+            bridge_or(n, top_idx, nm, out, eq_out);
+        } else if (nm.is_and(n)) {
+            work.push_back(nm.get(n).children[0]);
+            work.push_back(nm.get(n).children[1]);
+        }
     }
 }
 

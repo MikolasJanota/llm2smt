@@ -825,7 +825,8 @@ NodeId Smt2Visitor::build_fml(
 {
     NodeManager& nm = ctx_.nm;
 
-    if (ctx->GRW_Exclamation()) return build_fml(ctx->term()[0]);
+    // Unwrap annotation wrappers iteratively.
+    while (ctx->GRW_Exclamation()) ctx = ctx->term()[0];
 
     // Handle nested lets iteratively to avoid stack overflow on deeply-nested let chains.
     if (ctx->GRW_Let()) {
@@ -854,24 +855,68 @@ NodeId Smt2Visitor::build_fml(
     if (op == "false") return nm.mk_false();
 
     // Connectives
-    if (op == "not" && ctx->term().size() == 1)
-        return nm.mk_not(build_fml(ctx->term()[0]));
+    if (op == "not" && ctx->term().size() == 1) {
+        // Unroll NOT chains iteratively to avoid stack overflow on deep nesting.
+        int neg_count = 1;
+        auto* inner = ctx->term()[0];
+        while (inner->GRW_Exclamation()) inner = inner->term()[0];
+        while (!inner->GRW_Let() && inner->qual_identifier() != nullptr &&
+               identifier_name(inner->qual_identifier()->identifier()) == "not" &&
+               inner->term().size() == 1) {
+            ++neg_count;
+            inner = inner->term()[0];
+            while (inner->GRW_Exclamation()) inner = inner->term()[0];
+        }
+        NodeId result = build_fml(inner);
+        if (neg_count % 2 == 1) result = nm.mk_not(result);
+        return result;
+    }
 
     if (op == "and") {
         auto terms = ctx->term();
         if (terms.empty()) return nm.mk_true();
-        NodeId result = build_fml(terms[0]);
-        for (size_t i = 1; i < terms.size(); ++i)
-            result = nm.mk_and(result, build_fml(terms[i]));
+        // Flatten nested ANDs iteratively to avoid stack overflow on deeply-nested formulas.
+        using TC = smt2parser::SMTLIBv2Parser::TermContext;
+        std::vector<TC*> work, flat;
+        for (auto it = terms.rbegin(); it != terms.rend(); ++it) work.push_back(*it);
+        while (!work.empty()) {
+            TC* t = work.back(); work.pop_back();
+            while (t->GRW_Exclamation()) t = t->term()[0];
+            if (!t->GRW_Let() && t->qual_identifier() != nullptr &&
+                identifier_name(t->qual_identifier()->identifier()) == "and") {
+                auto sub = t->term();
+                for (auto it = sub.rbegin(); it != sub.rend(); ++it) work.push_back(*it);
+            } else {
+                flat.push_back(t);
+            }
+        }
+        NodeId result = build_fml(flat[0]);
+        for (size_t i = 1; i < flat.size(); ++i)
+            result = nm.mk_and(result, build_fml(flat[i]));
         return result;
     }
 
     if (op == "or") {
         auto terms = ctx->term();
         if (terms.empty()) return nm.mk_false();
-        NodeId result = build_fml(terms[0]);
-        for (size_t i = 1; i < terms.size(); ++i)
-            result = nm.mk_or(result, build_fml(terms[i]));
+        // Flatten nested ORs iteratively to avoid stack overflow on deeply-nested formulas.
+        using TC = smt2parser::SMTLIBv2Parser::TermContext;
+        std::vector<TC*> work, flat;
+        for (auto it = terms.rbegin(); it != terms.rend(); ++it) work.push_back(*it);
+        while (!work.empty()) {
+            TC* t = work.back(); work.pop_back();
+            while (t->GRW_Exclamation()) t = t->term()[0];
+            if (!t->GRW_Let() && t->qual_identifier() != nullptr &&
+                identifier_name(t->qual_identifier()->identifier()) == "or") {
+                auto sub = t->term();
+                for (auto it = sub.rbegin(); it != sub.rend(); ++it) work.push_back(*it);
+            } else {
+                flat.push_back(t);
+            }
+        }
+        NodeId result = build_fml(flat[0]);
+        for (size_t i = 1; i < flat.size(); ++i)
+            result = nm.mk_or(result, build_fml(flat[i]));
         return result;
     }
 
