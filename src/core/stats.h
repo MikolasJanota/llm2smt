@@ -17,6 +17,7 @@ struct Stats {
     uint64_t preproc_forced_atoms    = 0; // atoms extracted as unit clauses
     uint64_t preproc_passes_run      = 0; // simplifier passes that changed something
     uint64_t preproc_simp_ms         = 0; // wall-clock ms for simplifier.run()
+    uint64_t preproc_flush_ms        = 0; // wall-clock ms for flush_pending_fmls() (NNF+simp+encode)
 
     // ── EUF theory ─────────────────────────────────────────────────────────
     uint64_t euf_assignments         = 0; // notify_assignment callbacks
@@ -26,18 +27,24 @@ struct Stats {
     uint64_t euf_conflicts           = 0; // theory lemmas (conflict clauses) generated
     uint64_t euf_conflict_lits_total = 0; // total literals across all conflict clauses
 
+    // ── Overall timing ──────────────────────────────────────────────────────
+    uint64_t total_ms                = 0; // wall-clock ms for the full solve (set in main)
+
     void print(std::ostream& out) const {
         auto row = [&](const std::string& name, uint64_t val) {
             out << "  " << std::left << std::setw(30) << name << val << "\n";
         };
         out << "[stats]\n";
+        out << "  -- timing (ms) --\n";
+        row("total_ms",                 total_ms);
+        row("preproc.flush_ms",         preproc_flush_ms);
+        row("preproc.simp_ms",          preproc_simp_ms);
         out << "  -- preprocessor --\n";
         row("preproc.fmls_in",          preproc_fmls_in);
         row("preproc.fmls_true_out",    preproc_fmls_true_out);
         row("preproc.fmls_false_out",   preproc_fmls_false_out);
         row("preproc.forced_atoms",     preproc_forced_atoms);
         row("preproc.passes_run",       preproc_passes_run);
-        row("preproc.simp_ms",          preproc_simp_ms);
         out << "  -- euf theory --\n";
         row("euf.assignments",          euf_assignments);
         row("euf.eq_assignments",       euf_eq_assignments);

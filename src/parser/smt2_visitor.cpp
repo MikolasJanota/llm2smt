@@ -1223,6 +1223,8 @@ void Smt2Visitor::flush_pending_fmls()
 {
     if (pending_fmls_.empty()) return;
 
+    auto flush_t0 = std::chrono::steady_clock::now();
+
     NodeManager& nm = ctx_.nm;
 
     // Step A: NNF.
@@ -1331,6 +1333,10 @@ void Smt2Visitor::flush_pending_fmls()
     }
     pending_fmls_.clear();
     fml_lit_cache_.clear();
+
+    auto flush_t1 = std::chrono::steady_clock::now();
+    stats_.preproc_flush_ms += static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(flush_t1 - flush_t0).count());
 }
 
 // ============================================================================

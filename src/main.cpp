@@ -1,3 +1,4 @@
+#include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <fstream>
@@ -25,12 +26,17 @@
 
 // Global state used by the atexit handler so stats are printed even when
 // the process is killed (SIGTERM / timeout).
-static llm2smt::Stats* g_stats      = nullptr;
-static bool             g_print_stats = false;
+static llm2smt::Stats*                                    g_stats       = nullptr;
+static bool                                               g_print_stats = false;
+static std::chrono::steady_clock::time_point              g_start_time;
 
 static void print_stats_atexit() {
-    if (g_print_stats && g_stats)
+    if (g_print_stats && g_stats) {
+        auto t1 = std::chrono::steady_clock::now();
+        g_stats->total_ms = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(t1 - g_start_time).count());
         g_stats->print(std::cerr);
+    }
 }
 
 static void sigterm_handler(int) {
@@ -43,6 +49,7 @@ static void sigterm_handler(int) {
 }
 
 int main(int argc, char** argv) {
+    g_start_time = std::chrono::steady_clock::now();
     std::signal(SIGTERM, sigterm_handler);
     using namespace llm2smt;
     using namespace smt2parser;
@@ -156,6 +163,9 @@ int main(int argc, char** argv) {
         }
 
         if (g_print_stats) {
+            auto t1 = std::chrono::steady_clock::now();
+            stats.total_ms = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(t1 - g_start_time).count());
             stats.print(std::cerr);
             g_stats = nullptr;  // prevent double-print from atexit handler
         }
