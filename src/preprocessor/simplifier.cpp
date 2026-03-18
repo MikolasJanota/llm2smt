@@ -2,8 +2,8 @@
 
 #include <array>
 #include <cassert>
-#include <ranges>
 #include <span>
+#include <unordered_map>
 
 namespace llm2smt {
 
@@ -42,78 +42,26 @@ NodeId Simplifier::fold(NodeId root)
         }
 
         if (nm_.is_and(f)) {
-            NodeId c0 = nm_.get(f).children[0];
-            NodeId c1 = nm_.get(f).children[1];
-
-            std::vector<NodeId> leaves;
-            bool found_false = false;
-            std::vector<NodeId> work;
-            work.push_back(c1);
-            work.push_back(c0);
-
-            while (!work.empty() && !found_false) {
-                NodeId n  = work.back(); work.pop_back();
-                NodeId fn = fold(n);
-                if (nm_.is_false_node(fn)) { found_false = true; break; }
-                if (nm_.is_true_node(fn))  continue;
-                if (flatten_ && nm_.is_and(fn)) {
-                    NodeId fa = nm_.get(fn).children[0];
-                    NodeId fb = nm_.get(fn).children[1];
-                    work.push_back(fb);
-                    work.push_back(fa);
-                } else {
-                    leaves.push_back(fn);
-                }
-            }
-
-            if (found_false)         { fold_cache_[f] = nm_.mk_false(); return; }
-            if (leaves.empty())      { fold_cache_[f] = nm_.mk_true();  return; }
-            if (leaves.size() == 1)  { fold_cache_[f] = leaves[0];     return; }
-            if (leaves.size() == 2 && leaves[0] == c0 && leaves[1] == c1) {
-                fold_cache_[f] = f; return;
-            }
-            NodeId result = nm_.mk_and(leaves[0], leaves[1]);
-            for (size_t i = 2; i < leaves.size(); ++i)
-                result = nm_.mk_and(result, leaves[i]);
-            fold_cache_[f] = result;
+            NodeId c0  = nm_.get(f).children[0];
+            NodeId c1  = nm_.get(f).children[1];
+            NodeId fc0 = fold(c0);
+            NodeId fc1 = fold(c1);
+            if (nm_.is_false_node(fc0) || nm_.is_false_node(fc1)) { fold_cache_[f] = nm_.mk_false(); return; }
+            if (nm_.is_true_node(fc0))  { fold_cache_[f] = fc1; return; }
+            if (nm_.is_true_node(fc1))  { fold_cache_[f] = fc0; return; }
+            fold_cache_[f] = (fc0 == c0 && fc1 == c1) ? f : nm_.mk_and(fc0, fc1);
             return;
         }
 
         if (nm_.is_or(f)) {
-            NodeId c0 = nm_.get(f).children[0];
-            NodeId c1 = nm_.get(f).children[1];
-
-            std::vector<NodeId> leaves;
-            bool found_true = false;
-            std::vector<NodeId> work;
-            work.push_back(c1);
-            work.push_back(c0);
-
-            while (!work.empty() && !found_true) {
-                NodeId n  = work.back(); work.pop_back();
-                NodeId fn = fold(n);
-                if (nm_.is_true_node(fn))  { found_true = true; break; }
-                if (nm_.is_false_node(fn)) continue;
-                if (flatten_ && nm_.is_or(fn)) {
-                    NodeId fa = nm_.get(fn).children[0];
-                    NodeId fb = nm_.get(fn).children[1];
-                    work.push_back(fb);
-                    work.push_back(fa);
-                } else {
-                    leaves.push_back(fn);
-                }
-            }
-
-            if (found_true)          { fold_cache_[f] = nm_.mk_true();  return; }
-            if (leaves.empty())      { fold_cache_[f] = nm_.mk_false(); return; }
-            if (leaves.size() == 1)  { fold_cache_[f] = leaves[0];     return; }
-            if (leaves.size() == 2 && leaves[0] == c0 && leaves[1] == c1) {
-                fold_cache_[f] = f; return;
-            }
-            NodeId result = nm_.mk_or(leaves[0], leaves[1]);
-            for (size_t i = 2; i < leaves.size(); ++i)
-                result = nm_.mk_or(result, leaves[i]);
-            fold_cache_[f] = result;
+            NodeId c0  = nm_.get(f).children[0];
+            NodeId c1  = nm_.get(f).children[1];
+            NodeId fc0 = fold(c0);
+            NodeId fc1 = fold(c1);
+            if (nm_.is_true_node(fc0) || nm_.is_true_node(fc1))  { fold_cache_[f] = nm_.mk_true();  return; }
+            if (nm_.is_false_node(fc0)) { fold_cache_[f] = fc1; return; }
+            if (nm_.is_false_node(fc1)) { fold_cache_[f] = fc0; return; }
+            fold_cache_[f] = (fc0 == c0 && fc1 == c1) ? f : nm_.mk_or(fc0, fc1);
             return;
         }
 
@@ -293,35 +241,12 @@ NodeId Simplifier::subst_many_and_fold(NodeId root,
 
 NodeId Simplifier::subst_and_fold(NodeId f, NodeId atom, bool forced_positive)
 {
-    // If f is exactly the atom: replace with its forced value.
-    if (f == atom)
-        return forced_positive ? nm_.mk_true() : nm_.mk_false();
-
-    // Leaf nodes that are not the target atom are left unchanged.
-    if (nm_.is_true_node(f) || nm_.is_false_node(f)) return f;
-    if (nm_.is_eq(f) || is_atom(f)) return f;
-
-    // Compound node: recurse into children.
-    // Snapshot sym + children into stack locals before any nm_ call that might
-    // reallocate the nodes_ vector.  All Boolean connectives have ≤3 children.
-    const NodeData&       d   = nm_.get(f);
-    SymbolId               sym = d.sym;
-    std::array<NodeId, 3>  old_ch{};
-    const uint32_t         nch = static_cast<uint32_t>(d.children.size());
-    assert(nch <= 3 && "Boolean connectives have at most 3 children");
-    for (uint32_t i = 0; i < nch; ++i) old_ch[i] = d.children[i];
-    // d is no longer safe to use after this point (nm_ calls may reallocate).
-
-    std::array<NodeId, 3> new_ch{};
-    bool                  any_change = false;
-    for (uint32_t i = 0; i < nch; ++i) {
-        new_ch[i] = subst_and_fold(old_ch[i], atom, forced_positive);
-        if (new_ch[i] != old_ch[i]) any_change = true;
-    }
-
-    if (!any_change) return f;
-
-    return fold(nm_.mk_app(sym, std::span<const NodeId>(new_ch.data(), nch)));
+    // Delegate to the memoized batch version with a single-entry substitution map.
+    // This avoids the O(N²) recursive traversal of the old implementation.
+    subst_cache_.clear();
+    std::unordered_map<NodeId, NodeId> s;
+    s[atom] = forced_positive ? nm_.mk_true() : nm_.mk_false();
+    return subst_many_and_fold(f, s);
 }
 
 // ============================================================================

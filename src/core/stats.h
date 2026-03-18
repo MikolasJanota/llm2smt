@@ -16,6 +16,7 @@ struct Stats {
     uint64_t preproc_fmls_false_out  = 0; // assertions simplified to False
     uint64_t preproc_forced_atoms    = 0; // atoms extracted as unit clauses
     uint64_t preproc_passes_run      = 0; // simplifier passes that changed something
+    uint64_t preproc_simp_ms         = 0; // wall-clock ms for simplifier.run()
 
     // ── EUF theory ─────────────────────────────────────────────────────────
     uint64_t euf_assignments         = 0; // notify_assignment callbacks
@@ -36,6 +37,7 @@ struct Stats {
         row("preproc.fmls_false_out",   preproc_fmls_false_out);
         row("preproc.forced_atoms",     preproc_forced_atoms);
         row("preproc.passes_run",       preproc_passes_run);
+        row("preproc.simp_ms",          preproc_simp_ms);
         out << "  -- euf theory --\n";
         row("euf.assignments",          euf_assignments);
         row("euf.eq_assignments",       euf_eq_assignments);

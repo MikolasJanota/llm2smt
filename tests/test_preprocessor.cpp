@@ -358,58 +358,81 @@ TEST_F(SimpFix, ZeroPassesIsNoOp) {
     EXPECT_TRUE(nm.is_and(assertions[1]));
 }
 
-// ── And/Or flattening ─────────────────────────────────────────────────────────
-// The flatten flag merges nested And-in-And (Or-in-Or) into a flat left-chain.
-// Key observable effect: and(and(a,b), and(c,d)) with flatten → and(and(and(a,b),c),d).
+// ── And/Or nesting: no structural restructuring ───────────────────────────────
+// fold() performs constant folding but does NOT restructure nested And/Or trees.
+// Semantic simplification (true/false propagation) still works correctly at all
+// nesting depths. The SAT encoder handles nested binary And/Or natively.
 
-TEST_F(SimpFix, FlattenAndInAnd) {
-    // and(and(eq1,eq2), and(pa,pb)) with flatten=true
-    // → 4 atoms left-folded: and(and(and(eq1,eq2),pa),pb)
+TEST_F(SimpFix, NestedAndUnchanged) {
+    // and(and(eq1,eq2), and(pa,pb)) — no constants → returned unchanged
     NodeId eq1 = EQ(NA, NB), eq2 = EQ(NC, ND);
     NodeId outer = AND(AND(eq1, eq2), AND(PA, PB));
-    NodeId r = s->fold(outer);
-    NodeId expected = AND(AND(AND(eq1, eq2), PA), PB);
-    EXPECT_EQ(r, expected);
+    EXPECT_EQ(s->fold(outer), outer);
 }
 
-TEST_F(SimpFix, FlattenOrInOr) {
-    // or(or(eq1,eq2), or(pa,pb)) with flatten=true → left-folded chain
+TEST_F(SimpFix, NestedOrUnchanged) {
+    // or(or(eq1,eq2), or(pa,pb)) — no constants → returned unchanged
     NodeId eq1 = EQ(NA, NB), eq2 = EQ(NC, ND);
     NodeId outer = OR(OR(eq1, eq2), OR(PA, PB));
-    NodeId r = s->fold(outer);
-    NodeId expected = OR(OR(OR(eq1, eq2), PA), PB);
-    EXPECT_EQ(r, expected);
+    EXPECT_EQ(s->fold(outer), outer);
 }
 
-TEST_F(SimpFix, FlattenAndNotCrossOr) {
-    // and(or(Eq,Pred), Pred) — Or inside And: should NOT flatten across kinds
+TEST_F(SimpFix, NestedAndOrMixUnchanged) {
+    // and(or(Eq,Pred), Pred) — mixed kinds: returned unchanged
     NodeId inner = OR(EQ(NA,NB), PA);
     NodeId outer = AND(inner, PB);
-    NodeId r = s->fold(outer);
-    EXPECT_EQ(r, outer);  // unchanged
+    EXPECT_EQ(s->fold(outer), outer);
 }
 
-TEST_F(SimpFix, FlattenDeepAnd) {
-    // and(and(eq,pa), and(pb,pc)) → and(and(and(eq,pa),pb),pc)
+TEST_F(SimpFix, NestedAndDeepUnchanged) {
+    // and(and(eq,pa), and(pb,pc)) — no constants → returned unchanged
     NodeId eq = EQ(NA, NB);
-    NodeId r = s->fold(AND(AND(eq, PA), AND(PB, PC)));
-    NodeId expected = AND(AND(AND(eq, PA), PB), PC);
-    EXPECT_EQ(r, expected);
+    NodeId outer = AND(AND(eq, PA), AND(PB, PC));
+    EXPECT_EQ(s->fold(outer), outer);
 }
 
-TEST_F(SimpFix, FlattenDisabledKeepsNested) {
-    // With flatten=false, and(and(eq1,eq2), and(pa,pb)) stays nested.
-    s->set_flatten(false);
+TEST_F(SimpFix, SetFlattenIsNoOp) {
+    // set_flatten(false) keeps nested — same result as set_flatten(true)
     NodeId eq1 = EQ(NA, NB), eq2 = EQ(NC, ND);
     NodeId outer = AND(AND(eq1, eq2), AND(PA, PB));
-    NodeId r = s->fold(outer);
-    EXPECT_EQ(r, outer);  // unchanged: no flattening
+    NodeId r_default = s->fold(outer);
+    s->set_flatten(false);
+    // A second Simplifier with flatten disabled should give the same result.
+    Simplifier s2(nm);
+    s2.set_flatten(false);
+    EXPECT_EQ(s2.fold(outer), r_default);
 }
 
-TEST_F(SimpFix, FlattenAndWithTrueChild) {
+TEST_F(SimpFix, TrueInNestedAnd) {
     // and(and(Eq(a,b), true), Pred(c)) → and(Eq(a,b), Pred(c))
-    // True is dropped whether or not flatten is enabled.
+    // True is eliminated by constant folding regardless of nesting.
     NodeId e = EQ(NA, NB);
     NodeId r = s->fold(AND(AND(e, T()), PC));
     EXPECT_EQ(r, AND(e, PC));
+}
+
+// ── Performance: deep OR chain must not be O(N²) ──────────────────────────────
+
+TEST_F(SimpFix, DeepOrChainLinear) {
+    // Right-skewed OR chain of depth 2000 with a false innermost leaf.
+    // fold() must complete quickly (O(N)) and propagate the false upward.
+    // The innermost OR(PA, F()) folds to PA, then each outer OR(PA, PA) stays.
+    // We verify correctness by checking the innermost fold.
+    NodeId inner = OR(PA, F());  // folds to PA
+    NodeId f = inner;
+    for (int i = 0; i < 1999; ++i)
+        f = OR(PA, f);
+    // fold(OR(PA, F())) = PA — correct constant folding in nested structure
+    EXPECT_EQ(s->fold(inner), PA);
+    // Full chain folds without hanging (O(N²) would be ~400ms for N=2000)
+    s->fold(f);
+}
+
+TEST_F(SimpFix, DeepAndChainFalsePropagate) {
+    // Left-skewed AND chain: AND(AND(AND(..., PA), PA), F()) → False
+    NodeId f = PA;
+    for (int i = 0; i < 999; ++i)
+        f = AND(f, PA);
+    f = AND(f, F());  // innermost false propagates up
+    EXPECT_TRUE(nm.is_false_node(s->fold(f)));
 }

@@ -1,5 +1,6 @@
 #include "parser/smt2_visitor.h"
 
+#include <chrono>
 #include <functional>
 #include <iostream>
 #include <ranges>
@@ -1262,7 +1263,13 @@ void Smt2Visitor::flush_pending_fmls()
 
         Simplifier simp(nm);
         simp.set_flatten(opts_.flatten);
-        simp.run(pending_fmls_, opts_.passes);
+        {
+            auto t0 = std::chrono::steady_clock::now();
+            simp.run(pending_fmls_, opts_.passes);
+            auto t1 = std::chrono::steady_clock::now();
+            stats_.preproc_simp_ms += static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
+        }
 
         stats_.preproc_passes_run    += static_cast<uint64_t>(simp.passes_run());
         stats_.preproc_forced_atoms  += static_cast<uint64_t>(simp.forced_atoms().size());
