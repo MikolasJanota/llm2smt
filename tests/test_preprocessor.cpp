@@ -271,7 +271,7 @@ TEST_F(SimpFix, EqUnitPropagates) {
     std::vector<NodeId> assertions = {e, AND(e, PC)};
     bool changed = s->run_pass(assertions);
     EXPECT_TRUE(changed);
-    ASSERT_EQ(s->forced_atoms().size(), 1u);
+    ASSERT_EQ(s->forced_atoms().size(), 1U);
     EXPECT_TRUE(s->forced_atoms()[0].positive);
     EXPECT_EQ(assertions[1], PC);
 }
@@ -282,7 +282,7 @@ TEST_F(SimpFix, NegEqUnitPropagates) {
     NodeId e = EQ(NA, NB);
     std::vector<NodeId> assertions = {NOT(e), OR(e, PC)};
     s->run_pass(assertions);
-    ASSERT_EQ(s->forced_atoms().size(), 1u);
+    ASSERT_EQ(s->forced_atoms().size(), 1U);
     EXPECT_FALSE(s->forced_atoms()[0].positive);
     EXPECT_EQ(assertions[1], PC);
 }
@@ -293,7 +293,7 @@ TEST_F(SimpFix, PredUnitPropagates) {
     NodeId e = EQ(NB, NC);
     std::vector<NodeId> assertions = {PA, OR(NOT(PA), e)};
     s->run_pass(assertions);
-    ASSERT_EQ(s->forced_atoms().size(), 1u);
+    ASSERT_EQ(s->forced_atoms().size(), 1U);
     EXPECT_EQ(assertions[1], e);
 }
 
@@ -316,7 +316,7 @@ TEST_F(SimpFix, PropagatesAcrossIterations) {
     NodeId ebc = EQ(NB, NC);
     std::vector<NodeId> assertions = {PA, IMP(PA, ebc), AND(ebc, PD)};
     s->run(assertions, 10);
-    EXPECT_EQ(s->forced_atoms().size(), 3u);
+    EXPECT_EQ(s->forced_atoms().size(), 3U);
     for (NodeId f : assertions)
         EXPECT_TRUE(nm.is_true_node(f));
 }
@@ -337,7 +337,7 @@ TEST_F(SimpFix, TransitiveEqCollapses) {
     NodeId bc = EQ(NB, NC);
     std::vector<NodeId> assertions = {ab, bc, AND(EQ(NA, NC), PD)};
     s->run_pass(assertions);
-    EXPECT_GE(s->forced_atoms().size(), 2u);
+    EXPECT_GE(s->forced_atoms().size(), 2U);
     EXPECT_EQ(assertions[2], PD);
 }
 
@@ -365,14 +365,16 @@ TEST_F(SimpFix, ZeroPassesIsNoOp) {
 
 TEST_F(SimpFix, NestedAndUnchanged) {
     // and(and(eq1,eq2), and(pa,pb)) — no constants → returned unchanged
-    NodeId eq1 = EQ(NA, NB), eq2 = EQ(NC, ND);
+    NodeId eq1 = EQ(NA, NB);
+    NodeId eq2 = EQ(NC, ND);
     NodeId outer = AND(AND(eq1, eq2), AND(PA, PB));
     EXPECT_EQ(s->fold(outer), outer);
 }
 
 TEST_F(SimpFix, NestedOrUnchanged) {
     // or(or(eq1,eq2), or(pa,pb)) — no constants → returned unchanged
-    NodeId eq1 = EQ(NA, NB), eq2 = EQ(NC, ND);
+    NodeId eq1 = EQ(NA, NB);
+    NodeId eq2 = EQ(NC, ND);
     NodeId outer = OR(OR(eq1, eq2), OR(PA, PB));
     EXPECT_EQ(s->fold(outer), outer);
 }
@@ -393,7 +395,8 @@ TEST_F(SimpFix, NestedAndDeepUnchanged) {
 
 TEST_F(SimpFix, SetFlattenIsNoOp) {
     // set_flatten(false) keeps nested — same result as set_flatten(true)
-    NodeId eq1 = EQ(NA, NB), eq2 = EQ(NC, ND);
+    NodeId eq1 = EQ(NA, NB);
+    NodeId eq2 = EQ(NC, ND);
     NodeId outer = AND(AND(eq1, eq2), AND(PA, PB));
     NodeId r_default = s->fold(outer);
     s->set_flatten(false);

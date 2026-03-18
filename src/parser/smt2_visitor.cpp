@@ -101,10 +101,10 @@ bool Smt2Visitor::is_bool_sorted(
     static const std::unordered_set<std::string> bool_ops = {
         "not", "and", "or", "=>", "xor", "true", "false", "=", "distinct"
     };
-    if (bool_ops.count(name)) return true;
-    if (defined_bool_fns_.count(name)) return true;
+    if (bool_ops.contains(name)) return true;
+    if (defined_bool_fns_.contains(name)) return true;
     auto fit = ctx_.declared_fns.find(name);
-    return fit != ctx_.declared_fns.end() && ctx_.bool_fns.count(fit->second);
+    return fit != ctx_.declared_fns.end() && ctx_.bool_fns.contains(fit->second);
 }
 
 // ============================================================================
@@ -149,7 +149,7 @@ std::any Smt2Visitor::visitCommand(
     else if (ctx->cmd_declareFun()) {
         std::string name  = symbol_name(ctx->symbol(0));
         auto sorts = ctx->sort();
-        uint32_t arity = (sorts.size() > 0)
+        uint32_t arity = !sorts.empty()
                          ? static_cast<uint32_t>(sorts.size() - 1)
                          : 0;
         bool ret_is_bool = !sorts.empty() && sorts.back()->getText() == "Bool";
@@ -332,7 +332,7 @@ NodeId Smt2Visitor::visit_term(
 
     if (ctx->term().empty()) {
         NodeId node = ctx_.nm.mk_const(sym);
-        if (ctx_.bool_fns.count(sym)) link_bool_term_to_euf(node);
+        if (ctx_.bool_fns.contains(sym)) link_bool_term_to_euf(node);
         return node;
     }
 
@@ -340,7 +340,7 @@ NodeId Smt2Visitor::visit_term(
     for (auto* sub : ctx->term())
         args.push_back(visit_term(sub));
     NodeId node = ctx_.nm.mk_app(sym, std::span<const NodeId>(args));
-    if (ctx_.bool_fns.count(sym)) link_bool_term_to_euf(node);
+    if (ctx_.bool_fns.contains(sym)) link_bool_term_to_euf(node);
     // Record for get-model (dedup via hash-consed NodeId)
     if (seen_app_nodes_.insert(node).second)
         fn_applications_[sym].push_back({args, node});
@@ -490,7 +490,7 @@ void Smt2Visitor::assert_formula(
         // structure (and, or, …) is handled structurally, not via Tseitin.
         if (ctx->term().empty()) {
             auto dit = defined_fns_.find(op);
-            if (dit != defined_fns_.end() && defined_bool_fns_.count(op)) {
+            if (dit != defined_fns_.end() && defined_bool_fns_.contains(op)) {
                 assert_formula(dit->second);
                 return;
             }
@@ -784,7 +784,7 @@ int Smt2Visitor::eval_lit(
         // Bool-valued 0-ary declared symbol
         auto fit = ctx_.declared_fns.find(op);
         if (fit != ctx_.declared_fns.end()
-            && ctx_.bool_fns.count(fit->second)) {
+            && ctx_.bool_fns.contains(fit->second)) {
             NodeId n = ctx_.nm.mk_const(fit->second);
             link_bool_term_to_euf(n);
             return ctx_.lit_for_node(n);
@@ -792,7 +792,7 @@ int Smt2Visitor::eval_lit(
         // 0-arity define-fun macro expansion
         {
             auto dit = defined_fns_.find(op);
-            if (dit != defined_fns_.end() && defined_bool_fns_.count(op))
+            if (dit != defined_fns_.end() && defined_bool_fns_.contains(op))
                 return eval_lit(dit->second);
         }
         throw std::runtime_error("Unknown Bool variable: " + op);
@@ -801,7 +801,7 @@ int Smt2Visitor::eval_lit(
     // n-ary Bool predicate application
     auto fit = ctx_.declared_fns.find(op);
     if (fit != ctx_.declared_fns.end()
-        && ctx_.bool_fns.count(fit->second)) {
+        && ctx_.bool_fns.contains(fit->second)) {
         std::vector<NodeId> args;
         for (auto* sub : ctx->term())
             args.push_back(visit_term(sub));
@@ -1012,7 +1012,7 @@ NodeId Smt2Visitor::build_fml(
     // visit_term handles node creation and link_bool_term_to_euf eagerly.
     {
         auto fit = ctx_.declared_fns.find(op);
-        if (fit != ctx_.declared_fns.end() && ctx_.bool_fns.count(fit->second)) {
+        if (fit != ctx_.declared_fns.end() && ctx_.bool_fns.contains(fit->second)) {
             if (ctx->term().empty()) {
                 NodeId n = ctx_.nm.mk_const(fit->second);
                 link_bool_term_to_euf(n);
@@ -1031,7 +1031,7 @@ NodeId Smt2Visitor::build_fml(
     // 0-arity define-fun macro expansion
     if (ctx->term().empty()) {
         auto dit = defined_fns_.find(op);
-        if (dit != defined_fns_.end() && defined_bool_fns_.count(op))
+        if (dit != defined_fns_.end() && defined_bool_fns_.contains(op))
             return build_fml(dit->second);
     }
 

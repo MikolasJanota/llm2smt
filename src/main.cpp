@@ -32,9 +32,9 @@ static std::chrono::steady_clock::time_point              g_start_time;
 
 static void print_stats_atexit() {
     if (g_print_stats && g_stats) {
-        auto t1 = std::chrono::steady_clock::now();
+        auto now = std::chrono::steady_clock::now();
         g_stats->total_ms = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(t1 - g_start_time).count());
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - g_start_time).count());
         g_stats->print(std::cerr);
     }
 }
@@ -163,9 +163,9 @@ int main(int argc, char** argv) {
         }
 
         if (g_print_stats) {
-            auto t1 = std::chrono::steady_clock::now();
+            auto now = std::chrono::steady_clock::now();
             stats.total_ms = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(t1 - g_start_time).count());
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - g_start_time).count());
             stats.print(std::cerr);
             g_stats = nullptr;  // prevent double-print from atexit handler
         }
