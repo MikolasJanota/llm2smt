@@ -28,10 +28,7 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/julianthome/smtlibv2-grammar.git
   GIT_TAG        master
 )
-FetchContent_GetProperties(smtlibv2_grammar)
-if(NOT smtlibv2_grammar_POPULATED)
-  FetchContent_Populate(smtlibv2_grammar)
-endif()
+FetchContent_MakeAvailable(smtlibv2_grammar)
 set(SMTLIBV2_GRAMMAR_FILE
   "${smtlibv2_grammar_SOURCE_DIR}/src/main/resources/SMTLIBv2.g4"
   CACHE FILEPATH "Path to SMTLIBv2.g4 grammar file"
