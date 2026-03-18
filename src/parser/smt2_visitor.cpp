@@ -1,7 +1,6 @@
 #include "parser/smt2_visitor.h"
 
 #include <chrono>
-#include <functional>
 #include <iostream>
 #include <ranges>
 #include <stdexcept>
@@ -1150,15 +1149,15 @@ void Smt2Visitor::encode_fml(NodeId f)
             // NOT(AND(A,B,...)) = OR(NOT(A), NOT(B), ...) — emit one clause directly,
             // avoiding Tseitin variables for every intermediate AND node.
             std::vector<int> lits;
-            std::function<void(NodeId)> collect = [&](NodeId n) {
+            for (std::vector<NodeId> work{child}; !work.empty(); ) {
+                NodeId n = work.back(); work.pop_back();
                 if (nm.is_and(n)) {
-                    collect(nm.get(n).children[0]);
-                    collect(nm.get(n).children[1]);
+                    work.push_back(nm.get(n).children[0]);
+                    work.push_back(nm.get(n).children[1]);
                 } else {
                     lits.push_back(-lit_of_fml(n));
                 }
-            };
-            collect(child);
+            }
             ctx_.sat.add_clause(std::span<const int>(lits));
             return;
         }
@@ -1176,18 +1175,16 @@ void Smt2Visitor::encode_fml(NodeId f)
     if (nm.is_or(f)) {
         // Collect all leaves from the binary Or tree.
         std::vector<int> lits;
-        std::function<void(NodeId)> collect = [&](NodeId n) {
+        for (std::vector<NodeId> work{nm.get(f).children[0], nm.get(f).children[1]};
+             !work.empty(); ) {
+            NodeId n = work.back(); work.pop_back();
             if (nm.is_or(n)) {
-                NodeId a = nm.get(n).children[0];
-                NodeId b = nm.get(n).children[1];
-                collect(a);
-                collect(b);
+                work.push_back(nm.get(n).children[0]);
+                work.push_back(nm.get(n).children[1]);
             } else {
                 lits.push_back(lit_of_fml(n));
             }
-        };
-        collect(nm.get(f).children[0]);
-        collect(nm.get(f).children[1]);
+        }
         ctx_.sat.add_clause(std::span<const int>(lits));
         return;
     }
@@ -1411,18 +1408,16 @@ void Smt2Visitor::encode_conditioned(NodeId f, const std::vector<int>& conds)
     if (nm.is_or(f)) {
         // Collect all disjuncts from the binary Or tree.
         std::vector<NodeId> children;
-        std::function<void(NodeId)> collect = [&](NodeId n) {
+        for (std::vector<NodeId> work{nm.get(f).children[0], nm.get(f).children[1]};
+             !work.empty(); ) {
+            NodeId n = work.back(); work.pop_back();
             if (nm.is_or(n)) {
-                NodeId a = nm.get(n).children[0];
-                NodeId b = nm.get(n).children[1];
-                collect(a);
-                collect(b);
+                work.push_back(nm.get(n).children[0]);
+                work.push_back(nm.get(n).children[1]);
             } else {
                 children.push_back(n);
             }
-        };
-        collect(nm.get(f).children[0]);
-        collect(nm.get(f).children[1]);
+        }
         encode_or_conditioned(children, conds);
         return;
     }

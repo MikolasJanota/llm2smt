@@ -31,8 +31,9 @@ struct Stats {
     uint64_t total_ms                = 0; // wall-clock ms for the full solve (set in main)
 
     void print(std::ostream& out) const {
+        static constexpr int kColWidth = 30;
         auto row = [&](const std::string& name, uint64_t val) {
-            out << "  " << std::left << std::setw(30) << name << val << "\n";
+            out << "  " << std::left << std::setw(kColWidth) << name << val << "\n";
         };
         out << "[stats]\n";
         out << "  -- timing (ms) --\n";
