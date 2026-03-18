@@ -1146,6 +1146,22 @@ void Smt2Visitor::encode_fml(NodeId f)
     }
     if (nm.is_not(f)) {
         NodeId child = nm.get(f).children[0];
+        if (nm.is_and(child)) {
+            // NOT(AND(A,B,...)) = OR(NOT(A), NOT(B), ...) — emit one clause directly,
+            // avoiding Tseitin variables for every intermediate AND node.
+            std::vector<int> lits;
+            std::function<void(NodeId)> collect = [&](NodeId n) {
+                if (nm.is_and(n)) {
+                    collect(nm.get(n).children[0]);
+                    collect(nm.get(n).children[1]);
+                } else {
+                    lits.push_back(-lit_of_fml(n));
+                }
+            };
+            collect(child);
+            ctx_.sat.add_clause(std::span<const int>(lits));
+            return;
+        }
         std::array<int,1> cl = {-lit_of_fml(child)};
         ctx_.sat.add_clause(std::span<const int>(cl));
         return;

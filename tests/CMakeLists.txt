@@ -392,6 +392,10 @@ add_smt2_test_preproc(nested_let_deep  t66_nested_let_deep.smt2  unsat)
 #      build_fml (parsing) or simplifier fold/subst (--preprocess-passes 1).
 add_smt2_test_preproc(deep_or_nostack  t67_deep_or_nostack.smt2  unsat)
 
+# t68: NOT(AND(eq1,...,eqN)) is encoded as one N-literal clause without
+#      introducing Tseitin variables for intermediate AND nodes.
+add_smt2_test(not_and_direct_clause  t68_not_and_direct_clause.smt2  unsat)
+
 # ── Unit test binaries ────────────────────────────────────────────────────────
 add_executable(test_node_manager test_node_manager.cpp)
 target_link_libraries(test_node_manager PRIVATE core GTest::gtest_main)
