@@ -9,6 +9,7 @@ EufSolver::EufSolver(NodeManager& nm, Stats& stats)
     : nm_(nm), cc_(), flattener_(nm, cc_), stats_(stats) {
     diseq_level_counts_.push_back(0);
     eq_lit_level_counts_.push_back(0);
+    prop_delivered_level_counts_.push_back(0);
 }
 
 // ============================================================================
@@ -100,6 +101,7 @@ void EufSolver::notify_new_decision_level() {
     current_level_++;
     diseq_level_counts_.push_back(0);
     eq_lit_level_counts_.push_back(0);
+    prop_delivered_level_counts_.push_back(0);
 }
 
 void EufSolver::notify_backtrack(size_t new_level) {
@@ -133,9 +135,27 @@ void EufSolver::notify_backtrack(size_t new_level) {
     // harmless — CaDiCaL will not ask for their reasons after backtracking
     // past them, and the entries are overwritten if the literals are
     // re-propagated.
+    // Repair prop_enqueued_: only clear entries whose theory propagation was
+    // undone by this backtrack.  Surviving literals (delivered at levels <=
+    // new_level) remain in prop_enqueued_ so the post-backtrack rescan does not
+    // re-explain and re-propagate them — the bulk of the per-backtrack overhead
+    // with the old "clear everything" approach.
+    //
+    // Step 1 — unconsumed (queued but never delivered to CaDiCaL): CaDiCaL
+    // never saw them so they need re-propagation after backtrack.
+    for (size_t i = prop_queue_head_; i < prop_queue_.size(); ++i)
+        prop_enqueued_.erase(prop_queue_[i]);
+    // Step 2 — delivered literals at levels > new_level: CaDiCaL undid them.
+    while (prop_delivered_level_counts_.size() > new_level + 1) {
+        const size_t count = prop_delivered_level_counts_.back();
+        prop_delivered_level_counts_.pop_back();
+        for (size_t i = 0; i < count; ++i) {
+            prop_enqueued_.erase(prop_delivered_lits_.back());
+            prop_delivered_lits_.pop_back();
+        }
+    }
     prop_queue_.clear();
     prop_queue_head_ = 0;
-    prop_enqueued_.clear();
     // Reset the reason-clause cursor.  After backtrack the same literal may be
     // re-propagated (new reason stored in reason_clauses_[lit]).  If the cursor
     // were left at a non-zero position from a previous iteration of the same
@@ -148,6 +168,12 @@ void EufSolver::notify_backtrack(size_t new_level) {
     // CaDiCaL's trail (notify_assignment won't fire for them again), but
     // their CC implications must be re-queued for propagation.
     needs_rescan_ = true;
+    // Do NOT reset prop_adaptive_interval_ here.  The level-aware
+    // prop_enqueued_ already cleared entries for undone literals, so the next
+    // scan will naturally rediscover only those.  Resetting the interval on
+    // every backtrack would restart frequent full scans on each of the
+    // O(conflicts) backtracks, recreating the O(|atoms| × |backtracks|)
+    // overhead this heuristic is designed to avoid.
 
     has_conflict_     = false;
     conflict_clause_.clear();
@@ -313,8 +339,14 @@ int EufSolver::cb_propagate() {
     // Never produce propagations while a conflict is pending; let CaDiCaL
     // consume the conflict clause first (via cb_has_external_clause).
     if (has_conflict_) return 0;
-    if (prop_queue_head_ < prop_queue_.size())
-        return prop_queue_[prop_queue_head_++];
+    if (prop_queue_head_ < prop_queue_.size()) {
+        const int lit = prop_queue_[prop_queue_head_++];
+        // Record which level this literal is being delivered at so
+        // notify_backtrack can correctly clear only undone propagations.
+        prop_delivered_lits_.push_back(lit);
+        prop_delivered_level_counts_.back()++;
+        return lit;
+    }
     return 0;
 }
 
@@ -345,7 +377,8 @@ void EufSolver::discover_propagations() {
     // bv_decide cannot derive the EUF transitivity step and fails with a
     // spurious counterexample.  We mark such atoms in prop_enqueued_ to avoid
     // re-processing them on the next rescan.
-    if (propagation_enabled_ && (++prop_call_count_ % prop_interval_ == 0))
+    if (propagation_enabled_ && (++prop_call_count_ % prop_adaptive_interval_ == 0)) {
+    size_t new_props_this_scan = 0;
     for (const auto& [lit, atom] : lit_to_atom_) {
         if (prop_enqueued_.count(lit)) continue;         // already handled this pass
         bool already_assigned = cur_eq_assigned_.count(lit) > 0;
@@ -394,8 +427,22 @@ void EufSolver::discover_propagations() {
         prop_enqueued_.insert(lit);  // mark as handled (prevent duplicate recording)
         if (!already_assigned) {
             prop_queue_.push_back(lit);
+            ++new_props_this_scan;
         }
     }
+    // Adaptive interval: double the scan interval on every idle scan (no new
+    // propagations found).  The interval is monotonically non-decreasing —
+    // productive scans do NOT reset it.  This prevents the feedback loop
+    // where a productive post-backtrack scan resets to interval=1, then the
+    // newly-propagated equalities come back as notify_assignment, triggering
+    // more scans, etc.  On SAT instances the interval grows to kPropMaxInterval
+    // and theory propagation effectively stops; on UNSAT instances the solver
+    // finds conflicts via Step 2 (always runs) + direct notify_assignment
+    // early detection regardless of the propagation interval.
+    if (new_props_this_scan == 0)
+        prop_adaptive_interval_ = std::min(prop_adaptive_interval_ * 2,
+                                           kPropMaxInterval);
+    } // end propagation_enabled_ block
 
     // Step 2: check for conflicts with active disequalities.
     // Skip if a conflict was already detected by notify_assignment (early

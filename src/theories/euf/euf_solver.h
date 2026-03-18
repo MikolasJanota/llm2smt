@@ -61,7 +61,7 @@ public:
 
     // Run the propagation scan every N discover_propagations() calls.
     // 1 = every call (default); N > 1 reduces overhead on SAT instances.
-    void set_prop_interval(int n) { prop_interval_ = n; }
+    void set_prop_interval(int n) { prop_interval_ = n; prop_adaptive_interval_ = n; }
 
     // Access internals (for testing)
     CC&          cc()          { return cc_; }
@@ -179,7 +179,16 @@ private:
     // Queue of theory-implied literals awaiting delivery to the SAT solver.
     std::vector<int>        prop_queue_;
     size_t                  prop_queue_head_ = 0;
-    std::unordered_set<int> prop_enqueued_;   // guard against duplicates
+    // Guard against duplicate propagation within and across scans.
+    // Entries for literals that survive backtrack are preserved (not cleared),
+    // so the post-backtrack rescan avoids redundant re-explain calls.
+    // Level-aware clearing is done via prop_delivered_lits_ / _level_counts_.
+    std::unordered_set<int> prop_enqueued_;
+    // Delivery tracking: which literals were handed to CaDiCaL at each level.
+    // On notify_backtrack only entries at levels > new_level are erased from
+    // prop_enqueued_, keeping surviving propagations intact.
+    std::vector<int>        prop_delivered_lits_;
+    std::vector<size_t>     prop_delivered_level_counts_;
 
     // Reason clauses: propagated_lit → [plit, -e1, -e2, …]
     std::unordered_map<int, std::vector<int>> reason_clauses_;
@@ -201,11 +210,18 @@ private:
     // Theory propagation control.
     // propagation_enabled_: when false, the equality-implication scan is
     //   skipped entirely (ablation mode); conflict detection is unaffected.
-    // prop_interval_: run the scan every N calls (1 = every call, default).
+    // prop_interval_: user-specified minimum interval (floor); the adaptive
+    //   scheme may increase the effective interval beyond this, but never below.
+    // prop_adaptive_interval_: current effective interval; doubles after
+    //   kPropIdleThreshold consecutive unproductive scans and resets to
+    //   prop_interval_ after a productive scan or notify_backtrack().
     // prop_call_count_: call counter used to implement the interval.
-    bool propagation_enabled_ = true;
-    int  prop_interval_       = 1;
-    int  prop_call_count_     = 0;
+    // prop_idle_scans_: consecutive scans that produced no new propagations.
+    static constexpr int kPropMaxInterval   = 1024; // maximum adaptive interval
+    bool propagation_enabled_  = true;
+    int  prop_interval_        = 1;
+    int  prop_adaptive_interval_ = 1;
+    int  prop_call_count_      = 0;
 
     // Make a 64-bit key for an unordered pair of NodeIds
     static uint64_t atom_key(NodeId a, NodeId b) {
