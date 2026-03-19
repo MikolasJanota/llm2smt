@@ -227,6 +227,7 @@ TEST(EufSolver, BacktrackRestoresState) {
 // Assigning a=b and b=c should cause a=c to be theory-propagated.
 TEST(EufSolver, TheoryPropagation_Transitivity) {
     EufFixture f;
+    f.euf.set_prop_interval(1);  // scan every cb_propagate call (override default 32)
     NodeId a = f.make_const("a");
     NodeId b = f.make_const("b");
     NodeId c = f.make_const("c");
@@ -298,6 +299,7 @@ TEST(EufSolver, TheoryPropagation_EarlyDiseqConflict) {
 // implications must be re-discovered on the next cb_propagate call.
 TEST(EufSolver, TheoryPropagation_BacktrackRescan) {
     EufFixture f;
+    f.euf.set_prop_interval(1);  // scan every cb_propagate call (override default 32)
     NodeId a = f.make_const("a");
     NodeId b = f.make_const("b");
     NodeId c = f.make_const("c");
@@ -330,6 +332,7 @@ TEST(EufSolver, TheoryPropagation_BacktrackRescan) {
 // Full round-trip: verify that the reason clause is structurally valid.
 TEST(EufSolver, TheoryPropagation_ReasonClauseValid) {
     EufFixture f;
+    f.euf.set_prop_interval(1);  // scan every cb_propagate call (override default 32)
     NodeId a = f.make_const("a");
     NodeId b = f.make_const("b");
     NodeId c = f.make_const("c");

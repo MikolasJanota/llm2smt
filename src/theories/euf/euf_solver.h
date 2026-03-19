@@ -59,8 +59,10 @@ public:
     // Conflict detection is always active regardless of this setting.
     void set_propagation(bool v) { propagation_enabled_ = v; }
 
-    // Run the propagation scan every N discover_propagations() calls.
-    // 1 = every call (default); N > 1 reduces overhead on SAT instances.
+    // Run the propagation scan every N cb_propagate() calls (adaptive: doubles
+    // after each scan, capped at kPropMaxInterval).
+    // 1 = every call; higher values reduce scan overhead at the cost of
+    // delayed propagation.  Default: 32 (good balance across EUF benchmarks).
     void set_prop_interval(int n) { prop_interval_ = n; prop_adaptive_interval_ = n; }
 
     // Skip the O(|atoms|) propagation scan when the fraction of currently-
@@ -230,8 +232,8 @@ private:
     double       prop_assign_threshold_  = 0.25;
     int          prop_delivery_budget_   = 1000;
     bool         prop_budget_exhausted_  = false;
-    int          prop_interval_          = 1;
-    int          prop_adaptive_interval_ = 1;
+    int          prop_interval_          = 32;
+    int          prop_adaptive_interval_ = 32;
     unsigned int prop_call_count_        = 0;
     size_t       prop_total_delivered_   = 0;
     size_t       cur_total_assigned_     = 0;

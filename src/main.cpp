@@ -91,7 +91,7 @@ int main(int argc, char** argv) {
     app.add_flag("!--no-theory-prop", opts.theory_propagation,
                  "Disable EUF theory propagation (ablation: conflict detection is preserved)");
     app.add_option("--prop-interval", opts.prop_interval,
-                   "Run EUF propagation scan every N calls (default 1 = every call; higher = less frequent)")
+                   "Run EUF propagation scan every N cb_propagate calls; adaptive doubling up to 1024 (default 32)")
        ->check(CLI::PositiveNumber);
     app.add_option("--prop-assign-threshold", opts.prop_assign_threshold,
                    "Skip EUF propagation scan when (assigned vars)/(total vars) >= THRESHOLD; 0=guard disabled (always scan), 1=skip only when all vars assigned (default 0.25)")
