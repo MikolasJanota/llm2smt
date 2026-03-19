@@ -63,8 +63,9 @@ public:
     // 1 = every call (default); N > 1 reduces overhead on SAT instances.
     void set_prop_interval(int n) { prop_interval_ = n; prop_adaptive_interval_ = n; }
 
-    // Skip the propagation scan when the fraction of currently-assigned SAT
-    // variables exceeds this threshold (0.0 = always scan, 1.0 = never skip).
+    // Skip the O(|atoms|) propagation scan when the fraction of currently-
+    // assigned EUF variables meets or exceeds this threshold.
+    // 0.0 = guard disabled (always scan); 1.0 = skip only when all vars assigned.
     void set_prop_assign_threshold(double t) { prop_assign_threshold_ = t; }
 
     // Permanently disable the propagation scan after this many theory

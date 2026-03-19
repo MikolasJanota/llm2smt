@@ -15,8 +15,8 @@ struct PreprocOptions {
     bool        eq_bridge  = false;  // add common EUF consequences of disjunction branches
     bool        theory_propagation = true; // enable EUF theory propagation
     int         prop_interval = 1;         // run propagation scan every N discover_propagations calls (1 = every call)
-    double      prop_assign_threshold = 0.25; // skip scan when this fraction of SAT vars are assigned
-    int         prop_delivery_budget = 1000;  // permanently stop scan after this many propagations delivered
+    double      prop_assign_threshold = 0.25; // skip scan when (assigned/total) >= threshold; 0 = guard disabled
+    int         prop_delivery_budget = 1000;  // permanently stop scan after this many propagations delivered (0 = unlimited)
 };
 
 } // namespace llm2smt

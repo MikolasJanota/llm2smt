@@ -397,13 +397,28 @@ void EufSolver::discover_propagations() {
     // re-processing them on the next rescan.
     if (propagation_enabled_ && !prop_budget_exhausted_ &&
             (++prop_call_count_ % prop_adaptive_interval_ == 0)) {
-        // Assign-fraction guard: skip scan when too many variables are assigned.
-        // Deep in the search, theory propagation overhead outweighs the benefit.
-        // Only apply the guard on non-trivial instances (>= kPropMinVarsForThreshold)
-        // to avoid suppressing propagation in small unit tests.
+        // Assign-fraction guard: skip the O(|atoms|) scan when the search is
+        // already deep.  Deep in the search, most equalities that are going to
+        // be propagated have already been delivered; skipping saves overhead at
+        // little cost in pruning power.
+        //
+        // The fraction is (currently assigned EUF vars) / (total EUF vars).
+        // All SAT variables in this solver are registered through EufSolver
+        // (via register_equality or new_var), so next_var_-1 is the correct
+        // denominator and cur_total_assigned_ is the correct numerator.
+        //
+        // Semantics:
+        //   0.0  → guard disabled; scan always runs (threshold can never be met
+        //          because 0/N >= 0 would always be true, so we special-case 0).
+        //   0.25 → skip when ≥25 % of vars are assigned (default).
+        //   1.0  → skip only when every registered var is assigned.
+        //
+        // The guard is suppressed on tiny instances (< kPropMinVarsForThreshold)
+        // where the fraction is noisy and the scan is cheap anyway.
         static constexpr size_t kPropMinVarsForThreshold = 20;
         const size_t total_vars = static_cast<size_t>(next_var_ - 1);
-        const bool over_threshold = total_vars >= kPropMinVarsForThreshold &&
+        const bool over_threshold = prop_assign_threshold_ > 0.0 &&
+            total_vars >= kPropMinVarsForThreshold &&
             static_cast<double>(cur_total_assigned_) / total_vars >= prop_assign_threshold_;
         if (!over_threshold) {
         for (const auto& [lit, atom] : lit_to_atom_) {
