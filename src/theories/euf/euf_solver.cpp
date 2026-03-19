@@ -132,6 +132,7 @@ void EufSolver::notify_backtrack(size_t new_level) {
 
     // Pop total assignment counts introduced after new_level.
     while (assign_level_counts_.size() > new_level + 1) {
+        assert(cur_total_assigned_ >= assign_level_counts_.back());
         cur_total_assigned_ -= assign_level_counts_.back();
         assign_level_counts_.pop_back();
     }
@@ -356,7 +357,11 @@ int EufSolver::cb_propagate() {
         prop_delivered_lits_.push_back(lit);
         prop_delivered_level_counts_.back()++;
         // Delivery budget: permanently disable Step 1 once exhausted.
-        if (++prop_total_delivered_ >= static_cast<size_t>(prop_delivery_budget_))
+        // prop_delivery_budget_ == 0 means unlimited; guard against that case
+        // because static_cast<size_t>(0) == 0 and the comparison would fire
+        // immediately on the very first delivery.
+        if (prop_delivery_budget_ > 0 &&
+                ++prop_total_delivered_ >= static_cast<size_t>(prop_delivery_budget_))
             prop_budget_exhausted_ = true;
         return lit;
     }
@@ -401,7 +406,6 @@ void EufSolver::discover_propagations() {
         const bool over_threshold = total_vars >= kPropMinVarsForThreshold &&
             static_cast<double>(cur_total_assigned_) / total_vars >= prop_assign_threshold_;
         if (!over_threshold) {
-        size_t new_props_this_scan = 0;
         for (const auto& [lit, atom] : lit_to_atom_) {
                 if (prop_enqueued_.contains(lit)) continue;     // already handled this pass
             bool already_assigned = cur_eq_assigned_.contains(lit);
@@ -448,10 +452,8 @@ void EufSolver::discover_propagations() {
                 }
             }
             prop_enqueued_.insert(lit);  // mark as handled (prevent duplicate recording)
-            if (!already_assigned) {
+            if (!already_assigned)
                 prop_queue_.push_back(lit);
-                ++new_props_this_scan;
-            }
         }
         // Adaptive interval: double after every scan unconditionally.
         // Previously we only doubled on idle scans (no new propagations), but

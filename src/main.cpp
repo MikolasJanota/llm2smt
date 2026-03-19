@@ -94,7 +94,7 @@ int main(int argc, char** argv) {
                    "Run EUF propagation scan every N calls (default 1 = every call; higher = less frequent)")
        ->check(CLI::PositiveNumber);
     app.add_option("--prop-assign-threshold", opts.prop_assign_threshold,
-                   "Skip propagation scan when this fraction of SAT vars are assigned (default 0.25; 0=always scan, 1=never)")
+                   "Skip propagation scan when this fraction of SAT vars are assigned (default 0.25; 0=always scan, 1=skip only when fully assigned)")
        ->check(CLI::Range(0.0, 1.0));
     app.add_option("--prop-delivery-budget", opts.prop_delivery_budget,
                    "Permanently stop propagation scan after delivering this many theory literals (default 1000; 0=unlimited)")
