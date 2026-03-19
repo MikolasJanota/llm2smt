@@ -41,7 +41,7 @@ static void print_stats_atexit() {
 
 static void sigterm_handler(int) {
     // write() is async-signal-safe; std::cout is not (buffered, not safe in handlers).
-    (void)write(STDOUT_FILENO, "unknown\n", 8);
+    [[maybe_unused]] auto r = write(STDOUT_FILENO, "unknown\n", 8);
     // exit() triggers atexit handlers (including print_stats_atexit).
     // Using exit() instead of _Exit() is technically not async-signal-safe, but
     // this is the standard approach for solver timeouts and acceptable in practice.
