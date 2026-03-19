@@ -212,16 +212,16 @@ private:
     //   skipped entirely (ablation mode); conflict detection is unaffected.
     // prop_interval_: user-specified minimum interval (floor); the adaptive
     //   scheme may increase the effective interval beyond this, but never below.
-    // prop_adaptive_interval_: current effective interval; doubles after
-    //   kPropIdleThreshold consecutive unproductive scans and resets to
-    //   prop_interval_ after a productive scan or notify_backtrack().
-    // prop_call_count_: call counter used to implement the interval.
-    // prop_idle_scans_: consecutive scans that produced no new propagations.
+    // prop_adaptive_interval_: current effective interval; doubles after each
+    //   unproductive scan (monotone — never reset, not even on backtrack).
+    //   Reaches kPropMaxInterval quickly on SAT instances, effectively
+    //   disabling the O(|atoms|) scan without losing conflict detection.
+    // prop_call_count_: unsigned call counter used to implement the interval.
     static constexpr int kPropMaxInterval   = 1024; // maximum adaptive interval
-    bool propagation_enabled_  = true;
-    int  prop_interval_        = 1;
-    int  prop_adaptive_interval_ = 1;
-    int  prop_call_count_      = 0;
+    bool         propagation_enabled_    = true;
+    int          prop_interval_          = 1;
+    int          prop_adaptive_interval_ = 1;
+    unsigned int prop_call_count_        = 0;
 
     // Make a 64-bit key for an unordered pair of NodeIds
     static uint64_t atom_key(NodeId a, NodeId b) {

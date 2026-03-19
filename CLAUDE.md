@@ -146,6 +146,10 @@ theorem contradiction : False := by
 - `grind` **cannot** see global `axiom` declarations without an explicit
   `have hyp_k := hyp_k` in the theorem body — load needed axioms explicitly.
 
+## C++ style notes
+
+- Prefer `.contains(x)` over `.count(x) > 0` or `.count(x)` in boolean context (C++20, works on `std::unordered_set`, `std::unordered_map`, `std::set`, `std::map`).
+
 ## Architecture notes
 
 - The CC module (`src/theories/euf/cc.cpp`) must only store **flat** nodes (constants or single-level applications).

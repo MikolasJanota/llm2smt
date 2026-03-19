@@ -1,7 +1,7 @@
 #include "theories/euf/euf_solver.h"
 
+#include <algorithm>
 #include <cassert>
-#include <stdexcept>
 
 namespace llm2smt {
 
@@ -378,70 +378,70 @@ void EufSolver::discover_propagations() {
     // spurious counterexample.  We mark such atoms in prop_enqueued_ to avoid
     // re-processing them on the next rescan.
     if (propagation_enabled_ && (++prop_call_count_ % prop_adaptive_interval_ == 0)) {
-    size_t new_props_this_scan = 0;
-    for (const auto& [lit, atom] : lit_to_atom_) {
-        if (prop_enqueued_.count(lit)) continue;         // already handled this pass
-        bool already_assigned = cur_eq_assigned_.count(lit) > 0;
-        if (already_assigned && !record_proofs_) continue; // skip if assigned (non-proof mode)
-        if (!cc_.are_congruent(atom.flat_lhs, atom.flat_rhs)) continue;
+        size_t new_props_this_scan = 0;
+        for (const auto& [lit, atom] : lit_to_atom_) {
+                if (prop_enqueued_.contains(lit)) continue;     // already handled this pass
+            bool already_assigned = cur_eq_assigned_.contains(lit);
+            if (already_assigned && !record_proofs_) continue; // skip if assigned (non-proof mode)
+            if (!cc_.are_congruent(atom.flat_lhs, atom.flat_rhs)) continue;
 
-        std::vector<CC::RawCongStep> raw_congs;
-        std::vector<EqId> expl = cc_.explain(atom.flat_lhs, atom.flat_rhs,
-                                              record_proofs_ ? &raw_congs : nullptr);
-        std::vector<std::pair<NodeId,NodeId>> perm_deps;
-        reason_clauses_[lit] = build_reason_clause(lit, expl,
-                                                    record_proofs_ ? &perm_deps : nullptr);
-        if (record_proofs_) record_cong_steps(raw_congs);
-        if (record_proofs_) {
-            const auto& rc = reason_clauses_[lit];
-            // Already-assigned atoms are SAT-assigned directly from the problem
-            // hypotheses.  bv_decide can recover them from the propositional
-            // hypothesis axioms without a separate theory lemma.  Crucially, the
-            // CC may have found the congruence path AFTER merging other classes
-            // (including the atom's own SAT assignment), so the reason clause
-            // might use the assignment as part of its own justification — making
-            // it invalid as a standalone Lean theorem.  Always skip.
-            if (already_assigned) {
-                // skip — bv_decide handles it from hypothesis axioms
-            } else {
-                // Global content dedup: skip if already recorded by any path.
-                auto ckey = rc;
-                std::sort(ckey.begin(), ckey.end());
-                if (!proof_clause_content_seen_.insert(ckey).second) {
-                    // exact duplicate — nothing to do
+            std::vector<CC::RawCongStep> raw_congs;
+            std::vector<EqId> expl = cc_.explain(atom.flat_lhs, atom.flat_rhs,
+                                                  record_proofs_ ? &raw_congs : nullptr);
+            std::vector<std::pair<NodeId,NodeId>> perm_deps;
+            reason_clauses_[lit] = build_reason_clause(lit, expl,
+                                                        record_proofs_ ? &perm_deps : nullptr);
+            if (record_proofs_) record_cong_steps(raw_congs);
+            if (record_proofs_) {
+                const auto& rc = reason_clauses_[lit];
+                // Already-assigned atoms are SAT-assigned directly from the problem
+                // hypotheses.  bv_decide can recover them from the propositional
+                // hypothesis axioms without a separate theory lemma.  Crucially, the
+                // CC may have found the congruence path AFTER merging other classes
+                // (including the atom's own SAT assignment), so the reason clause
+                // might use the assignment as part of its own justification — making
+                // it invalid as a standalone Lean theorem.  Always skip.
+                if (already_assigned) {
+                    // skip — bv_decide handles it from hypothesis axioms
                 } else {
-                    auto it2 = proof_recorded_prop_lits_.find(lit);
-                    if (it2 == proof_recorded_prop_lits_.end()) {
-                        // First occurrence: store it.
-                        proof_recorded_prop_lits_[lit] = proof_conflicts_.size();
-                        proof_conflicts_.push_back(rc);
-                        proof_unit_perm_deps_.push_back(std::move(perm_deps));
-                    } else if (rc.size() < proof_conflicts_[it2->second].size()) {
-                        // Shorter clause after backtrack: replace.
-                        proof_conflicts_[it2->second] = rc;
-                        proof_unit_perm_deps_[it2->second] = std::move(perm_deps);
+                    // Global content dedup: skip if already recorded by any path.
+                    auto ckey = rc;
+                    std::sort(ckey.begin(), ckey.end());
+                    if (!proof_clause_content_seen_.insert(ckey).second) {
+                        // exact duplicate — nothing to do
+                    } else {
+                        auto it2 = proof_recorded_prop_lits_.find(lit);
+                        if (it2 == proof_recorded_prop_lits_.end()) {
+                            // First occurrence: store it.
+                            proof_recorded_prop_lits_[lit] = proof_conflicts_.size();
+                            proof_conflicts_.push_back(rc);
+                            proof_unit_perm_deps_.push_back(std::move(perm_deps));
+                        } else if (rc.size() < proof_conflicts_[it2->second].size()) {
+                            // Shorter clause after backtrack: replace.
+                            proof_conflicts_[it2->second] = rc;
+                            proof_unit_perm_deps_[it2->second] = std::move(perm_deps);
+                        }
                     }
                 }
             }
+            prop_enqueued_.insert(lit);  // mark as handled (prevent duplicate recording)
+            if (!already_assigned) {
+                prop_queue_.push_back(lit);
+                ++new_props_this_scan;
+            }
         }
-        prop_enqueued_.insert(lit);  // mark as handled (prevent duplicate recording)
-        if (!already_assigned) {
-            prop_queue_.push_back(lit);
-            ++new_props_this_scan;
-        }
-    }
-    // Adaptive interval: double the scan interval on every idle scan (no new
-    // propagations found).  The interval is monotonically non-decreasing —
-    // productive scans do NOT reset it.  This prevents the feedback loop
-    // where a productive post-backtrack scan resets to interval=1, then the
-    // newly-propagated equalities come back as notify_assignment, triggering
-    // more scans, etc.  On SAT instances the interval grows to kPropMaxInterval
-    // and theory propagation effectively stops; on UNSAT instances the solver
-    // finds conflicts via Step 2 (always runs) + direct notify_assignment
-    // early detection regardless of the propagation interval.
-    if (new_props_this_scan == 0)
-        prop_adaptive_interval_ = std::min(prop_adaptive_interval_ * 2,
-                                           kPropMaxInterval);
+        // Adaptive interval: double the scan interval on every idle scan (no new
+        // propagations found).  The interval is monotonically non-decreasing —
+        // productive scans do NOT reset it.  This prevents the feedback loop
+        // where a productive post-backtrack scan resets to interval=1, then the
+        // newly-propagated equalities come back as notify_assignment, triggering
+        // more scans, etc.  On SAT instances the interval grows to kPropMaxInterval
+        // and theory propagation effectively stops; on UNSAT instances the solver
+        // finds conflicts via Step 2 (always runs) + direct notify_assignment
+        // early detection regardless of the propagation interval.
+        if (new_props_this_scan == 0)
+            prop_adaptive_interval_ = std::min(prop_adaptive_interval_ * 2,
+                                               kPropMaxInterval);
     } // end propagation_enabled_ block
 
     // Step 2: check for conflicts with active disequalities.
