@@ -10,6 +10,7 @@ EufSolver::EufSolver(NodeManager& nm, Stats& stats)
     diseq_level_counts_.push_back(0);
     eq_lit_level_counts_.push_back(0);
     prop_delivered_level_counts_.push_back(0);
+    assign_level_counts_.push_back(0);
 }
 
 // ============================================================================
@@ -52,6 +53,8 @@ void EufSolver::register_permanent_equality(NodeId lhs, NodeId rhs) {
 // ============================================================================
 
 void EufSolver::notify_assignment(int lit, bool /*is_fixed*/) {
+    ++cur_total_assigned_;
+    assign_level_counts_.back()++;
     int var = (lit > 0) ? lit : -lit;
     auto it = lit_to_atom_.find(var);
     if (it == lit_to_atom_.end()) return;
@@ -102,6 +105,7 @@ void EufSolver::notify_new_decision_level() {
     diseq_level_counts_.push_back(0);
     eq_lit_level_counts_.push_back(0);
     prop_delivered_level_counts_.push_back(0);
+    assign_level_counts_.push_back(0);
 }
 
 void EufSolver::notify_backtrack(size_t new_level) {
@@ -124,6 +128,12 @@ void EufSolver::notify_backtrack(size_t new_level) {
             cur_eq_assigned_.erase(active_eq_lits_.back());
             active_eq_lits_.pop_back();
         }
+    }
+
+    // Pop total assignment counts introduced after new_level.
+    while (assign_level_counts_.size() > new_level + 1) {
+        cur_total_assigned_ -= assign_level_counts_.back();
+        assign_level_counts_.pop_back();
     }
 
     // Discard the propagation queue.  Any not-yet-served items were computed
@@ -345,6 +355,9 @@ int EufSolver::cb_propagate() {
         // notify_backtrack can correctly clear only undone propagations.
         prop_delivered_lits_.push_back(lit);
         prop_delivered_level_counts_.back()++;
+        // Delivery budget: permanently disable Step 1 once exhausted.
+        if (++prop_total_delivered_ >= static_cast<size_t>(prop_delivery_budget_))
+            prop_budget_exhausted_ = true;
         return lit;
     }
     return 0;
@@ -377,7 +390,17 @@ void EufSolver::discover_propagations() {
     // bv_decide cannot derive the EUF transitivity step and fails with a
     // spurious counterexample.  We mark such atoms in prop_enqueued_ to avoid
     // re-processing them on the next rescan.
-    if (propagation_enabled_ && (++prop_call_count_ % prop_adaptive_interval_ == 0)) {
+    if (propagation_enabled_ && !prop_budget_exhausted_ &&
+            (++prop_call_count_ % prop_adaptive_interval_ == 0)) {
+        // Assign-fraction guard: skip scan when too many variables are assigned.
+        // Deep in the search, theory propagation overhead outweighs the benefit.
+        // Only apply the guard on non-trivial instances (>= kPropMinVarsForThreshold)
+        // to avoid suppressing propagation in small unit tests.
+        static constexpr size_t kPropMinVarsForThreshold = 20;
+        const size_t total_vars = static_cast<size_t>(next_var_ - 1);
+        const bool over_threshold = total_vars >= kPropMinVarsForThreshold &&
+            static_cast<double>(cur_total_assigned_) / total_vars >= prop_assign_threshold_;
+        if (!over_threshold) {
         size_t new_props_this_scan = 0;
         for (const auto& [lit, atom] : lit_to_atom_) {
                 if (prop_enqueued_.contains(lit)) continue;     // already handled this pass
@@ -430,18 +453,20 @@ void EufSolver::discover_propagations() {
                 ++new_props_this_scan;
             }
         }
-        // Adaptive interval: double the scan interval on every idle scan (no new
-        // propagations found).  The interval is monotonically non-decreasing —
-        // productive scans do NOT reset it.  This prevents the feedback loop
-        // where a productive post-backtrack scan resets to interval=1, then the
-        // newly-propagated equalities come back as notify_assignment, triggering
-        // more scans, etc.  On SAT instances the interval grows to kPropMaxInterval
-        // and theory propagation effectively stops; on UNSAT instances the solver
-        // finds conflicts via Step 2 (always runs) + direct notify_assignment
-        // early detection regardless of the propagation interval.
-        if (new_props_this_scan == 0)
-            prop_adaptive_interval_ = std::min(prop_adaptive_interval_ * 2,
-                                               kPropMaxInterval);
+        // Adaptive interval: double after every scan unconditionally.
+        // Previously we only doubled on idle scans (no new propagations), but
+        // that fails on instances like NEQ where the scan is always productive:
+        // the interval never grows, we do O(|atoms|) work on every call, and
+        // 16M+ theory propagations flood the SAT trail and wreck the search.
+        // Doubling unconditionally caps total scan work to O(|atoms| × log N):
+        // after ~10 doublings the interval saturates at kPropMaxInterval and
+        // stays there.  Early scans still capture the propagations that matter
+        // most (first few decisions); later the solver proceeds with minimal
+        // theory-propagation interference.  Conflict detection (Step 2) is
+        // unaffected and runs on every call regardless.
+        } // end !over_threshold
+        prop_adaptive_interval_ = std::min(prop_adaptive_interval_ * 2,
+                                           kPropMaxInterval);
     } // end propagation_enabled_ block
 
     // Step 2: check for conflicts with active disequalities.

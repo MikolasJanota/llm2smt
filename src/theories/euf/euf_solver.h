@@ -63,6 +63,14 @@ public:
     // 1 = every call (default); N > 1 reduces overhead on SAT instances.
     void set_prop_interval(int n) { prop_interval_ = n; prop_adaptive_interval_ = n; }
 
+    // Skip the propagation scan when the fraction of currently-assigned SAT
+    // variables exceeds this threshold (0.0 = always scan, 1.0 = never skip).
+    void set_prop_assign_threshold(double t) { prop_assign_threshold_ = t; }
+
+    // Permanently disable the propagation scan after this many theory
+    // propagations have been delivered to the SAT solver.
+    void set_prop_delivery_budget(int n) { prop_delivery_budget_ = n; }
+
     // Access internals (for testing)
     CC&          cc()          { return cc_; }
     NodeManager& nm()          { return nm_; }
@@ -208,20 +216,25 @@ private:
     bool needs_rescan_ = false;
 
     // Theory propagation control.
-    // propagation_enabled_: when false, the equality-implication scan is
-    //   skipped entirely (ablation mode); conflict detection is unaffected.
-    // prop_interval_: user-specified minimum interval (floor); the adaptive
-    //   scheme may increase the effective interval beyond this, but never below.
-    // prop_adaptive_interval_: current effective interval; doubles after each
-    //   unproductive scan (monotone — never reset, not even on backtrack).
-    //   Reaches kPropMaxInterval quickly on SAT instances, effectively
-    //   disabling the O(|atoms|) scan without losing conflict detection.
+    // propagation_enabled_: when false, Step 1 is skipped entirely (ablation).
+    // prop_assign_threshold_: skip scan when assigned/total_vars >= threshold.
+    // prop_delivery_budget_: permanently disable scan after this many delivered.
+    // prop_budget_exhausted_: set once prop_total_delivered_ >= budget.
+    // prop_adaptive_interval_: doubles after every scan; never reset on backtrack.
     // prop_call_count_: unsigned call counter used to implement the interval.
-    static constexpr int kPropMaxInterval   = 1024; // maximum adaptive interval
+    // cur_total_assigned_ / assign_level_counts_: track current assignment depth
+    //   (all SAT variables) for the assign-fraction guard.
+    static constexpr int kPropMaxInterval = 1024;
     bool         propagation_enabled_    = true;
+    double       prop_assign_threshold_  = 0.25;
+    int          prop_delivery_budget_   = 1000;
+    bool         prop_budget_exhausted_  = false;
     int          prop_interval_          = 1;
     int          prop_adaptive_interval_ = 1;
     unsigned int prop_call_count_        = 0;
+    size_t       prop_total_delivered_   = 0;
+    size_t       cur_total_assigned_     = 0;
+    std::vector<size_t> assign_level_counts_;
 
     // Make a 64-bit key for an unordered pair of NodeIds
     static uint64_t atom_key(NodeId a, NodeId b) {

@@ -93,6 +93,12 @@ int main(int argc, char** argv) {
     app.add_option("--prop-interval", opts.prop_interval,
                    "Run EUF propagation scan every N calls (default 1 = every call; higher = less frequent)")
        ->check(CLI::PositiveNumber);
+    app.add_option("--prop-assign-threshold", opts.prop_assign_threshold,
+                   "Skip propagation scan when this fraction of SAT vars are assigned (default 0.25; 0=always scan, 1=never)")
+       ->check(CLI::Range(0.0, 1.0));
+    app.add_option("--prop-delivery-budget", opts.prop_delivery_budget,
+                   "Permanently stop propagation scan after delivering this many theory literals (default 1000; 0=unlimited)")
+       ->check(CLI::NonNegativeNumber);
 
     app.add_flag("--stats", g_print_stats, "Print solver statistics to stderr after solving");
 
@@ -131,6 +137,8 @@ int main(int argc, char** argv) {
         if (!opts.theory_propagation)
             euf.set_propagation(false);
         euf.set_prop_interval(opts.prop_interval);
+        euf.set_prop_assign_threshold(opts.prop_assign_threshold);
+        euf.set_prop_delivery_budget(opts.prop_delivery_budget);
 
         const bool proof_mode = !opts.proof_file.empty();
         if (proof_mode) {
