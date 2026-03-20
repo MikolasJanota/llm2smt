@@ -78,6 +78,9 @@ int main(int argc, char** argv) {
                  "Disable And/Or flattening in the simplifier");
     auto* nnf_flag = app.add_flag("--nnf", opts.nnf,
                  "Convert to Negation Normal Form before encoding");
+    app.add_flag("--nnf-memo", opts.nnf_memo,
+                 "Memoize NNF traversal (helps on DAG-heavy inputs)")
+       ->needs(nnf_flag);
     app.add_flag("--selectors", opts.selectors,
                  "[DEPRECATED] Use selector variable technique for Or-with-compound-disjuncts encoding")
        ->needs(nnf_flag);

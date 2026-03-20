@@ -1237,7 +1237,7 @@ void Smt2Visitor::flush_pending_fmls()
     // Step A: NNF.
     if (opts_.nnf) {
         for (auto& f : pending_fmls_)
-            f = to_nnf(f, nm);
+            f = to_nnf(f, nm, opts_.nnf_memo);
     }
 
     // Step A.5: Equality bridging under disjunctions.

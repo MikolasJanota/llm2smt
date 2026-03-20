@@ -14,20 +14,24 @@ namespace llm2smt {
 // references into NodeManager::nodes_ if the vector is reallocated.
 class NnfTransformer {
 public:
-    explicit NnfTransformer(NodeManager& nm) : nm_(nm) {}
+    explicit NnfTransformer(NodeManager& nm, bool memo = false)
+        : nm_(nm), memo_(memo) {}
 
     NodeId pos(NodeId f);
     NodeId neg(NodeId f);
 
 private:
     NodeManager&                        nm_;
+    bool                                memo_;
     std::unordered_map<NodeId, NodeId>  pos_cache_;
     std::unordered_map<NodeId, NodeId>  neg_cache_;
 };
 
 inline NodeId NnfTransformer::pos(NodeId f)
 {
-    if (auto it = pos_cache_.find(f); it != pos_cache_.end()) return it->second;
+    if (memo_) {
+        if (auto it = pos_cache_.find(f); it != pos_cache_.end()) return it->second;
+    }
 
     NodeId r;
     if (nm_.is_true_node(f) || nm_.is_false_node(f) ||
@@ -71,13 +75,15 @@ inline NodeId NnfTransformer::pos(NodeId f)
         r = f;  // unreachable for well-formed input
     }
 
-    pos_cache_[f] = r;
+    if (memo_) pos_cache_[f] = r;
     return r;
 }
 
 inline NodeId NnfTransformer::neg(NodeId f)
 {
-    if (auto it = neg_cache_.find(f); it != neg_cache_.end()) return it->second;
+    if (memo_) {
+        if (auto it = neg_cache_.find(f); it != neg_cache_.end()) return it->second;
+    }
 
     NodeId r;
     if (nm_.is_true_node(f)) {
@@ -130,14 +136,16 @@ inline NodeId NnfTransformer::neg(NodeId f)
         r = nm_.mk_not(f);  // unreachable
     }
 
-    neg_cache_[f] = r;
+    if (memo_) neg_cache_[f] = r;
     return r;
 }
 
 // Entry point: convert f to NNF.
-inline NodeId to_nnf(NodeId f, NodeManager& nm)
+// Pass memo=true to memoize per-node results (helps on DAG-heavy inputs,
+// but adds hash-map overhead that slows tree-shaped inputs).
+inline NodeId to_nnf(NodeId f, NodeManager& nm, bool memo = false)
 {
-    NnfTransformer t(nm);
+    NnfTransformer t(nm, memo);
     return t.pos(f);
 }
 
