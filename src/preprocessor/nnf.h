@@ -18,14 +18,18 @@ inline NodeId nnf_pos(NodeId f, NodeManager& nm)
         return nnf_neg(nm.get(f).children[0], nm);
 
     if (nm.is_and(f)) {
-        NodeId c0 = nm.get(f).children[0];
-        NodeId c1 = nm.get(f).children[1];
-        return nm.mk_and(nnf_pos(c0, nm), nnf_pos(c1, nm));
+        const auto& ch = nm.get(f).children;
+        std::vector<NodeId> new_ch;
+        new_ch.reserve(ch.size());
+        for (NodeId c : ch) new_ch.push_back(nnf_pos(c, nm));
+        return nm.mk_and(new_ch);
     }
     if (nm.is_or(f)) {
-        NodeId c0 = nm.get(f).children[0];
-        NodeId c1 = nm.get(f).children[1];
-        return nm.mk_or(nnf_pos(c0, nm), nnf_pos(c1, nm));
+        const auto& ch = nm.get(f).children;
+        std::vector<NodeId> new_ch;
+        new_ch.reserve(ch.size());
+        for (NodeId c : ch) new_ch.push_back(nnf_pos(c, nm));
+        return nm.mk_or(new_ch);
     }
     if (nm.is_implies(f)) {
         NodeId c0 = nm.get(f).children[0];
@@ -68,16 +72,20 @@ inline NodeId nnf_neg(NodeId f, NodeManager& nm)
         return nnf_pos(nm.get(f).children[0], nm);
 
     if (nm.is_and(f)) {
-        // De Morgan: ¬(A ∧ B) = (¬A ∨ ¬B)
-        NodeId c0 = nm.get(f).children[0];
-        NodeId c1 = nm.get(f).children[1];
-        return nm.mk_or(nnf_neg(c0, nm), nnf_neg(c1, nm));
+        // De Morgan: ¬(A₁ ∧ … ∧ Aₙ) = (¬A₁ ∨ … ∨ ¬Aₙ)
+        const auto& ch = nm.get(f).children;
+        std::vector<NodeId> new_ch;
+        new_ch.reserve(ch.size());
+        for (NodeId c : ch) new_ch.push_back(nnf_neg(c, nm));
+        return nm.mk_or(new_ch);
     }
     if (nm.is_or(f)) {
-        // De Morgan: ¬(A ∨ B) = (¬A ∧ ¬B)
-        NodeId c0 = nm.get(f).children[0];
-        NodeId c1 = nm.get(f).children[1];
-        return nm.mk_and(nnf_neg(c0, nm), nnf_neg(c1, nm));
+        // De Morgan: ¬(A₁ ∨ … ∨ Aₙ) = (¬A₁ ∧ … ∧ ¬Aₙ)
+        const auto& ch = nm.get(f).children;
+        std::vector<NodeId> new_ch;
+        new_ch.reserve(ch.size());
+        for (NodeId c : ch) new_ch.push_back(nnf_neg(c, nm));
+        return nm.mk_and(new_ch);
     }
     if (nm.is_implies(f)) {
         // ¬(A → B) = (A ∧ ¬B)

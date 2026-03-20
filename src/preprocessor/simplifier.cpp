@@ -42,26 +42,48 @@ NodeId Simplifier::fold(NodeId root)
         }
 
         if (nm_.is_and(f)) {
-            NodeId c0  = nm_.get(f).children[0];
-            NodeId c1  = nm_.get(f).children[1];
-            NodeId fc0 = fold(c0);
-            NodeId fc1 = fold(c1);
-            if (nm_.is_false_node(fc0) || nm_.is_false_node(fc1)) { fold_cache_[f] = nm_.mk_false(); return; }
-            if (nm_.is_true_node(fc0))  { fold_cache_[f] = fc1; return; }
-            if (nm_.is_true_node(fc1))  { fold_cache_[f] = fc0; return; }
-            fold_cache_[f] = (fc0 == c0 && fc1 == c1) ? f : nm_.mk_and(fc0, fc1);
+            const auto& ch = nm_.get(f).children;
+            std::vector<NodeId> new_ch;
+            new_ch.reserve(ch.size());
+            bool any_change = false;
+            for (NodeId c : ch) {
+                NodeId fc = fold(c);
+                if (nm_.is_false_node(fc)) { fold_cache_[f] = nm_.mk_false(); return; }
+                if (nm_.is_true_node(fc))  { any_change = true; continue; }
+                if (fc != c) any_change = true;
+                if (flatten_ && nm_.is_and(fc)) {
+                    any_change = true;
+                    for (NodeId sc : nm_.get(fc).children) new_ch.push_back(sc);
+                } else {
+                    new_ch.push_back(fc);
+                }
+            }
+            if (new_ch.empty())     { fold_cache_[f] = nm_.mk_true();    return; }
+            if (new_ch.size() == 1) { fold_cache_[f] = new_ch[0];        return; }
+            fold_cache_[f] = any_change ? nm_.mk_and(new_ch) : f;
             return;
         }
 
         if (nm_.is_or(f)) {
-            NodeId c0  = nm_.get(f).children[0];
-            NodeId c1  = nm_.get(f).children[1];
-            NodeId fc0 = fold(c0);
-            NodeId fc1 = fold(c1);
-            if (nm_.is_true_node(fc0) || nm_.is_true_node(fc1))  { fold_cache_[f] = nm_.mk_true();  return; }
-            if (nm_.is_false_node(fc0)) { fold_cache_[f] = fc1; return; }
-            if (nm_.is_false_node(fc1)) { fold_cache_[f] = fc0; return; }
-            fold_cache_[f] = (fc0 == c0 && fc1 == c1) ? f : nm_.mk_or(fc0, fc1);
+            const auto& ch = nm_.get(f).children;
+            std::vector<NodeId> new_ch;
+            new_ch.reserve(ch.size());
+            bool any_change = false;
+            for (NodeId c : ch) {
+                NodeId fc = fold(c);
+                if (nm_.is_true_node(fc))  { fold_cache_[f] = nm_.mk_true();  return; }
+                if (nm_.is_false_node(fc)) { any_change = true; continue; }
+                if (fc != c) any_change = true;
+                if (flatten_ && nm_.is_or(fc)) {
+                    any_change = true;
+                    for (NodeId sc : nm_.get(fc).children) new_ch.push_back(sc);
+                } else {
+                    new_ch.push_back(fc);
+                }
+            }
+            if (new_ch.empty())     { fold_cache_[f] = nm_.mk_false();   return; }
+            if (new_ch.size() == 1) { fold_cache_[f] = new_ch[0];        return; }
+            fold_cache_[f] = any_change ? nm_.mk_or(new_ch) : f;
             return;
         }
 
@@ -185,16 +207,15 @@ NodeId Simplifier::subst_many_and_fold(NodeId root,
         }
         const NodeData& d   = nm_.get(f);
         SymbolId         sym = d.sym;
-        const auto       nch = static_cast<uint32_t>(d.children.size());
-        assert(nch <= 3 && "Boolean connectives have at most 3 children");
-        std::array<NodeId, 3> new_ch{};
+        const auto&      ch  = d.children;
+        std::vector<NodeId> new_ch(ch.size());
         bool any_change = false;
-        for (uint32_t i = 0; i < nch; ++i) {
-            new_ch[i] = subst_cache_.at(d.children[i]);
-            if (new_ch[i] != d.children[i]) any_change = true;
+        for (size_t i = 0; i < ch.size(); ++i) {
+            new_ch[i] = subst_cache_.at(ch[i]);
+            if (new_ch[i] != ch[i]) any_change = true;
         }
         if (!any_change) { subst_cache_[f] = f; return; }
-        subst_cache_[f] = fold(nm_.mk_app(sym, std::span<const NodeId>(new_ch.data(), nch)));
+        subst_cache_[f] = fold(nm_.mk_app(sym, std::span<const NodeId>(new_ch)));
     };
 
     struct Frame { NodeId n; bool ready; };
@@ -288,16 +309,15 @@ NodeId Simplifier::normalize_eq_fml(NodeId root)
         }
         const NodeData& d   = nm_.get(f);
         SymbolId         sym = d.sym;
-        const auto       nch = static_cast<uint32_t>(d.children.size());
-        assert(nch <= 3 && "Boolean connectives have at most 3 children");
-        std::array<NodeId, 3> new_ch{};
+        const auto&      ch  = d.children;
+        std::vector<NodeId> new_ch(ch.size());
         bool any_change = false;
-        for (uint32_t i = 0; i < nch; ++i) {
-            new_ch[i] = norm_cache_.at(d.children[i]);
-            if (new_ch[i] != d.children[i]) any_change = true;
+        for (size_t i = 0; i < ch.size(); ++i) {
+            new_ch[i] = norm_cache_.at(ch[i]);
+            if (new_ch[i] != ch[i]) any_change = true;
         }
         if (!any_change) { norm_cache_[f] = f; return; }
-        norm_cache_[f] = fold(nm_.mk_app(sym, std::span<const NodeId>(new_ch.data(), nch)));
+        norm_cache_[f] = fold(nm_.mk_app(sym, std::span<const NodeId>(new_ch)));
     };
 
     struct Frame { NodeId n; bool ready; };

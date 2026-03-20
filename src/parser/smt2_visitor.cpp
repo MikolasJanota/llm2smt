@@ -877,6 +877,7 @@ NodeId Smt2Visitor::build_fml(
         auto terms = ctx->term();
         if (terms.empty()) return nm.mk_true();
         // Flatten nested ANDs iteratively to avoid stack overflow on deeply-nested formulas.
+        // Collect all leaf sub-terms, then build a single n-ary AND node.
         using TC = smt2parser::SMTLIBv2Parser::TermContext;
         std::vector<TC*> work, flat;
         for (auto* t : terms | std::views::reverse) work.push_back(t);
@@ -891,16 +892,17 @@ NodeId Smt2Visitor::build_fml(
                 flat.push_back(t);
             }
         }
-        NodeId result = build_fml(flat[0]);
-        for (size_t i = 1; i < flat.size(); ++i)
-            result = nm.mk_and(result, build_fml(flat[i]));
-        return result;
+        std::vector<NodeId> ids;
+        ids.reserve(flat.size());
+        for (auto* t : flat) ids.push_back(build_fml(t));
+        return nm.mk_and(ids);
     }
 
     if (op == "or") {
         auto terms = ctx->term();
         if (terms.empty()) return nm.mk_false();
         // Flatten nested ORs iteratively to avoid stack overflow on deeply-nested formulas.
+        // Collect all leaf sub-terms, then build a single n-ary OR node.
         using TC = smt2parser::SMTLIBv2Parser::TermContext;
         std::vector<TC*> work, flat;
         for (auto* t : terms | std::views::reverse) work.push_back(t);
@@ -915,10 +917,10 @@ NodeId Smt2Visitor::build_fml(
                 flat.push_back(t);
             }
         }
-        NodeId result = build_fml(flat[0]);
-        for (size_t i = 1; i < flat.size(); ++i)
-            result = nm.mk_or(result, build_fml(flat[i]));
-        return result;
+        std::vector<NodeId> ids;
+        ids.reserve(flat.size());
+        for (auto* t : flat) ids.push_back(build_fml(t));
+        return nm.mk_or(ids);
     }
 
     // (=> A B ...) right-assoc: build as implies chain (A → (B → ... → last))
@@ -1063,51 +1065,17 @@ int Smt2Visitor::lit_of_fml(NodeId f)
     fml_lit_cache_[f] = x;
 
     if (nm.is_and(f)) {
-        // Flatten binary AND tree into n-ary leaves (stopping at cached nodes).
-        // This matches the main branch's n-ary Tseitin encoding: one var x with
-        // N binary clauses {-x,leaf_i} and one backward clause {x,-l1,...,-lN}.
-        // Binary nesting would create O(N) intermediate Tseitin vars, diluting
-        // VSIDS activity on the true atom literals.
+        // N-ary Tseitin: one var x, N binary forward clauses {-x,leaf_i},
+        // one backward clause {x,-l1,...,-lN}.
         std::vector<int> sub;
-        for (std::vector<NodeId> work{nm.get(f).children[1], nm.get(f).children[0]};
-             !work.empty(); ) {
-            NodeId n = work.back(); work.pop_back();
-            if (nm.is_and(n)) {
-                auto it = fml_lit_cache_.find(n);
-                if (it != fml_lit_cache_.end()) {
-                    sub.push_back(it->second);
-                } else {
-                    // Push right first so left is on top → left-to-right leaf order.
-                    work.push_back(nm.get(n).children[1]);
-                    work.push_back(nm.get(n).children[0]);
-                }
-            } else {
-                sub.push_back(lit_of_fml(n));
-            }
-        }
+        for (NodeId c : nm.get(f).children) sub.push_back(lit_of_fml(c));
         for (int l : sub) { std::array<int,2> cl = {-x, l}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         std::vector<int> bwd{x};
         for (int l : sub) bwd.push_back(-l);
         ctx_.sat.add_clause(std::span<const int>(bwd));
     } else if (nm.is_or(f)) {
-        // Flatten binary OR tree into n-ary leaves (stopping at cached nodes).
         std::vector<int> sub;
-        for (std::vector<NodeId> work{nm.get(f).children[1], nm.get(f).children[0]};
-             !work.empty(); ) {
-            NodeId n = work.back(); work.pop_back();
-            if (nm.is_or(n)) {
-                auto it = fml_lit_cache_.find(n);
-                if (it != fml_lit_cache_.end()) {
-                    sub.push_back(it->second);
-                } else {
-                    // Push right first so left is on top → left-to-right leaf order.
-                    work.push_back(nm.get(n).children[1]);
-                    work.push_back(nm.get(n).children[0]);
-                }
-            } else {
-                sub.push_back(lit_of_fml(n));
-            }
-        }
+        for (NodeId c : nm.get(f).children) sub.push_back(lit_of_fml(c));
         for (int l : sub) { std::array<int,2> cl = {-l, x}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         std::vector<int> fwd{-x};
         for (int l : sub) fwd.push_back(l);
@@ -1180,27 +1148,15 @@ void Smt2Visitor::encode_fml(NodeId f)
     if (nm.is_not(f)) {
         NodeId child = nm.get(f).children[0];
         if (nm.is_and(child)) {
-            // NOT(AND(leaf1,...,leafN)): encode with a single Tseitin variable x for
-            // the AND, then assert NOT(x).  This produces:
-            //   {-x, leaf1}, {-x, leaf2}, ..., {-x, leafN}   (binary, x→leaf_i)
-            //   {x, -leaf1, -leaf2, ..., -leafN}              (large, all→x)
-            //   {-x}                                          (unit, NOT AND)
+            // NOT(AND(leaf1,...,leafN)): Tseitin variable x for the AND, then assert NOT(x).
+            //   {-x, leaf_i}  for each i   (x → leaf_i)
+            //   {x, -leaf1, ..., -leafN}   (all leaves → x)
+            //   {-x}                        (NOT AND)
             // After BCP of {-x} the binary clauses are satisfied and the large clause
-            // reduces to {-leaf1,...,-leafN}, identical to the direct encoding.
-            // The binary clauses build VSIDS activity on the leaf literals before
-            // the main search begins, which significantly improves CaDiCaL's
-            // variable ordering on problems with many NOT(AND) constraints.
+            // reduces to {-leaf1,...,-leafN}.  The binary clauses seed VSIDS activity
+            // on the leaf literals before the main search begins.
             std::vector<int> leaf_lits;
-            for (std::vector<NodeId> work{child}; !work.empty(); ) {
-                NodeId n = work.back(); work.pop_back();
-                if (nm.is_and(n)) {
-                    // Push right child first so left child is on top → left-to-right order.
-                    work.push_back(nm.get(n).children[1]);
-                    work.push_back(nm.get(n).children[0]);
-                } else {
-                    leaf_lits.push_back(lit_of_fml(n));
-                }
-            }
+            for (NodeId c : nm.get(child).children) leaf_lits.push_back(lit_of_fml(c));
             int x = ctx_.euf.new_var();
             for (int l : leaf_lits) {
                 std::array<int,2> cl = {-x, l};
@@ -1217,26 +1173,12 @@ void Smt2Visitor::encode_fml(NodeId f)
         return;
     }
     if (nm.is_and(f)) {
-        NodeId c0 = nm.get(f).children[0];
-        NodeId c1 = nm.get(f).children[1];
-        encode_fml(c0);
-        encode_fml(c1);
+        for (NodeId c : nm.get(f).children) encode_fml(c);
         return;
     }
     if (nm.is_or(f)) {
-        // Collect all leaves from the binary Or tree, left-to-right.
         std::vector<int> lits;
-        for (std::vector<NodeId> work{nm.get(f).children[1], nm.get(f).children[0]};
-             !work.empty(); ) {
-            NodeId n = work.back(); work.pop_back();
-            if (nm.is_or(n)) {
-                // Push right first so left is on top → left-to-right leaf order.
-                work.push_back(nm.get(n).children[1]);
-                work.push_back(nm.get(n).children[0]);
-            } else {
-                lits.push_back(lit_of_fml(n));
-            }
-        }
+        for (NodeId c : nm.get(f).children) lits.push_back(lit_of_fml(c));
         ctx_.sat.add_clause(std::span<const int>(lits));
         return;
     }

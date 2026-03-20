@@ -54,8 +54,7 @@ static void collect_eqs(NodeId f, UF& uf, const NodeManager& nm)
         if (nm.is_eq(n)) {
             uf.unite(nm.get(n).children[0], nm.get(n).children[1]);
         } else if (nm.is_and(n)) {
-            work.push_back(nm.get(n).children[0]);
-            work.push_back(nm.get(n).children[1]);
+            for (NodeId c : nm.get(n).children) work.push_back(c);
         }
         // Not / Or / Pred / Ite / … — stop (conservative)
     }
@@ -71,8 +70,7 @@ static void collect_or_branches(NodeId f, const NodeManager& nm,
     while (!work.empty()) {
         NodeId n = work.back(); work.pop_back();
         if (nm.is_or(n)) {
-            work.push_back(nm.get(n).children[0]);
-            work.push_back(nm.get(n).children[1]);
+            for (NodeId c : nm.get(n).children) work.push_back(c);
         } else {
             branches.push_back(n);
         }
@@ -137,8 +135,7 @@ static void extract_from(NodeId f, size_t top_idx, NodeManager& nm,
         if (nm.is_or(n)) {
             bridge_or(n, top_idx, nm, out, eq_out);
         } else if (nm.is_and(n)) {
-            work.push_back(nm.get(n).children[0]);
-            work.push_back(nm.get(n).children[1]);
+            for (NodeId c : nm.get(n).children) work.push_back(c);
         }
     }
 }

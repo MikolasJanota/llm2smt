@@ -358,24 +358,24 @@ TEST_F(SimpFix, ZeroPassesIsNoOp) {
     EXPECT_TRUE(nm.is_and(assertions[1]));
 }
 
-// ── And/Or nesting: no structural restructuring ───────────────────────────────
-// fold() performs constant folding but does NOT restructure nested And/Or trees.
-// Semantic simplification (true/false propagation) still works correctly at all
-// nesting depths. The SAT encoder handles nested binary And/Or natively.
+// ── And/Or nesting: flatten_=true merges nested And/Or into a single n-ary node ──
+// flatten_=false preserves the original binary tree structure unchanged.
 
 TEST_F(SimpFix, NestedAndUnchanged) {
-    // and(and(eq1,eq2), and(pa,pb)) — no constants → returned unchanged
+    // flatten=false: and(and(eq1,eq2), and(pa,pb)) — no constants → returned unchanged
     NodeId eq1 = EQ(NA, NB);
     NodeId eq2 = EQ(NC, ND);
     NodeId outer = AND(AND(eq1, eq2), AND(PA, PB));
+    s->set_flatten(false);
     EXPECT_EQ(s->fold(outer), outer);
 }
 
 TEST_F(SimpFix, NestedOrUnchanged) {
-    // or(or(eq1,eq2), or(pa,pb)) — no constants → returned unchanged
+    // flatten=false: or(or(eq1,eq2), or(pa,pb)) — no constants → returned unchanged
     NodeId eq1 = EQ(NA, NB);
     NodeId eq2 = EQ(NC, ND);
     NodeId outer = OR(OR(eq1, eq2), OR(PA, PB));
+    s->set_flatten(false);
     EXPECT_EQ(s->fold(outer), outer);
 }
 
@@ -387,23 +387,28 @@ TEST_F(SimpFix, NestedAndOrMixUnchanged) {
 }
 
 TEST_F(SimpFix, NestedAndDeepUnchanged) {
-    // and(and(eq,pa), and(pb,pc)) — no constants → returned unchanged
+    // flatten=false: and(and(eq,pa), and(pb,pc)) — no constants → returned unchanged
     NodeId eq = EQ(NA, NB);
     NodeId outer = AND(AND(eq, PA), AND(PB, PC));
+    s->set_flatten(false);
     EXPECT_EQ(s->fold(outer), outer);
 }
 
-TEST_F(SimpFix, SetFlattenIsNoOp) {
-    // set_flatten(false) keeps nested — same result as set_flatten(true)
+TEST_F(SimpFix, SetFlattenFalsePreservesStructure) {
+    // flatten=true (default) merges AND-in-AND into a single 4-ary node.
+    // flatten=false preserves the original binary nesting.
     NodeId eq1 = EQ(NA, NB);
     NodeId eq2 = EQ(NC, ND);
     NodeId outer = AND(AND(eq1, eq2), AND(PA, PB));
-    NodeId r_default = s->fold(outer);
-    s->set_flatten(false);
-    // A second Simplifier with flatten disabled should give the same result.
+    // Default flatten=true: produces a flat 4-ary AND, different from outer.
+    NodeId flat = s->fold(outer);
+    EXPECT_NE(flat, outer);
+    EXPECT_TRUE(nm.is_and(flat));
+    EXPECT_EQ(nm.get(flat).children.size(), 4u);
+    // flatten=false: binary nesting preserved.
     Simplifier s2(nm);
     s2.set_flatten(false);
-    EXPECT_EQ(s2.fold(outer), r_default);
+    EXPECT_EQ(s2.fold(outer), outer);
 }
 
 TEST_F(SimpFix, TrueInNestedAnd) {

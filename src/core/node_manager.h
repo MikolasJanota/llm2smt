@@ -66,6 +66,9 @@ public:
     NodeId mk_not(NodeId a);
     NodeId mk_and(NodeId a, NodeId b);
     NodeId mk_or(NodeId a, NodeId b);
+    // N-ary variants: 0 children → identity element; 1 child → the child itself.
+    NodeId mk_and(std::span<const NodeId> children);
+    NodeId mk_or(std::span<const NodeId> children);
     NodeId mk_implies(NodeId a, NodeId b);
     NodeId mk_xor(NodeId a, NodeId b);
     NodeId mk_iff(NodeId a, NodeId b);

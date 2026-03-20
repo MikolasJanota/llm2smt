@@ -84,6 +84,18 @@ NodeId NodeManager::mk_or(NodeId a, NodeId b) {
     return mk_app(or_sym_, args);
 }
 
+NodeId NodeManager::mk_and(std::span<const NodeId> children) {
+    if (children.empty()) return mk_true();
+    if (children.size() == 1) return children[0];
+    return mk_app(and_sym_, children);
+}
+
+NodeId NodeManager::mk_or(std::span<const NodeId> children) {
+    if (children.empty()) return mk_false();
+    if (children.size() == 1) return children[0];
+    return mk_app(or_sym_, children);
+}
+
 NodeId NodeManager::mk_implies(NodeId a, NodeId b) {
     NodeId args[] = {a, b};
     return mk_app(implies_sym_, args);
