@@ -14,8 +14,8 @@
 
 namespace llm2smt {
 
-Smt2Visitor::Smt2Visitor(SmtContext& ctx, const PreprocOptions& opts, Stats& stats)
-    : ctx_(ctx), opts_(opts), stats_(stats) {}
+Smt2Visitor::Smt2Visitor(SmtContext& ctx, PreprocOptions opts, Stats& stats)
+    : ctx_(ctx), opts_(std::move(opts)), stats_(stats) {}
 
 // ============================================================================
 // Helpers
@@ -1651,7 +1651,7 @@ void Smt2Visitor::print_model()
                 std::string body = entries[0].val;
                 for (int i = (int)entries.size() - 1; i >= 1; --i) {
                     body = "(ite " + entries[i].cond + "\n        "
-                         + entries[i].val + "\n        " + body + ")";
+                         + entries[i].val + "\n        " + std::move(body) + ")";
                 }
                 std::cout << "    " << body << ")\n";
             }

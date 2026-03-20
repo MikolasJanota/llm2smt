@@ -18,7 +18,7 @@ namespace llm2smt {
 
 class Smt2Visitor : public smt2parser::SMTLIBv2BaseVisitor {
 public:
-    explicit Smt2Visitor(SmtContext& ctx, const PreprocOptions& opts, Stats& stats);
+    explicit Smt2Visitor(SmtContext& ctx, PreprocOptions opts, Stats& stats);
 
     std::any visitStart(smt2parser::SMTLIBv2Parser::StartContext*) override;
     std::any visitCommand(smt2parser::SMTLIBv2Parser::CommandContext*) override;
