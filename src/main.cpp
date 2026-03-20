@@ -74,6 +74,8 @@ int main(int argc, char** argv) {
     app.add_option("--preprocess-passes", opts.passes,
                    "Number of simplifier passes (0 = disabled)")
        ->check(CLI::NonNegativeNumber);
+    app.add_flag("!--no-nary", opts.nary,
+                 "Build left-nested binary AND/OR nodes instead of n-ary");
     app.add_flag("!--no-flatten", opts.flatten,
                  "Disable And/Or flattening in the simplifier");
     auto* nnf_flag = app.add_flag("--nnf", opts.nnf,

@@ -8,6 +8,7 @@ namespace llm2smt {
 struct PreprocOptions {
     int         passes     = 0;      // number of simplifier passes (0 = disabled)
     bool        flatten    = true;   // And-in-And / Or-in-Or flattening in the simplifier
+    bool        nary       = true;   // use n-ary AND/OR nodes (false = left-nested binary)
     bool        nnf        = false;  // convert to Negation Normal Form before encoding
     bool        nnf_memo   = false;  // memoize NNF traversal (helps on DAG-heavy inputs)
     bool        selectors  = false;  // selector variable technique (requires nnf = true)

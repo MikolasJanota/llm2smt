@@ -895,7 +895,10 @@ NodeId Smt2Visitor::build_fml(
         std::vector<NodeId> ids;
         ids.reserve(flat.size());
         for (auto* t : flat) ids.push_back(build_fml(t));
-        return nm.mk_and(ids);
+        if (opts_.nary) return nm.mk_and(ids);
+        NodeId r = ids[0];
+        for (size_t i = 1; i < ids.size(); ++i) r = nm.mk_and(r, ids[i]);
+        return r;
     }
 
     if (op == "or") {
@@ -920,7 +923,10 @@ NodeId Smt2Visitor::build_fml(
         std::vector<NodeId> ids;
         ids.reserve(flat.size());
         for (auto* t : flat) ids.push_back(build_fml(t));
-        return nm.mk_or(ids);
+        if (opts_.nary) return nm.mk_or(ids);
+        NodeId r = ids[0];
+        for (size_t i = 1; i < ids.size(); ++i) r = nm.mk_or(r, ids[i]);
+        return r;
     }
 
     // (=> A B ...) right-assoc: build as implies chain (A → (B → ... → last))
