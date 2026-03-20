@@ -208,14 +208,20 @@ NodeId Simplifier::subst_many_and_fold(NodeId root,
         const NodeData& d   = nm_.get(f);
         SymbolId         sym = d.sym;
         const auto&      ch  = d.children;
-        std::vector<NodeId> new_ch(ch.size());
+        const auto       nch = ch.size();
+        // Stack buffer for ≤3-child connectives (ite/implies/xor/iff);
+        // heap vector only for n-ary AND/OR.
+        std::array<NodeId, 3> buf{};
+        std::vector<NodeId>   heap;
+        if (nch > buf.size()) heap.resize(nch);
+        NodeId* const ptr = (nch <= buf.size()) ? buf.data() : heap.data();
         bool any_change = false;
-        for (size_t i = 0; i < ch.size(); ++i) {
-            new_ch[i] = subst_cache_.at(ch[i]);
-            if (new_ch[i] != ch[i]) any_change = true;
+        for (size_t i = 0; i < nch; ++i) {
+            ptr[i] = subst_cache_.at(ch[i]);
+            if (ptr[i] != ch[i]) any_change = true;
         }
         if (!any_change) { subst_cache_[f] = f; return; }
-        subst_cache_[f] = fold(nm_.mk_app(sym, std::span<const NodeId>(new_ch)));
+        subst_cache_[f] = fold(nm_.mk_app(sym, std::span<const NodeId>(ptr, nch)));
     };
 
     struct Frame { NodeId n; bool ready; };
@@ -310,14 +316,18 @@ NodeId Simplifier::normalize_eq_fml(NodeId root)
         const NodeData& d   = nm_.get(f);
         SymbolId         sym = d.sym;
         const auto&      ch  = d.children;
-        std::vector<NodeId> new_ch(ch.size());
+        const auto       nch = ch.size();
+        std::array<NodeId, 3> buf{};
+        std::vector<NodeId>   heap;
+        if (nch > buf.size()) heap.resize(nch);
+        NodeId* const ptr = (nch <= buf.size()) ? buf.data() : heap.data();
         bool any_change = false;
-        for (size_t i = 0; i < ch.size(); ++i) {
-            new_ch[i] = norm_cache_.at(ch[i]);
-            if (new_ch[i] != ch[i]) any_change = true;
+        for (size_t i = 0; i < nch; ++i) {
+            ptr[i] = norm_cache_.at(ch[i]);
+            if (ptr[i] != ch[i]) any_change = true;
         }
         if (!any_change) { norm_cache_[f] = f; return; }
-        norm_cache_[f] = fold(nm_.mk_app(sym, std::span<const NodeId>(new_ch)));
+        norm_cache_[f] = fold(nm_.mk_app(sym, std::span<const NodeId>(ptr, nch)));
     };
 
     struct Frame { NodeId n; bool ready; };
