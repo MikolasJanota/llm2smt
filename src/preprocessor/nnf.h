@@ -41,16 +41,12 @@ inline NodeId NnfTransformer::pos(NodeId f)
         r = neg(nm_.get(f).children[0]);
     } else if (nm_.is_and(f)) {
         std::vector<NodeId> ch(nm_.get(f).children);   // copy before recursing
-        std::vector<NodeId> new_ch;
-        new_ch.reserve(ch.size());
-        for (NodeId c : ch) new_ch.push_back(pos(c));
-        r = nm_.mk_and(new_ch);
+        for (NodeId& c : ch) c = pos(c);
+        r = nm_.mk_and(ch);
     } else if (nm_.is_or(f)) {
         std::vector<NodeId> ch(nm_.get(f).children);
-        std::vector<NodeId> new_ch;
-        new_ch.reserve(ch.size());
-        for (NodeId c : ch) new_ch.push_back(pos(c));
-        r = nm_.mk_or(new_ch);
+        for (NodeId& c : ch) c = pos(c);
+        r = nm_.mk_or(ch);
     } else if (nm_.is_implies(f)) {
         NodeId c0 = nm_.get(f).children[0];
         NodeId c1 = nm_.get(f).children[1];
@@ -97,17 +93,13 @@ inline NodeId NnfTransformer::neg(NodeId f)
     } else if (nm_.is_and(f)) {
         // De Morgan: ¬(A₁ ∧ … ∧ Aₙ) = (¬A₁ ∨ … ∨ ¬Aₙ)
         std::vector<NodeId> ch(nm_.get(f).children);   // copy before recursing
-        std::vector<NodeId> new_ch;
-        new_ch.reserve(ch.size());
-        for (NodeId c : ch) new_ch.push_back(neg(c));
-        r = nm_.mk_or(new_ch);
+        for (NodeId& c : ch) c = neg(c);
+        r = nm_.mk_or(ch);
     } else if (nm_.is_or(f)) {
         // De Morgan: ¬(A₁ ∨ … ∨ Aₙ) = (¬A₁ ∧ … ∧ ¬Aₙ)
         std::vector<NodeId> ch(nm_.get(f).children);
-        std::vector<NodeId> new_ch;
-        new_ch.reserve(ch.size());
-        for (NodeId c : ch) new_ch.push_back(neg(c));
-        r = nm_.mk_and(new_ch);
+        for (NodeId& c : ch) c = neg(c);
+        r = nm_.mk_and(ch);
     } else if (nm_.is_implies(f)) {
         // ¬(A → B) = (A ∧ ¬B)
         NodeId c0 = nm_.get(f).children[0];

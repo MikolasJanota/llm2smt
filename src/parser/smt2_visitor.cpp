@@ -877,7 +877,6 @@ NodeId Smt2Visitor::build_fml(
         auto terms = ctx->term();
         if (terms.empty()) return nm.mk_true();
         // Flatten nested ANDs iteratively to avoid stack overflow on deeply-nested formulas.
-        // Collect all leaf sub-terms, then build a single n-ary AND node.
         using TC = smt2parser::SMTLIBv2Parser::TermContext;
         std::vector<TC*> work, flat;
         for (auto* t : terms | std::views::reverse) work.push_back(t);
@@ -905,7 +904,6 @@ NodeId Smt2Visitor::build_fml(
         auto terms = ctx->term();
         if (terms.empty()) return nm.mk_false();
         // Flatten nested ORs iteratively to avoid stack overflow on deeply-nested formulas.
-        // Collect all leaf sub-terms, then build a single n-ary OR node.
         using TC = smt2parser::SMTLIBv2Parser::TermContext;
         std::vector<TC*> work, flat;
         for (auto* t : terms | std::views::reverse) work.push_back(t);

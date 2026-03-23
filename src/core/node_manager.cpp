@@ -16,8 +16,8 @@ NodeManager::NodeManager() {
     true_sym_     = symtab_.intern("__true",     0, BOOL_SORT);
     false_sym_    = symtab_.intern("__false",    0, BOOL_SORT);
     not_sym_      = symtab_.intern("__not",      1, BOOL_SORT);
-    and_sym_      = symtab_.intern("__and",      2, BOOL_SORT);
-    or_sym_       = symtab_.intern("__or",       2, BOOL_SORT);
+    and_sym_      = symtab_.intern("__and",      0, BOOL_SORT);  // 0 = variadic
+    or_sym_       = symtab_.intern("__or",       0, BOOL_SORT);  // 0 = variadic
     implies_sym_  = symtab_.intern("__implies",  2, BOOL_SORT);
     xor_sym_      = symtab_.intern("__xor",      2, BOOL_SORT);
     iff_sym_      = symtab_.intern("__iff",      2, BOOL_SORT);
