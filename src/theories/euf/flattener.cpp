@@ -1,8 +1,8 @@
 #include "theories/euf/flattener.h"
 
 #include <cassert>
+#include <cstdio>
 #include <span>
-#include <string>
 
 namespace llm2smt {
 
@@ -10,7 +10,8 @@ Flattener::Flattener(NodeManager& nm, CC& cc)
     : nm_(nm), cc_(cc) {}
 
 NodeId Flattener::fresh_const() {
-    std::string name = "__flat_" + std::to_string(fresh_counter_++);
+    char name[32];
+    std::snprintf(name, sizeof(name), "__flat_%u", fresh_counter_++);
     SymbolId sym = nm_.declare_symbol(name, 0);
     NodeId n = nm_.mk_const(sym);
     cc_.add_node(n);
@@ -52,7 +53,7 @@ NodeId Flattener::do_flatten(NodeId term, std::vector<FlatEq>& eqs) {
 
         // The application node @(cur, arg_flat) needs a fresh constant to represent it
         // unless it already exists in the node manager
-        std::vector<NodeId> app_children = {cur, arg_flat};
+        NodeId app_children[2] = {cur, arg_flat};
         NodeId app_node = nm_.mk_app(at, std::span<const NodeId>(app_children));
 
         auto it2 = node_to_cc_.find(app_node);

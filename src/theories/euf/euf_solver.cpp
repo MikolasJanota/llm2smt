@@ -275,11 +275,8 @@ void EufSolver::build_conflict(const std::vector<EqId>& explanation, int diseq_l
         // In that case treat it as permanent: including the pre-registered SAT
         // literal would produce a tautological clause {V, ¬V} that crashes
         // CaDiCaL's analyze().
-        if (permanent_flat_eqs_.count(key)) {
-            // Record original-node pair for proof emission.
-            auto pit = permanent_flat_to_orig_.find(key);
-            if (pit != permanent_flat_to_orig_.end())
-                perm_deps.push_back(pit->second);
+        if (auto pit = permanent_flat_to_orig_.find(key); pit != permanent_flat_to_orig_.end()) {
+            perm_deps.push_back(pit->second);
             continue;
         }
         auto it = flat_atom_to_lit_.find(key);
@@ -431,11 +428,11 @@ void EufSolver::discover_propagations() {
             std::vector<EqId> expl = cc_.explain(atom.flat_lhs, atom.flat_rhs,
                                                   record_proofs_ ? &raw_congs : nullptr);
             std::vector<std::pair<NodeId,NodeId>> perm_deps;
-            reason_clauses_[lit] = build_reason_clause(lit, expl,
-                                                        record_proofs_ ? &perm_deps : nullptr);
+            const std::vector<int>& rc =
+                reason_clauses_[lit] = build_reason_clause(lit, expl,
+                                                            record_proofs_ ? &perm_deps : nullptr);
             if (record_proofs_) record_cong_steps(raw_congs);
             if (record_proofs_) {
-                const auto& rc = reason_clauses_[lit];
                 // Already-assigned atoms are SAT-assigned directly from the problem
                 // hypotheses.  bv_decide can recover them from the propositional
                 // hypothesis axioms without a separate theory lemma.  Crucially, the
@@ -521,13 +518,8 @@ std::vector<int> EufSolver::build_reason_clause(int plit,
         // both in flat_atom_to_lit_ and permanent_flat_eqs_ if register_equality
         // was called before the simplifier decided it was permanent.  Treat as
         // permanent so the reason clause stays non-tautological.
-        if (permanent_flat_eqs_.count(key)) {
-            // Collect perm_deps when requested (for proof emission).
-            if (out_perm_deps) {
-                auto pit = permanent_flat_to_orig_.find(key);
-                if (pit != permanent_flat_to_orig_.end())
-                    out_perm_deps->push_back(pit->second);
-            }
+        if (auto pit = permanent_flat_to_orig_.find(key); pit != permanent_flat_to_orig_.end()) {
+            if (out_perm_deps) out_perm_deps->push_back(pit->second);
             continue;
         }
         auto it = flat_atom_to_lit_.find(key);

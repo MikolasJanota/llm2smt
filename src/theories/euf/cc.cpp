@@ -450,10 +450,10 @@ std::vector<EqId> CC::explain(NodeId a, NodeId b,
         explain_path(y, lca, explain_uf_, explain_worklist_, result, out_cong);
     }
 
-    // Deduplicate
+    // Deduplicate: remove sentinel NULLs first (reduces sort input), then dedup.
+    result.erase(std::remove(result.begin(), result.end(), NULL_EQ), result.end());
     std::sort(result.begin(), result.end());
     result.erase(std::unique(result.begin(), result.end()), result.end());
-    result.erase(std::remove(result.begin(), result.end(), NULL_EQ), result.end());
 
     return result;
 }
