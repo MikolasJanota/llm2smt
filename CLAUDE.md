@@ -108,39 +108,40 @@ emitted as **standalone `theorem` declarations** proved by `grind`, NOT as
 inline `have` statements inside `theorem contradiction`.  This keeps the
 contradiction proof context small and avoids Lean performance issues.
 
+Equalities are emitted as Prop-level (`a = b`), not Bool-wrapped (`decide (a = b)`).
+The Lean import is `import Mathlib.Tactic` (not `Std.Tactic.BVDecide`).
+
 ```lean
 -- Theory lemmas: standalone, proved by grind before contradiction.
-theorem cl_0 : decide (a = c) ∨ ¬(decide (a = b)) ∨ ¬(decide (b = c)) := by grind
-theorem cl_1 : decide (x = y) ∨ ¬(decide (x = y)) := by grind   -- trivial
+theorem cl_0 : a = c ∨ ¬(a = b) ∨ ¬(b = c) := by grind
+theorem cl_1 : x = y ∨ ¬(x = y) := by grind   -- trivial
 -- Some lemmas need a specific hypothesis because a positive literal in the
 -- clause is a direct problem assertion (not a pure EUF tautology).
 -- Load only the relevant hypothesis — do not load all hypotheses:
-theorem cl_4 : decide (c3 = c0) ∨ ¬(decide (c1 = c0)) := by
-  have hyp3 := hyp3   -- hyp3 : decide (c3 = c0)  (needed for grind)
+theorem cl_4 : c3 = c0 ∨ ¬(c1 = c0) := by
+  have hyp3 := hyp3   -- hyp3 : c3 = c0  (needed for grind)
   grind
 -- Ite semantics with proxy constant need the proxy=ite hypothesis:
-theorem ite_pos_0 : ¬(decide c) ∨ decide (proxy = then_node) := by
-  have hyp5 := hyp5   -- hyp5 : decide (proxy = (if c then then_node else else_node))
+theorem ite_pos_0 : ¬cond ∨ (proxy = then_node) := by
+  have hyp5 := hyp5   -- hyp5 : proxy = (if cond then then_node else else_node)
   grind
 
--- Contradiction: load all hyp axioms and pre-proved theorems, then bv_decide.
+-- Contradiction: load all hyp axioms and pre-proved theorems, then grind.
 theorem contradiction : False := by
   have hyp1 := hyp1
   ...
   have cl_0 := cl_0
   have cl_1 := cl_1
   ...
-  bv_decide
+  grind
 ```
 
 **Rules:**
-- `grind` is used **only** to prove individual theory lemmas (standalone theorems).
-- **`theorem contradiction` MUST end with `bv_decide`. NEVER use `grind` there.**
-  If `bv_decide` gives a spurious counterexample, the fix is to emit more/better
-  theory lemmas (shorter conflict clauses, congruence lemmas, transitivity lemmas)
-  — NOT to switch `theorem contradiction` to `grind`.
-  A regression test (`smt2/proof_contradiction_uses_bv_decide`) enforces this.
-- `bv_decide` does the propositional closure over pre-established theory lemmas.
+- All EUF equalities are emitted as Prop (`a = b`), not Bool-wrapped (`decide (a = b)`).
+  `bv_decide` crashes (SIGSEGV) on UF atoms in Lean 4.29.0-rc2; the correct tactic is `grind`.
+- `grind` proves both individual theory lemmas AND the final `theorem contradiction`.
+- **`theorem contradiction` MUST end with `grind`. NEVER use `bv_decide` or `simp_all` there.**
+  A regression test (`smt2/proof_contradiction_uses_grind`) enforces this.
 - For theory lemmas that need context (their positive literals reference direct
   assertions), load only the specific hypothesis needed — do not load all hyps.
 - `grind` **cannot** see global `axiom` declarations without an explicit

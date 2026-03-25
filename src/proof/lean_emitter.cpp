@@ -112,6 +112,12 @@ std::string LeanEmitter::node_to_lean(NodeId n, const NodeManager& nm) const
         auto it = ctx_->ite_nodes.find(n);
         if (it != ctx_->ite_nodes.end()) {
             const IteInfo& info = it->second;
+            // Fold constant conditions to avoid `if False then ... else e` in Lean
+            // which bv_decide cannot reduce (it treats the ite as an opaque term).
+            if (nm.is_false_node(info.cond)) return node_to_lean(info.else_node, nm);
+            if (nm.is_true_node(info.cond))  return node_to_lean(info.then_node, nm);
+            // Both branches identical: fold away the condition entirely.
+            if (info.then_node == info.else_node) return node_to_lean(info.then_node, nm);
             return "(if " + fml_to_lean_cond(info.cond, nm)
                    + " then " + node_to_lean(info.then_node, nm)
                    + " else " + node_to_lean(info.else_node, nm) + ")";
@@ -170,12 +176,18 @@ std::string LeanEmitter::fml_to_lean_cond(NodeId f, const NodeManager& nm) const
         return "¬(" + fml_to_lean_cond(c, nm) + ")";
     }
     if (nm.is_and(f)) {
-        NodeId c0 = nm.get(f).children[0], c1 = nm.get(f).children[1];
-        return "(" + fml_to_lean_cond(c0, nm) + " ∧ " + fml_to_lean_cond(c1, nm) + ")";
+        const auto& ch = nm.get(f).children;
+        std::string r = fml_to_lean_cond(ch[0], nm);
+        for (size_t i = 1; i < ch.size(); ++i)
+            r = "(" + r + " ∧ " + fml_to_lean_cond(ch[i], nm) + ")";
+        return r;
     }
     if (nm.is_or(f)) {
-        NodeId c0 = nm.get(f).children[0], c1 = nm.get(f).children[1];
-        return "(" + fml_to_lean_cond(c0, nm) + " ∨ " + fml_to_lean_cond(c1, nm) + ")";
+        const auto& ch = nm.get(f).children;
+        std::string r = fml_to_lean_cond(ch[0], nm);
+        for (size_t i = 1; i < ch.size(); ++i)
+            r = "(" + r + " ∨ " + fml_to_lean_cond(ch[i], nm) + ")";
+        return r;
     }
     if (nm.is_implies(f)) {
         NodeId c0 = nm.get(f).children[0], c1 = nm.get(f).children[1];
@@ -211,24 +223,39 @@ std::string LeanEmitter::fml_to_lean(NodeId f, const NodeManager& nm) const
         // an opaque atom that it could assign false (reflexivity is not built in).
         if (lhs == rhs) return "True";
         // mk_eq already canonicalized (min first)
-        return "decide (" + node_to_lean(lhs, nm) + " = " + node_to_lean(rhs, nm) + ")";
+        std::string lhs_str = node_to_lean(lhs, nm);
+        std::string rhs_str = node_to_lean(rhs, nm);
+        // After ITE constant folding two nodes may render identically (e.g.
+        // eq(c3, ite(False,c0,c3)) renders as "c3 = c3").  Treat as True.
+        if (lhs_str == rhs_str) return "True";
+        return lhs_str + " = " + rhs_str;
     }
     if (nm.is_atom_node(f))
-        return "decide (" + node_to_lean(f, nm) + ")";
+        return node_to_lean(f, nm);
     if (nm.is_not(f)) {
         NodeId c = nm.get(f).children[0];
         // ¬(a = a) is always false; emit "False" so bv_decide can't satisfy it.
         if (nm.is_eq(c) && nm.get(c).children[0] == nm.get(c).children[1])
             return "False";
-        return "¬(" + fml_to_lean(c, nm) + ")";
+        std::string inner = fml_to_lean(c, nm);
+        // Fold ¬True → False and ¬False → True so bv_decide sees canonical atoms.
+        if (inner == "True")  return "False";
+        if (inner == "False") return "True";
+        return "¬(" + inner + ")";
     }
     if (nm.is_and(f)) {
-        NodeId c0 = nm.get(f).children[0], c1 = nm.get(f).children[1];
-        return "(" + fml_to_lean(c0, nm) + " ∧ " + fml_to_lean(c1, nm) + ")";
+        const auto& ch = nm.get(f).children;
+        std::string r = fml_to_lean(ch[0], nm);
+        for (size_t i = 1; i < ch.size(); ++i)
+            r = "(" + r + " ∧ " + fml_to_lean(ch[i], nm) + ")";
+        return r;
     }
     if (nm.is_or(f)) {
-        NodeId c0 = nm.get(f).children[0], c1 = nm.get(f).children[1];
-        return "(" + fml_to_lean(c0, nm) + " ∨ " + fml_to_lean(c1, nm) + ")";
+        const auto& ch = nm.get(f).children;
+        std::string r = fml_to_lean(ch[0], nm);
+        for (size_t i = 1; i < ch.size(); ++i)
+            r = "(" + r + " ∨ " + fml_to_lean(ch[i], nm) + ")";
+        return r;
     }
     if (nm.is_implies(f)) {
         NodeId c0 = nm.get(f).children[0], c1 = nm.get(f).children[1];
@@ -295,7 +322,11 @@ void LeanEmitter::emit(std::ostream& out,
         }
     }
 
-    out << "import Std.Tactic.BVDecide\n\n";
+    out << "import Mathlib.Tactic\n";
+    out << "set_option maxRecDepth 10000\n";
+    out << "set_option maxHeartbeats 4000000\n";
+    out << "set_option linter.unusedVariables false\n";
+    out << "set_option linter.unusedSimpArgs false\n\n";
     out << "noncomputable section\n";
     out << "open Classical\n\n";
 
@@ -384,12 +415,12 @@ void LeanEmitter::emit(std::ostream& out,
         bool has_proxy = (proxy_it != ite_proxy_for_.end());
         NodeId eff_id = has_proxy ? proxy_it->second : ite_id;
 
-        // then-branch: ¬cond ∨ decide(canon(eff, then))
+        // then-branch: ¬cond ∨ (canon(eff) = then)
         {
             NodeId lhs_id = eff_id, rhs_id = info.then_node;
             if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
             std::string tname = "ite_pos_" + std::to_string(ite_clause_idx);
-            std::string body = "¬(" + cond_lean + ") ∨ decide ("
+            std::string body = "¬(" + cond_lean + ") ∨ ("
                 + node_to_lean(lhs_id, nm) + " = " + node_to_lean(rhs_id, nm) + ")";
             out << "theorem " << tname << " : " << body << " := by";
             if (has_proxy) {
@@ -401,12 +432,12 @@ void LeanEmitter::emit(std::ostream& out,
             }
             standalone_names.push_back(tname);
         }
-        // else-branch: cond ∨ decide(canon(eff, else))
+        // else-branch: cond ∨ (canon(eff) = else)
         {
             NodeId lhs_id = eff_id, rhs_id = info.else_node;
             if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
             std::string tname = "ite_neg_" + std::to_string(ite_clause_idx);
-            std::string body = "(" + cond_lean + ") ∨ decide ("
+            std::string body = "(" + cond_lean + ") ∨ ("
                 + node_to_lean(lhs_id, nm) + " = " + node_to_lean(rhs_id, nm) + ")";
             out << "theorem " << tname << " : " << body << " := by";
             if (has_proxy) {
@@ -474,14 +505,14 @@ void LeanEmitter::emit(std::ostream& out,
                 NodeId lhs_id = ite_id, rhs_id = other;
                 if (lhs_id > rhs_id) std::swap(lhs_id, rhs_id);
                 const std::string ite_eq_other =
-                    "decide (" + node_to_lean(lhs_id, nm) + " = " + node_to_lean(rhs_id, nm) + ")";
+                    node_to_lean(lhs_id, nm) + " = " + node_to_lean(rhs_id, nm);
 
                 for (NodeId proxy : proxies) {
                     // Canonical ordering for proxy = other
                     NodeId p_lhs = proxy, p_rhs = other;
                     if (p_lhs > p_rhs) std::swap(p_lhs, p_rhs);
                     const std::string proxy_eq_other =
-                        "decide (" + node_to_lean(p_lhs, nm) + " = " + node_to_lean(p_rhs, nm) + ")";
+                        node_to_lean(p_lhs, nm) + " = " + node_to_lean(p_rhs, nm);
 
                     if (has_proxy_for_ite) {
                         // Emit BOTH bridge directions as standalone theorems.
@@ -491,8 +522,8 @@ void LeanEmitter::emit(std::ostream& out,
                         //   Dir 2: d(proxy=X) ∨ ¬d(ite=X)
                         //     eliminates spurious: d(ite=X)=true ∧ d(proxy=X)=false
                         // Also needed for branch atoms (then/else): hypothesis formulas
-                        // like d(branch=ite_inline) appear as opaque atoms that bv_decide
-                        // can assign independently of d(branch=proxy).
+                        // like (branch=ite_inline) appear without proxies, so simp_all
+                        // needs these bridges to connect them to proxy equalities.
                         const std::string& pname = ite_proxy_hyp_name.at(ite_id);
                         std::string tname1 = "ite_bridge_" + std::to_string(bridge_idx++);
                         out << "theorem " << tname1 << " : " << ite_eq_other
@@ -521,15 +552,14 @@ void LeanEmitter::emit(std::ostream& out,
     // the source is an Or formula whose disjuncts encode the ways pa=pb can hold.
     // For each disjunct (typically a conjunction of EUF atoms), emit a simple
     // implication theorem that grind can prove in isolation:
-    //   theorem eq_bridge_K : decide(A1) → decide(A2) → decide(pa=pb) := by grind
-    // bv_decide then does the propositional case-split over the source hypothesis.
+    //   theorem eq_bridge_K : A1 → A2 → pa = pb := by grind
+    // simp_all then does the propositional case-split over the source hypothesis.
     {
         size_t ebr_idx = 0;
         for (const auto& [canonical_pair, bridge_info] : ctx.eq_bridge_sources) {
             NodeId pa = canonical_pair.first, pb = canonical_pair.second;
-            // Conclusion: decide(pa=pb) — canonical pair is already min<max.
-            std::string concl = "decide (" + node_to_lean(pa, nm)
-                                 + " = " + node_to_lean(pb, nm) + ")";
+            // Conclusion: pa = pb — canonical pair is already min<max.
+            std::string concl = node_to_lean(pa, nm) + " = " + node_to_lean(pb, nm);
             NodeId src_fml = bridge_info.second;
             // Collect Or leaves from the binary Or tree.
             std::vector<NodeId> disjuncts;
@@ -577,7 +607,7 @@ void LeanEmitter::emit(std::ostream& out,
     // Grind sees global `axiom hyp_k` declarations directly, so no inline
     // `have hyp_k` bindings are needed.  After all theorems are declared,
     // `theorem contradiction` loads them via `have cl_k := cl_k` then calls
-    // `bv_decide` for propositional closure.
+    // `grind` for propositional closure.
     const auto& perm_deps_vec = ctx.euf.proof_unit_perm_deps();
     for (size_t i = 0; i < proof_conflicts.size(); ++i) {
         const auto& clause = proof_conflicts[i];
@@ -585,7 +615,7 @@ void LeanEmitter::emit(std::ostream& out,
         std::string body;
 
         // Unit clause with perm deps: pure EUF transitivity / congruence chain.
-        //   decide(pa0=pb0) → decide(pa1=pb1) → ... → decide(lhs=rhs)
+        //   pa0 = pb0 → pa1 = pb1 → ... → lhs = rhs
         if (clause.size() == 1 && i < perm_deps_vec.size() && !perm_deps_vec[i].empty()) {
             int lit = clause[0];
             int var = (lit > 0) ? lit : -lit;
@@ -596,11 +626,11 @@ void LeanEmitter::emit(std::ostream& out,
                 for (const auto& [pa, pb] : perm_deps_vec[i]) {
                     NodeId a = pa, b = pb;
                     if (a > b) std::swap(a, b);
-                    body += "decide (" + node_to_lean(a, nm) + " = "
-                          + node_to_lean(b, nm) + ") → ";
+                    body += node_to_lean(a, nm) + " = "
+                          + node_to_lean(b, nm) + " → ";
                 }
-                body += "decide (" + node_to_lean(lhs_id, nm) + " = "
-                      + node_to_lean(rhs_id, nm) + ")";
+                body += node_to_lean(lhs_id, nm) + " = "
+                      + node_to_lean(rhs_id, nm);
                 out << "theorem " << tname << " : " << body << " := by grind\n";
                 standalone_names.push_back(tname);
                 continue;
@@ -612,8 +642,8 @@ void LeanEmitter::emit(std::ostream& out,
             for (const auto& [pa, pb] : perm_deps_vec[i]) {
                 NodeId a = pa, b = pb;
                 if (a > b) std::swap(a, b);
-                body += "decide (" + node_to_lean(a, nm) + " = "
-                      + node_to_lean(b, nm) + ") → ";
+                body += node_to_lean(a, nm) + " = "
+                      + node_to_lean(b, nm) + " → ";
             }
         }
         bool first = true;
@@ -650,31 +680,29 @@ void LeanEmitter::emit(std::ostream& out,
                 std::string rhs_str = node_to_lean(rhs_id, nm);
                 // Normalize Bool-bridging sentinel equalities so theory-clause
                 // atoms match the fml_to_lean Pred rendering used in hypotheses.
-                // decide(True = p) → decide(p); decide(False = p) → ¬decide(p)
+                // (True = p) → p; (False = p) → ¬p
                 // The literal sign then negates the whole thing as usual.
                 bool sent_true  = (lhs_str == "True"  || rhs_str == "True");
                 bool sent_false = (lhs_str == "False" || rhs_str == "False");
                 const std::string& pred_str =
                     (lhs_str == "True" || lhs_str == "False") ? rhs_str : lhs_str;
                 if (sent_true) {
-                    body += (lit > 0) ? "decide (" + pred_str + ")"
-                                      : "¬(decide (" + pred_str + "))";
+                    body += (lit > 0) ? pred_str : "¬(" + pred_str + ")";
                 } else if (sent_false) {
-                    body += (lit > 0) ? "¬(decide (" + pred_str + "))"
-                                      : "decide (" + pred_str + ")";
+                    body += (lit > 0) ? "¬(" + pred_str + ")" : pred_str;
                 } else if (lit > 0) {
-                    body += "decide (" + lhs_str + " = " + rhs_str + ")";
+                    body += lhs_str + " = " + rhs_str;
                 } else {
-                    body += "¬(decide (" + lhs_str + " = " + rhs_str + "))";
+                    body += "¬(" + lhs_str + " = " + rhs_str + ")";
                 }
             } else {
                 auto nit = lit_to_node.find(var);
                 if (nit != lit_to_node.end()) {
                     std::string node_str = node_to_lean(nit->second, nm);
                     if (lit > 0)
-                        body += "decide (" + node_str + ")";
+                        body += node_str;
                     else
-                        body += "¬(decide (" + node_str + "))";
+                        body += "¬(" + node_str + ")";
                 }
             }
         }
@@ -732,11 +760,11 @@ void LeanEmitter::emit(std::ostream& out,
 
     // ── Transitivity completeness lemmas ──────────────────────────────────
     // For every pair of registered atoms (A=X, B=X) sharing a common
-    // effective term X, if decide(A=B) is also a registered atom, emit:
-    //   theorem trans_N : decide(A=B) ∨ ¬decide(A=X) ∨ ¬decide(B=X) := by grind
-    // These pure EUF tautologies give bv_decide the propositional backbone to
+    // effective term X, if (A=B) is also a registered atom, emit:
+    //   theorem trans_N : A=B ∨ ¬(A=X) ∨ ¬(B=X) := by grind
+    // These pure EUF tautologies give simp_all the propositional backbone to
     // close the contradiction (the conflict clauses alone may have premises that
-    // are SAT-decision atoms, so bv_decide needs these simpler lemmas to chain).
+    // are SAT-decision atoms, so simp_all needs these simpler lemmas to chain).
     {
         // Effective node ID after ite-proxy substitution.
         auto eff = [&](NodeId n) -> NodeId {
@@ -795,14 +823,11 @@ void LeanEmitter::emit(std::ostream& out,
                     if (!seen_trans.insert(key).second) continue;
 
                     // Emit each atom with the smaller NodeId first so that
-                    // all decide(P = Q) expressions use the same canonical
-                    // form as theory-clause atoms.  Without this, bv_decide
-                    // treats decide(a = b) and decide(b = a) as distinct
-                    // opaque Bool variables and cannot close the goal.
+                    // all (P = Q) expressions use the same canonical form
+                    // as theory-clause atoms.
                     auto atom_str = [&](NodeId P, NodeId Q) {
                         if (P > Q) std::swap(P, Q);
-                        return "decide (" + node_to_lean(P, nm) +
-                               " = " + node_to_lean(Q, nm) + ")";
+                        return node_to_lean(P, nm) + " = " + node_to_lean(Q, nm);
                     };
                     std::string tname = "trans_" + std::to_string(trans_idx++);
                     out << "theorem " << tname << " : "
@@ -818,9 +843,9 @@ void LeanEmitter::emit(std::ostream& out,
     // ── Congruence lemmas ──────────────────────────────────────────────────
     // For every congruence step recorded during CDCL proof tracing, emit a
     // standalone theorem that grind can prove.  Each step says:
-    //   decide(orig(r1) = orig(r2)) ∨ ¬decide(P1) ∨ ¬decide(P2) ∨ ...
+    //   orig(r1) = orig(r2) ∨ ¬(P1) ∨ ¬(P2) ∨ ...
     // The r1/r2 pair is a fully-applied original term (not a partial app).
-    // bv_decide uses these as propositional clauses bridging complex function
+    // simp_all uses these as propositional clauses bridging complex function
     // atoms to the simple registered SAT atoms.
     {
         const Flattener& flattener = ctx.euf.flattener();
@@ -834,15 +859,15 @@ void LeanEmitter::emit(std::ostream& out,
             if (orig_r1 == orig_r2) continue;
             // Canonical order (smaller NodeId first).
             if (orig_r1 > orig_r2) std::swap(orig_r1, orig_r2);
-            std::string body = "decide (" + node_to_lean(orig_r1, nm) +
-                               " = " + node_to_lean(orig_r2, nm) + ")";
+            std::string body = node_to_lean(orig_r1, nm) +
+                               " = " + node_to_lean(orig_r2, nm);
             for (int prem_lit : cs.premise_lits) {
                 auto eit = lit_to_atom.find(prem_lit);
                 if (eit == lit_to_atom.end()) continue;
                 NodeId lhs = eit->second.lhs, rhs = eit->second.rhs;
                 if (lhs > rhs) std::swap(lhs, rhs);
-                body += " ∨ ¬(decide (" + node_to_lean(lhs, nm) +
-                        " = " + node_to_lean(rhs, nm) + "))";
+                body += " ∨ ¬(" + node_to_lean(lhs, nm) +
+                        " = " + node_to_lean(rhs, nm) + ")";
             }
             std::string tname = "cong_" + std::to_string(cong_idx++);
             out << "theorem " << tname << " : " << body << " := by grind\n";
@@ -852,14 +877,31 @@ void LeanEmitter::emit(std::ostream& out,
 
     // ── Contradiction theorem ──────────────────────────────────────────────
     // Load all hypothesis axioms and pre-proved theory theorems into the local
-    // tactic context, then bv_decide closes the propositional contradiction.
+    // tactic context, then grind closes the propositional contradiction.
     // All EUF reasoning is captured in the standalone theorems above.
+    // Check if any hypothesis is trivially False (direct or buried in ∧).
+    // If so, emit exact/simp on that hypothesis directly.
+    // If any hypothesis directly renders as False, use exact to close immediately.
+    std::string false_exact;
+    for (size_t i = 0; i < proof_fmls.size(); ++i) {
+        if (fml_to_lean(proof_fmls[i], nm) == "False") {
+            false_exact = hyp_names[i];
+            break;
+        }
+    }
+
     out << "\ntheorem contradiction : False := by\n";
-    for (const std::string& name : hyp_names)
-        out << "  have " << name << " := " << name << "\n";
-    for (const std::string& name : standalone_names)
-        out << "  have " << name << " := " << name << "\n";
-    out << "  bv_decide\n";
+    if (!false_exact.empty()) {
+        // Directly-false hypothesis: use exact to close immediately.
+        out << "  have " << false_exact << " := " << false_exact << "\n";
+        out << "  exact " << false_exact << "\n";
+    } else {
+        for (const std::string& name : hyp_names)
+            out << "  have " << name << " := " << name << "\n";
+        for (const std::string& name : standalone_names)
+            out << "  have " << name << " := " << name << "\n";
+        out << "  grind\n";
+    }
 }
 
 } // namespace llm2smt

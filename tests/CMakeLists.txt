@@ -207,8 +207,8 @@ add_test(
 )
 
 # t54: --proof with --eq-bridge on 2-diamond chain (eq_diamond3): cl_0 must be a simple
-#      2-hop EUF transitivity decide(x0=x1) → decide(x1=x2) → decide(x0=x2).
-#      Regression: previously emitted complex (Or ∧ Or) → decide(x0=x2) which grind timed out on.
+#      2-hop EUF transitivity x0=x1 → x1=x2 → x0=x2.
+#      Regression: previously emitted complex (Or ∧ Or) → x0=x2 which grind timed out on.
 add_test(
     NAME "smt2/eq_bridge_proof_transitive_unit_clause"
     COMMAND bash -c
@@ -216,7 +216,7 @@ add_test(
          --proof ${CMAKE_BINARY_DIR}/t54_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t54_eq_bridge_diamond3_proof.smt2 && \
          grep -q 'eq_bridge_' ${CMAKE_BINARY_DIR}/t54_proof.lean && \
-         grep -q 'cl_0 :.*→.*→ decide' ${CMAKE_BINARY_DIR}/t54_proof.lean"
+         grep -q 'cl_0 :.*→.*→' ${CMAKE_BINARY_DIR}/t54_proof.lean"
 )
 
 # t56: --proof with non-unit conflict clause that has a permanent equality dep.
@@ -227,7 +227,7 @@ add_test(
     COMMAND bash -c
         "$<TARGET_FILE:llm2smt> --preprocess-passes 1 --proof ${CMAKE_BINARY_DIR}/t56_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t56_eq_bridge_perm_dep_nonunit.smt2 && \
-         grep -q 'cl_0 : decide.*→.*∨' ${CMAKE_BINARY_DIR}/t56_proof.lean"
+         grep -q 'cl_0 :.*→.*∨' ${CMAKE_BINARY_DIR}/t56_proof.lean"
 )
 
 # t55: --proof with Bool-formula argument (b0 : Bool → U applied to (= c1 c2)).
@@ -252,15 +252,14 @@ add_test(
     COMMAND bash -c
         "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t57_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t57_proof_perm_dep_unit_assign.smt2 && \
-         ! grep -qP '^theorem cl_\\d+ : decide \\([^)]+\\) := by grind' ${CMAKE_BINARY_DIR}/t57_proof.lean"
+         ! grep -qP '^theorem cl_\\d+ : \\w+ = \\w+ := by grind' ${CMAKE_BINARY_DIR}/t57_proof.lean"
 )
 
 # t58: --proof with --preprocess-passes 1 where perm equalities (c0=c1, c3=c2) change
 #      the canonical form of Eq atoms.  The proof snapshot must be taken AFTER the
 #      simplifier runs so that atom representations match the SAT encoding.
 #      Regression: previously the snapshot was taken before simplification, causing
-#      decide(c2=c0) in the proof — bv_decide treats it as a different opaque atom
-#      from the SAT-encoded form and fails with a spurious counterexample.
+#      c2=c0 in the proof — grind fails if the atom form mismatches the SAT encoding.
 add_test(
     NAME "smt2/proof_preproc_snapshot_after_simp"
     COMMAND bash -c
@@ -286,7 +285,7 @@ add_test(
 # t60: --proof with --preprocess-passes 1 where the EUF propagates permanently-forced
 #      equalities as SAT unit literals that appear in theory clause premises.
 #      The proof snapshot must include those forced atoms as explicit hypotheses so
-#      bv_decide can discharge the premises.
+#      grind can discharge the premises.
 #      Regression: proof_fail_000064 — forced atoms were not added to the proof snapshot.
 add_test(
     NAME "smt2/proof_forced_atoms_preproc"
@@ -294,7 +293,7 @@ add_test(
         "$<TARGET_FILE:llm2smt> --preprocess-passes 1 \
          --proof ${CMAKE_BINARY_DIR}/t60_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t60_proof_forced_atoms_preproc.smt2 && \
-         grep -q 'decide (c1 = (b1 p1))' ${CMAKE_BINARY_DIR}/t60_proof.lean"
+         grep -q 'c1 = (b1 p1)' ${CMAKE_BINARY_DIR}/t60_proof.lean"
 )
 
 # t48-t49: n-ary xor (:left-assoc)
@@ -328,15 +327,15 @@ add_test(
 )
 
 # t63: Regression: Bool-sorted predicate atoms in theory clauses were emitted as
-#      decide(True = (h a)) instead of decide((h a)), causing bv_decide to
-#      treat them as distinct atoms when --proof-minimize was used.
+#      (True = (h a)) instead of (h a), causing grind to fail when --proof-minimize
+#      was used.  The normalized form should just be the predicate application.
 add_test(
     NAME "smt2/proof_minimize_bool_pred"
     COMMAND bash -c
         "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t63_proof.lean --proof-minimize \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t63_proof_minimize_bool_pred.smt2 && \
          ! grep -q 'True = ' ${CMAKE_BINARY_DIR}/t63_proof.lean && \
-         grep -q 'decide ((h' ${CMAKE_BINARY_DIR}/t63_proof.lean"
+         grep -q '(h ' ${CMAKE_BINARY_DIR}/t63_proof.lean"
 )
 
 # t64: Regression: ite nodes inlined as `(if cond then a else b)` inside
@@ -351,8 +350,8 @@ add_test(
 )
 
 # t65: Regression: ite branch atoms excluded from ite_bridge emission caused
-#      bv_decide to treat decide(branch=ite_inline) as independent from
-#      decide(branch=proxy), allowing spurious counterexamples.
+#      grind to not have the bridge between (branch=ite_inline) and (branch=proxy),
+#      allowing spurious contradictions.
 add_test(
     NAME "smt2/proof_ite_branch_atom_bridge"
     COMMAND bash -c
@@ -364,17 +363,17 @@ add_test(
 add_smt2_test(nary_xor_unsat  t48_nary_xor_unsat.smt2  unsat)
 add_smt2_test(nary_xor_sat    t49_nary_xor_sat.smt2    sat)
 
-# Regression: theorem contradiction must use bv_decide, never grind.
-# (grind was tried when bv_decide failed on complex problems; that was wrong
-# because grind cannot scale to large propositional contexts and violates the
-# proof architecture invariant that bv_decide does all propositional closure.)
+# Regression: theorem contradiction must use grind, never simp_all or bv_decide.
+# (bv_decide crashes with SIGSEGV on UF atoms; grind is the correct closure tactic
+# for Prop-level EUF proofs.  The standalone theory lemmas are proved individually
+# by grind, and the contradiction theorem does the final propositional closure.)
 add_test(
-    NAME "smt2/proof_contradiction_uses_bv_decide"
+    NAME "smt2/proof_contradiction_uses_grind"
     COMMAND bash -c
         "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t_bvd_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t01_unsat_direct.smt2 && \
-         awk '/^theorem contradiction/,0' ${CMAKE_BINARY_DIR}/t_bvd_proof.lean | grep -q 'bv_decide' && \
-         ! awk '/^theorem contradiction/,0' ${CMAKE_BINARY_DIR}/t_bvd_proof.lean | grep -q '  grind'"
+         awk '/^theorem contradiction/,0' ${CMAKE_BINARY_DIR}/t_bvd_proof.lean | grep -q '  grind' && \
+         ! awk '/^theorem contradiction/,0' ${CMAKE_BINARY_DIR}/t_bvd_proof.lean | grep -q 'bv_decide'"
 )
 
 # t50: --eq-bridge eliminates exponential blowup on 19-diamond chain (diamond20)

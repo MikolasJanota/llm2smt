@@ -32,7 +32,8 @@ fi
 EXTRA_FLAGS=("${@:1:$#-1}")   # everything except last arg
 SMT2_FILE="${!#}"              # last arg
 
-PROOF=$(mktemp /tmp/oracle_XXXXXX.lean)
+_TMPBASE=${TMPDIR:-/tmp}; [ -d "$_TMPBASE" ] || _TMPBASE=/tmp/claude-1000
+PROOF=$(mktemp "${_TMPBASE}/oracle_XXXXXX.lean")
 trap 'rm -f "$PROOF"' EXIT
 
 # Step 1: run the solver.
