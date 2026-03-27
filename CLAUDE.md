@@ -103,49 +103,50 @@ No output = success. Any output = Lean error.
 
 ## Lean proof generation
 
-All EUF theory lemmas (`cl_k`, `ite_pos_k`, `ite_neg_k`, `ite_bridge_k`) are
-emitted as **standalone `theorem` declarations** proved by `grind`, NOT as
-inline `have` statements inside `theorem contradiction`.  This keeps the
-contradiction proof context small and avoids Lean performance issues.
+The proof has two layers:
 
-Equalities are emitted as Prop-level (`a = b`), not Bool-wrapped (`decide (a = b)`).
-The Lean import is `import Mathlib.Tactic` (not `Std.Tactic.BVDecide`).
+1. **EUF theory lemmas** (`cl_k`, `ite_pos_k`, `ite_neg_k`, `ite_bridge_k`,
+   `trans_k`, `cong_k`, `eq_bridge_k`) — emitted as **standalone `theorem`
+   declarations** proved by `grind`.  Each lemma is a small EUF tautology
+   (2–5 atoms); `grind` handles congruence closure over Prop equalities.
+
+2. **`theorem contradiction`** — loads all standalone theorems and hypothesis
+   axioms via `have`, then closes with `bv_decide`.  This is a propositional
+   SAT problem; `bv_decide` calls CaDiCaL and scales to hundreds of clauses.
+
+Equalities are emitted as Prop-level (`a = b`), not Bool-wrapped.
+The Lean import is `import Mathlib.Tactic`.
+`open Classical` (or per-sort `noncomputable instance : DecidableEq S := Classical.decEq S`)
+must appear in the preamble so that `bv_decide` can treat opaque equalities as
+atomic Boolean variables.
 
 ```lean
--- Theory lemmas: standalone, proved by grind before contradiction.
+-- Theory lemmas: standalone, proved by grind (small EUF tautologies).
 theorem cl_0 : a = c ∨ ¬(a = b) ∨ ¬(b = c) := by grind
-theorem cl_1 : x = y ∨ ¬(x = y) := by grind   -- trivial
--- Some lemmas need a specific hypothesis because a positive literal in the
--- clause is a direct problem assertion (not a pure EUF tautology).
--- Load only the relevant hypothesis — do not load all hypotheses:
+-- Lemmas that need a problem hypothesis load only the specific hyp needed:
 theorem cl_4 : c3 = c0 ∨ ¬(c1 = c0) := by
-  have hyp3 := hyp3   -- hyp3 : c3 = c0  (needed for grind)
-  grind
--- Ite semantics with proxy constant need the proxy=ite hypothesis:
-theorem ite_pos_0 : ¬cond ∨ (proxy = then_node) := by
-  have hyp5 := hyp5   -- hyp5 : proxy = (if cond then then_node else else_node)
+  have hyp3 := hyp3
   grind
 
--- Contradiction: load all hyp axioms and pre-proved theorems, then grind.
+-- Contradiction: load everything, then bv_decide for propositional closure.
 theorem contradiction : False := by
   have hyp1 := hyp1
   ...
   have cl_0 := cl_0
   have cl_1 := cl_1
   ...
-  grind
+  bv_decide
 ```
 
 **Rules:**
-- All EUF equalities are emitted as Prop (`a = b`), not Bool-wrapped (`decide (a = b)`).
-  `bv_decide` crashes (SIGSEGV) on UF atoms in Lean 4.29.0-rc2; the correct tactic is `grind`.
-- `grind` proves both individual theory lemmas AND the final `theorem contradiction`.
-- **`theorem contradiction` MUST end with `grind`. NEVER use `bv_decide` or `simp_all` there.**
-  A regression test (`smt2/proof_contradiction_uses_grind`) enforces this.
-- For theory lemmas that need context (their positive literals reference direct
-  assertions), load only the specific hypothesis needed — do not load all hyps.
-- `grind` **cannot** see global `axiom` declarations without an explicit
-  `have hyp_k := hyp_k` in the theorem body — load needed axioms explicitly.
+- `grind` for theory lemmas; `bv_decide` for `theorem contradiction`. Never swap these.
+  `grind` does NOT scale to large propositional problems.
+- The past SIGSEGV from `bv_decide` was a `TMPDIR` sandbox issue (now fixed in
+  `scripts/check_lean.sh`), NOT a `bv_decide` incompatibility with UF atoms.
+- All EUF equalities are emitted as Prop (`a = b`), not Bool-wrapped.
+- Theory lemmas are standalone, NOT inline `have`s inside contradiction.
+- For theory lemmas, load only the specific hypothesis needed — not all hyps.
+- `grind` cannot see global `axiom` declarations without an explicit `have h := h`.
 
 ## C++ style notes
 
