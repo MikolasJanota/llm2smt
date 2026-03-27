@@ -363,17 +363,16 @@ add_test(
 add_smt2_test(nary_xor_unsat  t48_nary_xor_unsat.smt2  unsat)
 add_smt2_test(nary_xor_sat    t49_nary_xor_sat.smt2    sat)
 
-# Regression: theorem contradiction must use grind, never simp_all or bv_decide.
-# (bv_decide crashes with SIGSEGV on UF atoms; grind is the correct closure tactic
-# for Prop-level EUF proofs.  The standalone theory lemmas are proved individually
-# by grind, and the contradiction theorem does the final propositional closure.)
+# Regression: theorem contradiction must end with bv_decide, never grind.
+# (bv_decide is the correct SAT-closure tactic for the propositional contradiction
+# once all EUF reasoning is captured in standalone theory lemmas proved by grind.)
 add_test(
-    NAME "smt2/proof_contradiction_uses_grind"
+    NAME "smt2/proof_contradiction_uses_bv_decide"
     COMMAND bash -c
         "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t_bvd_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t01_unsat_direct.smt2 && \
-         awk '/^theorem contradiction/,0' ${CMAKE_BINARY_DIR}/t_bvd_proof.lean | grep -q '  grind' && \
-         ! awk '/^theorem contradiction/,0' ${CMAKE_BINARY_DIR}/t_bvd_proof.lean | grep -q 'bv_decide'"
+         awk '/^theorem contradiction/,0' ${CMAKE_BINARY_DIR}/t_bvd_proof.lean | grep -q '  bv_decide' && \
+         ! awk '/^theorem contradiction/,0' ${CMAKE_BINARY_DIR}/t_bvd_proof.lean | grep -q '  grind'"
 )
 
 # t50: --eq-bridge eliminates exponential blowup on 19-diamond chain (diamond20)
