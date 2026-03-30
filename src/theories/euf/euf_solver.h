@@ -107,12 +107,19 @@ public:
     // A fully-resolved congruence step:
     //   decide(orig(result_lhs) = orig(result_rhs))  is implied by  ∧ premise_lits
     // where premise_lits are positive SAT literal ids for the leaf atoms.
+    // perm_eq_pairs are flat-node pairs (lhs, rhs) for permanent equalities
+    // (level-0 assertions) that are also part of the explanation chain but
+    // have no SAT literal.  The Lean emitter must load the corresponding
+    // hyp_k axioms explicitly so grind can use them.
     // The Lean emitter renders this as:
-    //   theorem cong_N : decide(r1=r2) ∨ ¬P1 ∨ ¬P2 ∨ ... := by grind
+    //   theorem cong_N : decide(r1=r2) ∨ ¬P1 ∨ ¬P2 ∨ ... := by
+    //     have hyp_j := hyp_j  -- for each perm eq pair
+    //     grind
     struct CongStep {
         NodeId result_lhs;
         NodeId result_rhs;
-        std::vector<int> premise_lits;  // positive SAT literals
+        std::vector<int>                           premise_lits;   // positive SAT literals
+        std::vector<std::pair<NodeId, NodeId>>     perm_eq_pairs;  // flat-node permanent eq pairs
     };
 
     const std::vector<CongStep>& proof_cong_steps() const {

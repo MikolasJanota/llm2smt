@@ -14,14 +14,12 @@
 # Environment (optional):
 #   ORACLE_SOLVER     path to the llm2smt binary (default: build-dbg/bin/llm2smt)
 #   ORACLE_CHECK      path to the proof-checker script (default: sandbox/check_proof.sh)
-#   ORACLE_PROJECT    --lean-project name forwarded to the solver (default: Experiments3)
 
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SOLVER="${ORACLE_SOLVER:-$REPO/build-dbg/bin/llm2smt}"
 CHECK="${ORACLE_CHECK:-$REPO/sandbox/check_proof.sh}"
-PROJECT="${ORACLE_PROJECT:-Experiments3}"
 
 # All args except the last are extra solver flags; the last arg is the smt2 file.
 if [[ $# -lt 1 ]]; then
@@ -37,8 +35,7 @@ PROOF=$(mktemp "${_TMPBASE}/oracle_XXXXXX.lean")
 trap 'rm -f "$PROOF"' EXIT
 
 # Step 1: run the solver.
-result=$(timeout 10 "$SOLVER" "${EXTRA_FLAGS[@]}" --proof "$PROOF" \
-         --lean-project "$PROJECT" "$SMT2_FILE" 2>/dev/null || true)
+result=$(timeout 10 "$SOLVER" "${EXTRA_FLAGS[@]}" --proof "$PROOF" "$SMT2_FILE" 2>/dev/null || true)
 
 [[ "$result" != "unsat" ]] && exit 0  # not unsat → not a proof case
 

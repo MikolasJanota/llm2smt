@@ -231,22 +231,37 @@ void EufSolver::record_cong_steps(const std::vector<CC::RawCongStep>& raw_congs)
         uint64_t key = atom_key(rcs.result_lhs, rcs.result_rhs);
         if (!proof_cong_seen_.insert(key).second) continue;
 
-        // Collect leaf SAT atoms for each premise pair.
-        std::vector<int> prem_lits;
-        if (rcs.fn_lhs != NULL_NODE && rcs.fn_lhs != rcs.fn_rhs) {
-            auto sub = cc_.explain(rcs.fn_lhs, rcs.fn_rhs);
-            auto lits = eqids_to_lits(sub);
-            prem_lits.insert(prem_lits.end(), lits.begin(), lits.end());
-        }
-        if (rcs.arg_lhs != NULL_NODE && rcs.arg_lhs != rcs.arg_rhs) {
-            auto sub = cc_.explain(rcs.arg_lhs, rcs.arg_rhs);
-            auto lits = eqids_to_lits(sub);
-            prem_lits.insert(prem_lits.end(), lits.begin(), lits.end());
-        }
+        // Collect leaf SAT atoms and permanent-equality pairs for each premise pair.
+        std::vector<int>                       prem_lits;
+        std::vector<std::pair<NodeId,NodeId>>  perm_pairs;
+        auto collect = [&](NodeId a, NodeId b) {
+            auto sub = cc_.explain(a, b);
+            for (EqId eq : sub) {
+                const Equation& e = cc_.get_equation(eq);
+                if (e.kind != EqKind::Atomic || e.rhs == NULL_NODE) continue;
+                uint64_t ekey = atom_key(e.lhs, e.rhs);
+                if (permanent_flat_eqs_.count(ekey)) {
+                    // Permanent equality: record original-node pair for the emitter.
+                    auto it = permanent_flat_to_orig_.find(ekey);
+                    if (it != permanent_flat_to_orig_.end())
+                        perm_pairs.push_back(it->second);
+                } else {
+                    auto it = flat_atom_to_lit_.find(ekey);
+                    if (it != flat_atom_to_lit_.end())
+                        prem_lits.push_back(it->second);
+                }
+            }
+        };
+        if (rcs.fn_lhs  != NULL_NODE && rcs.fn_lhs  != rcs.fn_rhs)  collect(rcs.fn_lhs,  rcs.fn_rhs);
+        if (rcs.arg_lhs != NULL_NODE && rcs.arg_lhs != rcs.arg_rhs) collect(rcs.arg_lhs, rcs.arg_rhs);
+
         std::sort(prem_lits.begin(), prem_lits.end());
         prem_lits.erase(std::unique(prem_lits.begin(), prem_lits.end()), prem_lits.end());
+        std::sort(perm_pairs.begin(), perm_pairs.end());
+        perm_pairs.erase(std::unique(perm_pairs.begin(), perm_pairs.end()), perm_pairs.end());
 
-        proof_cong_steps_.push_back({rcs.result_lhs, rcs.result_rhs, std::move(prem_lits)});
+        proof_cong_steps_.push_back({rcs.result_lhs, rcs.result_rhs,
+                                     std::move(prem_lits), std::move(perm_pairs)});
     }
 }
 

@@ -137,8 +137,16 @@ std::string LeanEmitter::node_to_lean(NodeId n, const NodeManager& nm) const
             }
             if (nm.is_atom_node(fml))
                 return node_to_lean(fml, nm);
-            // Compound formulas: fml_to_lean returns Prop via Bool→Prop coercion.
-            return "(" + fml_to_lean(fml, nm) + ")";
+            // Compound formulas: use fml_to_lean_cond (bare Prop, no decide wrapper)
+            // so that b0 : Prop → U arguments stay Prop-typed.
+            // Avoid wrapping simple identifiers in parens — "(p0)" vs "p0" would
+            // break the lhs_str == rhs_str reflexivity check in fml_to_lean.
+            {
+                std::string inner = fml_to_lean_cond(fml, nm);
+                bool is_simple = inner.find(' ') == std::string::npos
+                              && inner.find('(') == std::string::npos;
+                return is_simple ? inner : "(" + inner + ")";
+            }
         }
     }
     std::string sanitized = lean_ident(raw_name);
@@ -205,6 +213,9 @@ std::string LeanEmitter::fml_to_lean_cond(NodeId f, const NodeManager& nm) const
         NodeId c0 = nm.get(f).children[0];
         NodeId c1 = nm.get(f).children[1];
         NodeId c2 = nm.get(f).children[2];
+        // Fold constant conditions (mirrors fml_to_lean behaviour).
+        if (nm.is_true_node(c0))  return fml_to_lean_cond(c1, nm);
+        if (nm.is_false_node(c0)) return fml_to_lean_cond(c2, nm);
         const std::string c = fml_to_lean_cond(c0, nm);
         const std::string t = fml_to_lean_cond(c1, nm);
         const std::string e = fml_to_lean_cond(c2, nm);
@@ -274,6 +285,10 @@ std::string LeanEmitter::fml_to_lean(NodeId f, const NodeManager& nm) const
         NodeId c0 = nm.get(f).children[0];
         NodeId c1 = nm.get(f).children[1];
         NodeId c2 = nm.get(f).children[2];
+        // Fold constant conditions so bv_decide sees simplified atoms, not
+        // opaque (True → X) ∧ (¬True → Y) blocks it can't reduce.
+        if (nm.is_true_node(c0))  return fml_to_lean(c1, nm);
+        if (nm.is_false_node(c0)) return fml_to_lean(c2, nm);
         // ite(c,t,e) ≡ (c → t) ∧ (¬c → e)  — avoids `if` which requires Decidable c.
         const std::string c = fml_to_lean(c0, nm);
         const std::string t = fml_to_lean(c1, nm);
@@ -875,7 +890,26 @@ void LeanEmitter::emit(std::ostream& out,
                         " = " + node_to_lean(rhs, nm) + "))";
             }
             std::string tname = "cong_" + std::to_string(cong_idx++);
-            out << "theorem " << tname << " : " << body << " := by grind\n";
+            // Collect permanent-equality hyp names needed by grind.
+            // Permanent equalities have no SAT literal, so they are not in
+            // premise_lits; they must be loaded explicitly via have bindings.
+            std::vector<std::string> perm_hyps;
+            std::unordered_set<std::string> perm_hyps_seen;
+            for (const auto& [pa, pb] : cs.perm_eq_pairs) {
+                NodeId a = pa, b = pb;
+                if (a > b) std::swap(a, b);
+                auto it = eq_atom_to_hyp.find(node_pair_key(a, b));
+                if (it != eq_atom_to_hyp.end() && perm_hyps_seen.insert(it->second).second)
+                    perm_hyps.push_back(it->second);
+            }
+            if (perm_hyps.empty()) {
+                out << "theorem " << tname << " : " << body << " := by grind\n";
+            } else {
+                out << "theorem " << tname << " : " << body << " := by\n";
+                for (const std::string& h : perm_hyps)
+                    out << "  have " << h << " := " << h << "\n";
+                out << "  grind\n";
+            }
             standalone_names.push_back(tname);
         }
     }
