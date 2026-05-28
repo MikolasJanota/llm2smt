@@ -16,9 +16,9 @@ struct PreprocOptions {
     bool        proof_minimize = false; // remove unnecessary theory lemmas via UNSAT core
     bool        eq_bridge  = false;  // add common EUF consequences of disjunction branches
     bool        theory_propagation = true; // enable EUF theory propagation
-    int         prop_interval = 32;        // run propagation scan every N cb_propagate calls, adaptive doubling up to 1024 (default 32)
-    double      prop_assign_threshold = 0.25; // skip scan when (assigned/total) >= threshold; 0 = guard disabled
-    int         prop_delivery_budget = 1000;  // permanently stop scan after this many propagations delivered (0 = unlimited)
+    int         prop_interval = 32;        // process propagation candidates every N discovery calls, adaptive doubling up to 1024 (default 32)
+    double      prop_assign_threshold = 0.25; // skip candidate processing when (assigned/total) >= threshold; 0 = guard disabled
+    int         prop_delivery_budget = 1000;  // permanently stop discovery after this many propagations delivered (0 = unlimited)
 };
 
 } // namespace llm2smt

@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cassert>
-#include <numeric>
 #include <stdexcept>
 
 namespace llm2smt {
@@ -168,6 +167,8 @@ void CC::propagate() {
 void CC::do_merge(NodeId ra, NodeId rb) {
     // (Proof edge already set in propagate; this function only does the UF merge)
 
+    changed_nodes_.insert(changed_nodes_.end(), class_list_[rb].begin(), class_list_[rb].end());
+
     // Update repr for all nodes in rb's class
     for (NodeId c : class_list_[rb]) {
         record_set_repr(c, rb); // old repr was rb
@@ -209,6 +210,11 @@ void CC::do_merge(NodeId ra, NodeId rb) {
             record_use_list_pop(ra);
         }
     }
+}
+
+void CC::drain_changed_nodes(std::vector<NodeId>& out) {
+    out.insert(out.end(), changed_nodes_.begin(), changed_nodes_.end());
+    changed_nodes_.clear();
 }
 
 void CC::set_proof_edge(NodeId from, NodeId to, const EdgeLabel& label) {
@@ -424,9 +430,9 @@ std::vector<EqId> CC::explain(NodeId a, NodeId b,
     std::vector<EqId> result;
     if (a == b) return result;
 
-    // Re-initialise the persistent PathUF; resize() reuses the existing
-    // allocation when proof_parent_ hasn't grown since the last call.
-    explain_uf_.init(proof_parent_.size());
+    // Start a fresh generation of the persistent PathUF. Nodes are initialized
+    // lazily as explanation paths touch them.
+    explain_uf_.begin(proof_parent_.size());
 
     // Reuse the persistent worklist vector; processed as a stack (LIFO)
     // since explain order is irrelevant for correctness.

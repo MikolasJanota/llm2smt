@@ -157,3 +157,24 @@ theorem contradiction : False := by
 - The CC module (`src/theories/euf/cc.cpp`) must only store **flat** nodes (constants or single-level applications).
 - Structural (app) equations are registered at level 0 (inside `register_equality`, never inside `notify_assignment`) so they are permanent and never undone on backtrack.
 - `re_register_all()` was intentionally removed; do not reintroduce it.
+
+## Performance investigation notes
+
+These are observed hotspots / likely inefficiencies to revisit with benchmark data:
+
+- `EufSolver::record_cong_steps()` in `src/theories/euf/euf_solver.cpp`
+  recursively calls `cc_.explain()` for each congruence premise pair. In proof
+  mode this can duplicate work across repeated premise pairs. Consider memoizing
+  premise explanations for the duration of one proof-recording batch.
+- `let` / 0-arity `define-fun` expansion is lazy and re-visits the stored parse
+  subtree at each use. Hash-consing avoids duplicate `NodeId`s, and the existing
+  Tseitin caches help for some formula contexts, but repeated uses still redo
+  parse traversal, sort checks, and clause-generation checks. If large macros
+  appear in benchmarks, cache expanded `NodeId` / literal results per binding
+  where side effects are safe and already idempotent.
+- `bridge_disjunctions()` in `src/preprocessor/disjunction_bridge.cpp` has an
+  intentional O(branches × shared-nodes²) pair check. This is useful for diamond
+  instances but can become expensive on wide disjunctions with many shared
+  equality terms. A future implementation could iterate equivalence classes from
+  one branch and test only pairs within those classes, rather than all shared
+  node pairs.

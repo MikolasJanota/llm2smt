@@ -96,13 +96,13 @@ int main(int argc, char** argv) {
     app.add_flag("!--no-theory-prop", opts.theory_propagation,
                  "Disable EUF theory propagation (ablation: conflict detection is preserved)");
     app.add_option("--prop-interval", opts.prop_interval,
-                   "Run EUF propagation scan every N cb_propagate calls; adaptive doubling up to 1024 (default 32)")
+                   "Process EUF propagation candidates every N discovery calls; adaptive doubling up to 1024 (default 32)")
        ->check(CLI::PositiveNumber);
     app.add_option("--prop-assign-threshold", opts.prop_assign_threshold,
-                   "Skip EUF propagation scan when (assigned vars)/(total vars) >= THRESHOLD; 0=guard disabled (always scan), 1=skip only when all vars assigned (default 0.25)")
+                   "Skip EUF propagation candidate processing when (assigned vars)/(total vars) >= THRESHOLD; 0=guard disabled, 1=skip only when all vars assigned (default 0.25)")
        ->check(CLI::Range(0.0, 1.0));
     app.add_option("--prop-delivery-budget", opts.prop_delivery_budget,
-                   "Permanently stop propagation scan after delivering this many theory literals (default 1000; 0=unlimited)")
+                   "Permanently stop EUF propagation discovery after delivering this many theory literals (default 1000; 0=unlimited)")
        ->check(CLI::NonNegativeNumber);
 
     app.add_flag("--stats", g_print_stats, "Print solver statistics to stderr after solving");

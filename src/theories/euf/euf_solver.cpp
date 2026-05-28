@@ -35,6 +35,13 @@ int EufSolver::register_equality(NodeId lhs, NodeId rhs) {
     // Also index by flat node ids so build_conflict can find equations whose
     // lhs/rhs are the flat representatives (not the original NodeIds).
     flat_atom_to_lit_[atom_key(flat_lhs, flat_rhs)] = var;
+    flat_node_to_eq_lits_[flat_lhs].push_back(var);
+    if (flat_rhs != flat_lhs)
+        flat_node_to_eq_lits_[flat_rhs].push_back(var);
+    if (cc_.are_congruent(flat_lhs, flat_rhs)) {
+        enqueue_prop_candidate(var);
+        needs_rescan_ = true;
+    }
     return var;
 }
 
@@ -46,6 +53,7 @@ void EufSolver::register_permanent_equality(NodeId lhs, NodeId rhs) {
     permanent_eq_pairs_.push_back({lhs, rhs});  // original nodes (not flat) for proof emission
     permanent_flat_to_orig_[key] = {lhs, rhs};
     cc_.add_equation(flat_lhs, flat_rhs);
+    needs_rescan_ = true;
 }
 
 // ============================================================================
@@ -154,14 +162,18 @@ void EufSolver::notify_backtrack(size_t new_level) {
     //
     // Step 1 — unconsumed (queued but never delivered to CaDiCaL): CaDiCaL
     // never saw them so they need re-propagation after backtrack.
-    for (size_t i = prop_queue_head_; i < prop_queue_.size(); ++i)
+    for (size_t i = prop_queue_head_; i < prop_queue_.size(); ++i) {
+        enqueue_prop_candidate(prop_queue_[i]);
         prop_enqueued_.erase(prop_queue_[i]);
+    }
     // Step 2 — delivered literals at levels > new_level: CaDiCaL undid them.
     while (prop_delivered_level_counts_.size() > new_level + 1) {
         const size_t count = prop_delivered_level_counts_.back();
         prop_delivered_level_counts_.pop_back();
         for (size_t i = 0; i < count; ++i) {
-            prop_enqueued_.erase(prop_delivered_lits_.back());
+            int lit = prop_delivered_lits_.back();
+            enqueue_prop_candidate(lit);
+            prop_enqueued_.erase(lit);
             prop_delivered_lits_.pop_back();
         }
     }
@@ -175,16 +187,15 @@ void EufSolver::notify_backtrack(size_t new_level) {
     reason_serving_lit_ = 0;
     reason_serving_idx_ = 0;
 
-    // Schedule a re-scan: equalities at levels <= new_level are still in
-    // CaDiCaL's trail (notify_assignment won't fire for them again), but
-    // their CC implications must be re-queued for propagation.
+    // Schedule candidate discovery: equalities at levels <= new_level are still
+    // in CaDiCaL's trail (notify_assignment won't fire for them again), but
+    // undone queued/delivered implications may need to be re-queued.
     needs_rescan_ = true;
     // Do NOT reset prop_adaptive_interval_ here.  The level-aware
     // prop_enqueued_ already cleared entries for undone literals, so the next
-    // scan will naturally rediscover only those.  Resetting the interval on
-    // every backtrack would restart frequent full scans on each of the
-    // O(conflicts) backtracks, recreating the O(|atoms| × |backtracks|)
-    // overhead this heuristic is designed to avoid.
+    // candidate pass will naturally rediscover only those. Resetting the
+    // interval on every backtrack would restart frequent processing on each
+    // conflict.
 
     has_conflict_     = false;
     conflict_clause_.clear();
@@ -349,10 +360,10 @@ int EufSolver::cb_add_external_clause_lit() {
 // ============================================================================
 
 int EufSolver::cb_propagate() {
-    // Always run the propagation scan when needed, even if a conflict is already
-    // pending.  The scan (Step 1 of discover_propagations) must record reason
-    // clauses in proof_conflicts_ for proof completeness.  When notify_assignment
-    // detects an early conflict before cb_propagate runs, the scan would be
+    // Always run propagation discovery when needed, even if a conflict is
+    // already pending. Step 1 of discover_propagations must record reason
+    // clauses in proof_conflicts_ for proof completeness. When notify_assignment
+    // detects an early conflict before cb_propagate runs, discovery would be
     // skipped by the old !has_conflict_ guard, leaving transitivity lemmas out
     // of the proof and causing bv_decide to fail with a spurious counterexample.
     if (needs_rescan_) {
@@ -392,14 +403,28 @@ int EufSolver::cb_add_reason_clause_lit(int propagated_lit) {
     return clause[reason_serving_idx_++];
 }
 
+void EufSolver::enqueue_prop_candidate(int lit) {
+    if (prop_candidate_seen_.insert(lit).second)
+        prop_candidate_lits_.push_back(lit);
+}
+
 void EufSolver::discover_propagations() {
-    // Step 1: scan all registered equality atoms for implied ones.
+    std::vector<NodeId> changed_nodes;
+    cc_.drain_changed_nodes(changed_nodes);
+    for (NodeId node : changed_nodes) {
+        auto it = flat_node_to_eq_lits_.find(node);
+        if (it == flat_node_to_eq_lits_.end()) continue;
+        for (int lit : it->second)
+            enqueue_prop_candidate(lit);
+    }
+
+    // Step 1: process equality atoms attached to changed CC nodes.
     // Skipped when propagation_enabled_ is false (ablation mode): conflict
     // detection (Step 2) still runs so the solver remains correct.
     // Must run before conflict detection so that theory propagation reason
     // clauses are always recorded in proof_conflicts_ even when a disequality
     // conflict is about to be reported (which would cause an early return).
-    // lit_to_atom_ stores only positive literals, so no sign filter needed.
+    // Candidate literals are positive equality literals, so no sign filter needed.
     //
     // In proof-recording mode we also process already-assigned atoms: SAT may
     // have assigned an equality TRUE before the theory could propagate it, so
@@ -409,8 +434,8 @@ void EufSolver::discover_propagations() {
     // re-processing them on the next rescan.
     if (propagation_enabled_ && !prop_budget_exhausted_ &&
             (++prop_call_count_ % prop_adaptive_interval_ == 0)) {
-        // Assign-fraction guard: skip the O(|atoms|) scan when the search is
-        // already deep.  Deep in the search, most equalities that are going to
+        // Assign-fraction guard: skip candidate processing when the search is
+        // already deep. Deep in the search, most equalities that are going to
         // be propagated have already been delivered; skipping saves overhead at
         // little cost in pruning power.
         //
@@ -433,66 +458,73 @@ void EufSolver::discover_propagations() {
             total_vars >= kPropMinVarsForThreshold &&
             static_cast<double>(cur_total_assigned_) / total_vars >= prop_assign_threshold_;
         if (!over_threshold) {
-        for (const auto& [lit, atom] : lit_to_atom_) {
+            std::vector<int> candidates;
+            candidates.swap(prop_candidate_lits_);
+            prop_candidate_seen_.clear();
+            for (int lit : candidates) {
+                ++stats_.euf_prop_candidates_considered;
                 if (prop_enqueued_.contains(lit)) continue;     // already handled this pass
-            bool already_assigned = cur_eq_assigned_.contains(lit);
-            if (already_assigned && !record_proofs_) continue; // skip if assigned (non-proof mode)
-            if (!cc_.are_congruent(atom.flat_lhs, atom.flat_rhs)) continue;
+                auto atom_it = lit_to_atom_.find(lit);
+                if (atom_it == lit_to_atom_.end()) continue;
+                const EqAtom& atom = atom_it->second;
+                bool already_assigned = cur_eq_assigned_.contains(lit);
+                if (already_assigned && !record_proofs_) continue; // skip if assigned (non-proof mode)
+                if (!cc_.are_congruent(atom.flat_lhs, atom.flat_rhs)) continue;
 
-            std::vector<CC::RawCongStep> raw_congs;
-            std::vector<EqId> expl = cc_.explain(atom.flat_lhs, atom.flat_rhs,
-                                                  record_proofs_ ? &raw_congs : nullptr);
-            std::vector<std::pair<NodeId,NodeId>> perm_deps;
-            const std::vector<int>& rc =
-                reason_clauses_[lit] = build_reason_clause(lit, expl,
-                                                            record_proofs_ ? &perm_deps : nullptr);
-            if (record_proofs_) record_cong_steps(raw_congs);
-            if (record_proofs_) {
-                // Already-assigned atoms are SAT-assigned directly from the problem
-                // hypotheses.  bv_decide can recover them from the propositional
-                // hypothesis axioms without a separate theory lemma.  Crucially, the
-                // CC may have found the congruence path AFTER merging other classes
-                // (including the atom's own SAT assignment), so the reason clause
-                // might use the assignment as part of its own justification — making
-                // it invalid as a standalone Lean theorem.  Always skip.
-                if (already_assigned) {
-                    // skip — bv_decide handles it from hypothesis axioms
-                } else {
-                    // Global content dedup: skip if already recorded by any path.
-                    auto ckey = rc;
-                    std::sort(ckey.begin(), ckey.end());
-                    if (!proof_clause_content_seen_.insert(ckey).second) {
-                        // exact duplicate — nothing to do
+                std::vector<CC::RawCongStep> raw_congs;
+                std::vector<EqId> expl = cc_.explain(atom.flat_lhs, atom.flat_rhs,
+                                                      record_proofs_ ? &raw_congs : nullptr);
+                std::vector<std::pair<NodeId,NodeId>> perm_deps;
+                const std::vector<int>& rc =
+                    reason_clauses_[lit] = build_reason_clause(lit, expl,
+                                                                record_proofs_ ? &perm_deps : nullptr);
+                if (record_proofs_) record_cong_steps(raw_congs);
+                if (record_proofs_) {
+                    // Already-assigned atoms are SAT-assigned directly from the problem
+                    // hypotheses.  bv_decide can recover them from the propositional
+                    // hypothesis axioms without a separate theory lemma.  Crucially, the
+                    // CC may have found the congruence path AFTER merging other classes
+                    // (including the atom's own SAT assignment), so the reason clause
+                    // might use the assignment as part of its own justification — making
+                    // it invalid as a standalone Lean theorem.  Always skip.
+                    if (already_assigned) {
+                        // skip — bv_decide handles it from hypothesis axioms
                     } else {
-                        auto it2 = proof_recorded_prop_lits_.find(lit);
-                        if (it2 == proof_recorded_prop_lits_.end()) {
-                            // First occurrence: store it.
-                            proof_recorded_prop_lits_[lit] = proof_conflicts_.size();
-                            proof_conflicts_.push_back(rc);
-                            proof_unit_perm_deps_.push_back(std::move(perm_deps));
-                        } else if (rc.size() < proof_conflicts_[it2->second].size()) {
-                            // Shorter clause after backtrack: replace.
-                            proof_conflicts_[it2->second] = rc;
-                            proof_unit_perm_deps_[it2->second] = std::move(perm_deps);
+                        // Global content dedup: skip if already recorded by any path.
+                        auto ckey = rc;
+                        std::sort(ckey.begin(), ckey.end());
+                        if (!proof_clause_content_seen_.insert(ckey).second) {
+                            // exact duplicate — nothing to do
+                        } else {
+                            auto it2 = proof_recorded_prop_lits_.find(lit);
+                            if (it2 == proof_recorded_prop_lits_.end()) {
+                                // First occurrence: store it.
+                                proof_recorded_prop_lits_[lit] = proof_conflicts_.size();
+                                proof_conflicts_.push_back(rc);
+                                proof_unit_perm_deps_.push_back(std::move(perm_deps));
+                            } else if (rc.size() < proof_conflicts_[it2->second].size()) {
+                                // Shorter clause after backtrack: replace.
+                                proof_conflicts_[it2->second] = rc;
+                                proof_unit_perm_deps_[it2->second] = std::move(perm_deps);
+                            }
                         }
                     }
                 }
+                prop_enqueued_.insert(lit);  // mark as handled (prevent duplicate recording)
+                if (!already_assigned)
+                    prop_queue_.push_back(lit);
             }
-            prop_enqueued_.insert(lit);  // mark as handled (prevent duplicate recording)
-            if (!already_assigned)
-                prop_queue_.push_back(lit);
-        }
-        // Adaptive interval: double after every scan unconditionally.
-        // Previously we only doubled on idle scans (no new propagations), but
-        // that fails on instances like NEQ where the scan is always productive:
-        // the interval never grows, we do O(|atoms|) work on every call, and
-        // 16M+ theory propagations flood the SAT trail and wreck the search.
-        // Doubling unconditionally caps total scan work to O(|atoms| × log N):
-        // after ~10 doublings the interval saturates at kPropMaxInterval and
-        // stays there.  Early scans still capture the propagations that matter
-        // most (first few decisions); later the solver proceeds with minimal
-        // theory-propagation interference.  Conflict detection (Step 2) is
-        // unaffected and runs on every call regardless.
+            // Adaptive interval: double after every candidate pass unconditionally.
+            // Previously we only doubled on idle scans (no new propagations), but
+            // that fails on instances like NEQ where processing is always productive:
+            // the interval never grows, we do repeated work on every call, and
+            // 16M+ theory propagations flood the SAT trail and wreck the search.
+            // Doubling unconditionally caps total candidate processing work:
+            // after ~10 doublings the interval saturates at kPropMaxInterval and
+            // stays there.  Early scans still capture the propagations that matter
+            // most (first few decisions); later the solver proceeds with minimal
+            // theory-propagation interference.  Conflict detection (Step 2) is
+            // unaffected and runs on every call regardless.
         } // end !over_threshold
         prop_adaptive_interval_ = std::min(prop_adaptive_interval_ * 2,
                                            kPropMaxInterval);

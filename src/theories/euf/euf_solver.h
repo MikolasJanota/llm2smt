@@ -59,18 +59,18 @@ public:
     // Conflict detection is always active regardless of this setting.
     void set_propagation(bool v) { propagation_enabled_ = v; }
 
-    // Run the propagation scan every N cb_propagate() calls (adaptive: doubles
-    // after each scan, capped at kPropMaxInterval).
-    // 1 = every call; higher values reduce scan overhead at the cost of
-    // delayed propagation.  Default: 32 (good balance across EUF benchmarks).
+    // Run propagation candidate processing every N discovery calls (adaptive:
+    // doubles after each processing pass, capped at kPropMaxInterval).
+    // 1 = every call; higher values reduce overhead at the cost of delayed
+    // propagation.  Default: 32 (good balance across EUF benchmarks).
     void set_prop_interval(int n) { prop_interval_ = n; prop_adaptive_interval_ = n; }
 
-    // Skip the O(|atoms|) propagation scan when the fraction of currently-
+    // Skip propagation candidate processing when the fraction of currently-
     // assigned EUF variables meets or exceeds this threshold.
-    // 0.0 = guard disabled (always scan); 1.0 = skip only when all vars assigned.
+    // 0.0 = guard disabled; 1.0 = skip only when all vars assigned.
     void set_prop_assign_threshold(double t) { prop_assign_threshold_ = t; }
 
-    // Permanently disable the propagation scan after this many theory
+    // Permanently disable propagation discovery after this many theory
     // propagations have been delivered to the SAT solver.
     void set_prop_delivery_budget(int n) { prop_delivery_budget_ = n; }
 
@@ -138,6 +138,9 @@ private:
     // Same as atom_to_lit_ but keyed by the FLAT node ids (as stored in CC equations).
     // Used in build_conflict where the CC returns flat-node equation records.
     std::unordered_map<uint64_t, int>          flat_atom_to_lit_;
+    // Occurrence index: flat endpoint node -> positive equality literals that
+    // mention it. Used to turn CC changed nodes into propagation candidates.
+    std::unordered_map<NodeId, std::vector<int>> flat_node_to_eq_lits_;
     // Flat-node pairs for equalities that were permanently merged in the CC
     // without a SAT variable (registered via register_permanent_equality).
     std::unordered_set<uint64_t>               permanent_flat_eqs_;
@@ -202,6 +205,10 @@ private:
     // so the post-backtrack rescan avoids redundant re-explain calls.
     // Level-aware clearing is done via prop_delivered_lits_ / _level_counts_.
     std::unordered_set<int> prop_enqueued_;
+    // Candidate equality literals whose flat endpoints were affected by recent
+    // CC merges. prop_candidate_seen_ deduplicates entries while queued.
+    std::vector<int>        prop_candidate_lits_;
+    std::unordered_set<int> prop_candidate_seen_;
     // Delivery tracking: which literals were handed to CaDiCaL at each level.
     // On notify_backtrack only entries at levels > new_level are erased from
     // prop_enqueued_, keeping surviving propagations intact.
@@ -220,17 +227,17 @@ private:
     std::unordered_set<int>  cur_eq_assigned_;
 
     // Set whenever the CC state changes (new equality merged or after backtrack).
-    // Consumed (and cleared) by cb_propagate.  Defers the O(|atoms|) scan out of
-    // notify_assignment (called per assignment) into cb_propagate (called once
-    // after a full BCP batch), avoiding O(K × N) quadratic work.
+    // Consumed (and cleared) by cb_propagate. Defers propagation candidate
+    // processing out of notify_assignment (called per assignment) into
+    // cb_propagate (called once after a full BCP batch).
     bool needs_rescan_ = false;
 
     // Theory propagation control.
-    // propagation_enabled_: when false, Step 1 is skipped entirely (ablation).
-    // prop_assign_threshold_: skip scan when assigned/total_vars >= threshold.
-    // prop_delivery_budget_: permanently disable scan after this many delivered.
+    // propagation_enabled_: when false, candidate propagation is skipped entirely (ablation).
+    // prop_assign_threshold_: skip processing when assigned/total_vars >= threshold.
+    // prop_delivery_budget_: permanently disable discovery after this many delivered.
     // prop_budget_exhausted_: set once prop_total_delivered_ >= budget.
-    // prop_adaptive_interval_: doubles after every scan; never reset on backtrack.
+    // prop_adaptive_interval_: doubles after every processing pass; never reset on backtrack.
     // prop_call_count_: unsigned call counter used to implement the interval.
     // cur_total_assigned_ / assign_level_counts_: track current assignment depth
     //   (all SAT variables) for the assign-fraction guard.
@@ -255,8 +262,12 @@ private:
     // Build conflict clause from an explanation
     void build_conflict(const std::vector<EqId>& explanation, int diseq_lit);
 
-    // Scan all registered equality atoms for theory-implied literals and
-    // enqueue them.  Already-assigned literals are excluded via cur_eq_assigned_.
+    // Enqueue a propagation candidate, deduplicated while queued.
+    void enqueue_prop_candidate(int lit);
+
+    // Enqueue equality atoms attached to recently changed CC nodes, then process
+    // candidate literals for theory-implied propagations. Already-assigned
+    // literals are excluded via cur_eq_assigned_ outside proof mode.
     void discover_propagations();
 
     // Build the reason clause [plit, -e1_lit, -e2_lit, …] for a propagated

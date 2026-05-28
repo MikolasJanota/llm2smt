@@ -227,7 +227,7 @@ TEST(EufSolver, BacktrackRestoresState) {
 // Assigning a=b and b=c should cause a=c to be theory-propagated.
 TEST(EufSolver, TheoryPropagation_Transitivity) {
     EufFixture f;
-    f.euf.set_prop_interval(1);  // scan every cb_propagate call (override default 32)
+    f.euf.set_prop_interval(1);  // process candidates every discovery call
     NodeId a = f.make_const("a");
     NodeId b = f.make_const("b");
     NodeId c = f.make_const("c");
@@ -258,6 +258,123 @@ TEST(EufSolver, TheoryPropagation_Transitivity) {
     bool has_neg_bc = std::find(reason.begin(), reason.end(), -lit_bc) != reason.end();
     EXPECT_TRUE(has_neg_ab && has_neg_bc)
         << "Reason must contain negations of both antecedent equalities";
+}
+
+// A small affected chain should propagate its implied atom even when many
+// unrelated equality atoms are registered.
+TEST(EufSolver, TheoryPropagation_TransitivityWithManyUnrelatedAtoms) {
+    EufFixture f;
+    f.euf.set_prop_interval(1);
+    NodeId a = f.make_const("a");
+    NodeId b = f.make_const("b");
+    NodeId c = f.make_const("c");
+
+    int lit_ab = f.euf.register_equality(a, b);
+    int lit_bc = f.euf.register_equality(b, c);
+    int lit_ac = f.euf.register_equality(a, c);
+
+    std::vector<int> unrelated;
+    for (int i = 0; i < 200; ++i) {
+        NodeId x = f.make_const("x" + std::to_string(i));
+        NodeId y = f.make_const("y" + std::to_string(i));
+        unrelated.push_back(f.euf.register_equality(x, y));
+    }
+
+    f.euf.notify_new_decision_level();
+    f.euf.notify_assignment(lit_ab, false);
+    f.euf.notify_assignment(lit_bc, false);
+
+    EXPECT_EQ(f.euf.cb_propagate(), lit_ac);
+    EXPECT_EQ(f.euf.cb_propagate(), 0);
+
+    // The old dense scan examined every registered equality atom here
+    // (3 relevant + all unrelated). Candidate discovery should inspect only
+    // the atoms attached to dirty endpoints b and c: a=b, b=c, and a=c.
+    EXPECT_EQ(f.stats.euf_prop_candidates_considered, 3u);
+    EXPECT_LT(f.stats.euf_prop_candidates_considered, unrelated.size() / 10);
+}
+
+// If a delivered propagation is undone by backtracking, the solver must put it
+// back on the candidate worklist so it can be derived again.
+TEST(EufSolver, TheoryPropagation_BacktrackRediscoverDeliveredCandidate) {
+    EufFixture f;
+    f.euf.set_prop_interval(1);
+    NodeId a = f.make_const("a");
+    NodeId b = f.make_const("b");
+    NodeId c = f.make_const("c");
+
+    int lit_ab = f.euf.register_equality(a, b);
+    int lit_bc = f.euf.register_equality(b, c);
+    int lit_ac = f.euf.register_equality(a, c);
+
+    f.euf.notify_new_decision_level();
+    f.euf.notify_assignment(lit_ab, false);
+    f.euf.notify_assignment(lit_bc, false);
+    ASSERT_EQ(f.euf.cb_propagate(), lit_ac);
+
+    f.euf.notify_backtrack(0);
+
+    f.euf.notify_new_decision_level();
+    f.euf.notify_assignment(lit_ab, false);
+    f.euf.notify_assignment(lit_bc, false);
+    EXPECT_EQ(f.euf.cb_propagate(), lit_ac);
+}
+
+// Dirty nodes produced by congruence merges must seed propagation candidates,
+// not just dirty nodes from directly assigned atomic equalities.
+TEST(EufSolver, TheoryPropagation_CongruenceDerivedCandidate) {
+    EufFixture f;
+    f.euf.set_prop_interval(1);
+    NodeId a  = f.make_const("a");
+    NodeId b  = f.make_const("b");
+    NodeId fa = f.make_app("f", 1, {a});
+    NodeId fb = f.make_app("f", 1, {b});
+
+    int lit_ab   = f.euf.register_equality(a, b);
+    int lit_fafb = f.euf.register_equality(fa, fb);
+
+    f.euf.notify_new_decision_level();
+    f.euf.notify_assignment(lit_ab, false);
+
+    ASSERT_EQ(f.euf.cb_propagate(), lit_fafb);
+
+    std::vector<int> reason;
+    int rl;
+    while ((rl = f.euf.cb_add_reason_clause_lit(lit_fafb)) != 0)
+        reason.push_back(rl);
+
+    ASSERT_FALSE(reason.empty());
+    EXPECT_EQ(reason[0], lit_fafb);
+    EXPECT_NE(std::find(reason.begin(), reason.end(), -lit_ab), reason.end());
+}
+
+TEST(EufSolver, TheoryPropagation_CongruenceCandidateCountIgnoresUnrelatedAtoms) {
+    EufFixture f;
+    f.euf.set_prop_interval(1);
+    NodeId a  = f.make_const("a");
+    NodeId b  = f.make_const("b");
+    NodeId fa = f.make_app("f", 1, {a});
+    NodeId fb = f.make_app("f", 1, {b});
+
+    int lit_ab   = f.euf.register_equality(a, b);
+    int lit_fafb = f.euf.register_equality(fa, fb);
+
+    std::vector<int> unrelated;
+    for (int i = 0; i < 200; ++i) {
+        NodeId x = f.make_const("cx" + std::to_string(i));
+        NodeId y = f.make_const("cy" + std::to_string(i));
+        unrelated.push_back(f.euf.register_equality(x, y));
+    }
+
+    f.euf.notify_new_decision_level();
+    f.euf.notify_assignment(lit_ab, false);
+
+    ASSERT_EQ(f.euf.cb_propagate(), lit_fafb);
+
+    // Direct a=b and the derived f(a)=f(b) merge dirty only b/f(b)-side
+    // endpoints. The unrelated registered atoms should not be examined.
+    EXPECT_LE(f.stats.euf_prop_candidates_considered, 2u);
+    EXPECT_LT(f.stats.euf_prop_candidates_considered, unrelated.size() / 10);
 }
 
 // When a disequality is assigned after the CC already merges the two nodes,
@@ -299,7 +416,7 @@ TEST(EufSolver, TheoryPropagation_EarlyDiseqConflict) {
 // implications must be re-discovered on the next cb_propagate call.
 TEST(EufSolver, TheoryPropagation_BacktrackRescan) {
     EufFixture f;
-    f.euf.set_prop_interval(1);  // scan every cb_propagate call (override default 32)
+    f.euf.set_prop_interval(1);  // process candidates every discovery call
     NodeId a = f.make_const("a");
     NodeId b = f.make_const("b");
     NodeId c = f.make_const("c");
@@ -332,7 +449,7 @@ TEST(EufSolver, TheoryPropagation_BacktrackRescan) {
 // Full round-trip: verify that the reason clause is structurally valid.
 TEST(EufSolver, TheoryPropagation_ReasonClauseValid) {
     EufFixture f;
-    f.euf.set_prop_interval(1);  // scan every cb_propagate call (override default 32)
+    f.euf.set_prop_interval(1);  // process candidates every discovery call
     NodeId a = f.make_const("a");
     NodeId b = f.make_const("b");
     NodeId c = f.make_const("c");

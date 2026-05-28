@@ -99,6 +99,15 @@ static std::string sort_to_lean_type(const std::string& sort_name)
 
 std::string LeanEmitter::node_to_lean(NodeId n, const NodeManager& nm) const
 {
+    auto it = node_to_lean_cache_.find(n);
+    if (it != node_to_lean_cache_.end()) return it->second;
+    std::string rendered = node_to_lean_uncached(n, nm);
+    auto [inserted, _] = node_to_lean_cache_.emplace(n, std::move(rendered));
+    return inserted->second;
+}
+
+std::string LeanEmitter::node_to_lean_uncached(NodeId n, const NodeManager& nm) const
+{
     const NodeData& d = nm.get(n);
     const std::string& raw_name = nm.symbol_table().get(d.sym).name;
     // Map internal Bool-bridging sentinels to Lean's Prop constants so that
@@ -167,6 +176,15 @@ std::string LeanEmitter::node_to_lean(NodeId n, const NodeManager& nm) const
 // `if p then ...` while the goal atoms still say `if decide (p) then ...`.
 std::string LeanEmitter::fml_to_lean_cond(NodeId f, const NodeManager& nm) const
 {
+    auto it = fml_to_lean_cond_cache_.find(f);
+    if (it != fml_to_lean_cond_cache_.end()) return it->second;
+    std::string rendered = fml_to_lean_cond_uncached(f, nm);
+    auto [inserted, _] = fml_to_lean_cond_cache_.emplace(f, std::move(rendered));
+    return inserted->second;
+}
+
+std::string LeanEmitter::fml_to_lean_cond_uncached(NodeId f, const NodeManager& nm) const
+{
     if (nm.is_true_node(f))  return "True";
     if (nm.is_false_node(f)) return "False";
     if (nm.is_eq(f)) {
@@ -225,6 +243,15 @@ std::string LeanEmitter::fml_to_lean_cond(NodeId f, const NodeManager& nm) const
 }
 
 std::string LeanEmitter::fml_to_lean(NodeId f, const NodeManager& nm) const
+{
+    auto it = fml_to_lean_cache_.find(f);
+    if (it != fml_to_lean_cache_.end()) return it->second;
+    std::string rendered = fml_to_lean_uncached(f, nm);
+    auto [inserted, _] = fml_to_lean_cache_.emplace(f, std::move(rendered));
+    return inserted->second;
+}
+
+std::string LeanEmitter::fml_to_lean_uncached(NodeId f, const NodeManager& nm) const
 {
     if (nm.is_true_node(f))  return "True";
     if (nm.is_false_node(f)) return "False";
@@ -314,6 +341,9 @@ void LeanEmitter::emit(std::ostream& out,
 {
     ctx_ = &ctx;
     ite_proxy_for_.clear();
+    node_to_lean_cache_.clear();
+    fml_to_lean_cache_.clear();
+    fml_to_lean_cond_cache_.clear();
     const NodeManager& nm = ctx.nm;
 
     // Precompute ite_id → proxy_id and ite_id → hyp_name from assertions of

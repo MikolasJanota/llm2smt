@@ -26,6 +26,7 @@ struct Stats {
     uint64_t euf_check_model_calls   = 0; // cb_check_found_model callbacks
     uint64_t euf_conflicts           = 0; // theory lemmas (conflict clauses) generated
     uint64_t euf_conflict_lits_total = 0; // total literals across all conflict clauses
+    uint64_t euf_prop_candidates_considered = 0; // equality atoms inspected by propagation discovery
 
     // ── Overall timing ──────────────────────────────────────────────────────
     uint64_t total_ms                = 0; // wall-clock ms for the full solve (set in main)
@@ -53,6 +54,7 @@ struct Stats {
         row("euf.check_model_calls",    euf_check_model_calls);
         row("euf.conflicts",            euf_conflicts);
         row("euf.conflict_lits_total",  euf_conflict_lits_total);
+        row("euf.prop_candidates_considered", euf_prop_candidates_considered);
     }
 };
 

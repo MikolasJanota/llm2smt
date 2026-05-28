@@ -32,16 +32,25 @@ private:
     // reliably without case-splitting on the if-expression.
     std::unordered_map<NodeId, NodeId> ite_proxy_for_;
 
+    // Per-emission render caches. Rendering depends on ctx_ / ite_proxy_for_,
+    // so emit() clears these before producing a new proof.
+    mutable std::unordered_map<NodeId, std::string> node_to_lean_cache_;
+    mutable std::unordered_map<NodeId, std::string> fml_to_lean_cache_;
+    mutable std::unordered_map<NodeId, std::string> fml_to_lean_cond_cache_;
+
     // NodeId → Lean expression string (handles constants, n-ary apps, ite nodes)
     std::string node_to_lean(NodeId n, const NodeManager& nm) const;
+    std::string node_to_lean_uncached(NodeId n, const NodeManager& nm) const;
 
     // NodeId → Lean proposition string (atomic Eq/atom wrapped in `decide (...)`)
     std::string fml_to_lean(NodeId f, const NodeManager& nm) const;
+    std::string fml_to_lean_uncached(NodeId f, const NodeManager& nm) const;
 
     // NodeId → Lean Prop condition string (atomic Eq/atom NOT wrapped in decide).
     // Used for ite conditions so grind sees `if p then ...` (Prop) rather than
     // `if decide (p) then ...` (Bool), avoiding Bool→Prop normalisation mismatches.
     std::string fml_to_lean_cond(NodeId f, const NodeManager& nm) const;
+    std::string fml_to_lean_cond_uncached(NodeId f, const NodeManager& nm) const;
 
     // Build Lean type string for a function (e.g., "U → U → V" or "U → U → Prop")
     static std::string fn_type(const FnDecl& fn, bool is_pred);

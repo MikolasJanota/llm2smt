@@ -4,11 +4,11 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <algorithm>
 #include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
-#include <numeric>
 
 #include "core/node.h"
 
@@ -98,6 +98,10 @@ public:
     void push_level();
     void pop_level(size_t target_level);
 
+    // Append nodes whose equivalence-class membership changed since the last
+    // drain, then clear the internal buffer.
+    void drain_changed_nodes(std::vector<NodeId>& out);
+
     // A raw congruence step captured during explain():
     //   result_lhs ≡ result_rhs  because  fn_lhs ≡ fn_rhs  and  arg_lhs ≡ arg_rhs.
     // Fields are NULL_NODE when that pair is identical (no premise for that slot).
@@ -132,6 +136,7 @@ private:
     std::vector<std::vector<EqId>>     use_list_;
     std::unordered_map<std::pair<NodeId,NodeId>, EqId, PairHash> lookup_;
     std::deque<PendingEntry>           pending_;
+    std::vector<NodeId>                changed_nodes_;
 
     // ── Equations table ───────────────────────────────────────────────────
     std::vector<Equation> equations_;   // [0] = sentinel
@@ -163,20 +168,44 @@ private:
     // calls, avoiding repeated heap allocation.
     struct PathUF {
         std::vector<NodeId> parent;
+        std::vector<uint32_t> stamp;
+        uint32_t gen = 0;
+
+        void begin(size_t n) {
+            if (parent.size() < n) parent.resize(n);
+            if (stamp.size() < n) stamp.resize(n, 0);
+            if (++gen == 0) {
+                std::fill(stamp.begin(), stamp.end(), 0);
+                ++gen;
+            }
+        }
+
+        void ensure(NodeId x) {
+            if (x >= static_cast<NodeId>(parent.size())) {
+                parent.resize(static_cast<size_t>(x) + 1);
+                stamp.resize(static_cast<size_t>(x) + 1, 0);
+            }
+            if (stamp[x] != gen) {
+                stamp[x] = gen;
+                parent[x] = x;
+            }
+        }
+
         NodeId find(NodeId x) {
-            while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+            ensure(x);
+            while (parent[x] != x) {
+                ensure(parent[x]);
+                parent[x] = parent[parent[x]];
+                x = parent[x];
+            }
             return x;
         }
         void unite(NodeId x, NodeId y) {
             x = find(x); y = find(y);
             if (x != y) parent[y] = x;
         }
-        void init(size_t n) {
-            parent.resize(n);
-            std::iota(parent.begin(), parent.end(), NodeId(0));
-        }
     };
-    PathUF explain_uf_;  // reused across explain() calls; re-init()ed each time
+    PathUF explain_uf_;  // reused across explain() calls; generation-stamped each time
 
     // Find LCA of a and b in the proof forest.
     NodeId find_lca(NodeId a, NodeId b);
