@@ -1,4 +1,8 @@
+#include <algorithm>
+#include <string>
+
 #include <gtest/gtest.h>
+
 #include "core/node_manager.h"
 #include "theories/euf/cc.h"
 
@@ -457,6 +461,30 @@ TEST(CC, ExplainRepeated) {
     auto expl3 = f.cc.explain(a, b);
     EXPECT_EQ(expl3.size(), 1u);
     EXPECT_EQ(expl3[0], eq1);
+}
+
+// ExplainWithManyUnrelatedNodes: explanation scratch state is initialized
+// sparsely, so unrelated registered nodes must not affect a small explanation.
+TEST(CC, ExplainWithManyUnrelatedNodes) {
+    CCFixture f;
+
+    for (int i = 0; i < 4096; ++i)
+        f.make_const("junk_" + std::to_string(i));
+
+    NodeId a = f.make_const("a");
+    NodeId b = f.make_const("b");
+    NodeId c = f.make_const("c");
+
+    EqId eq1 = f.cc.add_equation(a, b);
+    EqId eq2 = f.cc.add_equation(b, c);
+
+    ASSERT_TRUE(f.cc.are_congruent(a, c));
+
+    auto expl = f.cc.explain(a, c);
+
+    EXPECT_EQ(expl.size(), 2u);
+    EXPECT_TRUE(std::find(expl.begin(), expl.end(), eq1) != expl.end());
+    EXPECT_TRUE(std::find(expl.begin(), expl.end(), eq2) != expl.end());
 }
 
 // TrailDoesNotGrowUnboundedly: repeated push/pop cycles must not accumulate

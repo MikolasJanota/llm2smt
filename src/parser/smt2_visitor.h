@@ -93,6 +93,9 @@ private:
     // Return true if the top-level term is Bool-sorted
     // (built-in boolean op or declared Bool function).
     bool is_bool_sorted(smt2parser::SMTLIBv2Parser::TermContext*) const;
+    bool compute_is_bool_sorted(smt2parser::SMTLIBv2Parser::TermContext*) const;
+    mutable std::unordered_map<smt2parser::SMTLIBv2Parser::TermContext*, bool>
+        bool_sort_cache_;
 
     // ── Preprocessing ─────────────────────────────────────────────────────
     PreprocOptions opts_;

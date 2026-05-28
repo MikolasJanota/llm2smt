@@ -91,6 +91,16 @@ void Smt2Visitor::link_bool_term_to_euf(NodeId node)
 bool Smt2Visitor::is_bool_sorted(
     smt2parser::SMTLIBv2Parser::TermContext* ctx) const
 {
+    auto it = bool_sort_cache_.find(ctx);
+    if (it != bool_sort_cache_.end()) return it->second;
+    bool result = compute_is_bool_sorted(ctx);
+    bool_sort_cache_[ctx] = result;
+    return result;
+}
+
+bool Smt2Visitor::compute_is_bool_sorted(
+    smt2parser::SMTLIBv2Parser::TermContext* ctx) const
+{
     if (ctx->GRW_Exclamation()) return is_bool_sorted(ctx->term()[0]);
     if (ctx->qual_identifier() == nullptr) return false;
     std::string name = identifier_name(ctx->qual_identifier()->identifier());
