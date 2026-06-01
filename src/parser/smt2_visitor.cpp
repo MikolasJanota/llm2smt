@@ -1068,6 +1068,8 @@ static uint64_t lit_pair_key(int a, int b)
 
 void Smt2Visitor::collect_top_level_disequalities(NodeId f)
 {
+    if (!opts_.finite_domain_amo) return;
+
     NodeManager& nm = ctx_.nm;
     std::vector<NodeId> work{f};
     while (!work.empty()) {
@@ -1090,7 +1092,7 @@ void Smt2Visitor::collect_top_level_disequalities(NodeId f)
 
 void Smt2Visitor::remember_finite_domain_eq_lit(NodeId lhs, NodeId rhs, int lit)
 {
-    if (top_level_diseq_pairs_.empty() || lhs == rhs) return;
+    if (!opts_.finite_domain_amo || top_level_diseq_pairs_.empty() || lhs == rhs) return;
     if (!finite_domain_eq_lits_seen_.insert(lit).second) return;
 
     auto add_for_endpoint = [&](NodeId endpoint, NodeId other) {
@@ -1401,8 +1403,10 @@ void Smt2Visitor::flush_pending_fmls()
     }
 
     // Step C: Encode.
-    for (NodeId f : pending_fmls_)
-        collect_top_level_disequalities(f);
+    if (opts_.finite_domain_amo) {
+        for (NodeId f : pending_fmls_)
+            collect_top_level_disequalities(f);
+    }
 
     if (opts_.selectors) {
         for (NodeId f : pending_fmls_)

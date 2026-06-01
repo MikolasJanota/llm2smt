@@ -15,6 +15,7 @@ struct PreprocOptions {
     std::string proof_file;          // empty = no proof output
     bool        proof_minimize = false; // remove unnecessary theory lemmas via UNSAT core
     bool        eq_bridge  = false;  // add common EUF consequences of disjunction branches
+    bool        finite_domain_amo = true; // add SAT AMO clauses from top-level distinct endpoints
     bool        theory_propagation = true; // enable EUF theory propagation
     int         prop_interval = 32;        // process propagation candidates every N discovery calls, adaptive doubling up to 1024 (default 32)
     double      prop_assign_threshold = 0.25; // skip candidate processing when (assigned/total) >= threshold; 0 = guard disabled

@@ -93,6 +93,8 @@ int main(int argc, char** argv) {
        ->needs(proof_flag);
     app.add_flag("--eq-bridge", opts.eq_bridge,
                  "Add common EUF consequences of disjunction branches (eliminates diamond-like exponential blowup)");
+    app.add_flag("!--no-finite-domain-amo", opts.finite_domain_amo,
+                 "Disable SAT at-most-one clauses inferred from top-level distinct endpoints");
     app.add_flag("!--no-theory-prop", opts.theory_propagation,
                  "Disable EUF theory propagation (ablation: conflict detection is preserved)");
     app.add_option("--prop-interval", opts.prop_interval,
