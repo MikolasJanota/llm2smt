@@ -18,6 +18,7 @@ struct Stats {
     uint64_t preproc_passes_run      = 0; // simplifier passes that changed something
     uint64_t preproc_simp_ms         = 0; // wall-clock ms for simplifier.run()
     uint64_t preproc_flush_ms        = 0; // wall-clock ms for flush_pending_fmls() (NNF+simp+encode)
+    uint64_t preproc_finite_domain_amo_clauses = 0; // SAT AMO clauses from distinct endpoints
 
     // ── EUF theory ─────────────────────────────────────────────────────────
     uint64_t euf_assignments         = 0; // notify_assignment callbacks
@@ -47,6 +48,7 @@ struct Stats {
         row("preproc.fmls_false_out",   preproc_fmls_false_out);
         row("preproc.forced_atoms",     preproc_forced_atoms);
         row("preproc.passes_run",       preproc_passes_run);
+        row("preproc.finite_domain_amo", preproc_finite_domain_amo_clauses);
         out << "  -- euf theory --\n";
         row("euf.assignments",          euf_assignments);
         row("euf.eq_assignments",       euf_eq_assignments);

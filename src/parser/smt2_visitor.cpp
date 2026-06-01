@@ -183,31 +183,27 @@ std::any Smt2Visitor::visitCommand(
     else if (ctx->cmd_assert()) {
         auto terms = ctx->term();
         if (terms.empty()) throw std::runtime_error("assert: missing term");
-        if (opts_.passes > 0 || opts_.nnf || !opts_.proof_file.empty() || opts_.eq_bridge) {
-            // When preprocessing is active, assertions accumulate in pending_fmls_
-            // for later simplification rather than being encoded immediately.
-            // As an optimization, top-level (distinct t1 ... tn) with n≥3 is split
-            // into n*(n-1)/2 individual NOT(EQ) assertions so the simplifier never
-            // receives a single O(n²)-deep AND tree.
-            auto* term0 = terms[0];
-            if (term0->qual_identifier() != nullptr) {
-                std::string top_op = identifier_name(term0->qual_identifier()->identifier());
-                if (top_op == "distinct" && term0->term().size() >= 3) {
-                    auto sub_terms = term0->term();
-                    std::vector<NodeId> nodes;
-                    nodes.reserve(sub_terms.size());
-                    for (auto* sub : sub_terms) nodes.push_back(visit_term(sub));
-                    NodeManager& nm = ctx_.nm;
-                    for (size_t i = 0; i < nodes.size(); ++i)
-                        for (size_t j = i + 1; j < nodes.size(); ++j)
-                            pending_fmls_.push_back(nm.mk_not(nm.mk_eq(nodes[i], nodes[j])));
-                    return nullptr;
-                }
+        // Assertions accumulate in pending_fmls_ and are encoded on check-sat.
+        // This keeps one path for structural preprocessing and SAT-strengthening.
+        // As an optimization, top-level (distinct t1 ... tn) with n>=3 is split
+        // into n*(n-1)/2 individual NOT(EQ) assertions so the simplifier never
+        // receives a single O(n^2)-deep AND tree.
+        auto* term0 = terms[0];
+        if (term0->qual_identifier() != nullptr) {
+            std::string top_op = identifier_name(term0->qual_identifier()->identifier());
+            if (top_op == "distinct" && term0->term().size() >= 3) {
+                auto sub_terms = term0->term();
+                std::vector<NodeId> nodes;
+                nodes.reserve(sub_terms.size());
+                for (auto* sub : sub_terms) nodes.push_back(visit_term(sub));
+                NodeManager& nm = ctx_.nm;
+                for (size_t i = 0; i < nodes.size(); ++i)
+                    for (size_t j = i + 1; j < nodes.size(); ++j)
+                        pending_fmls_.push_back(nm.mk_not(nm.mk_eq(nodes[i], nodes[j])));
+                return nullptr;
             }
-            pending_fmls_.push_back(build_fml(terms[0]));
-        } else {
-            assert_formula(terms[0]);
         }
+        pending_fmls_.push_back(build_fml(terms[0]));
     }
     else if (ctx->cmd_checkSat()) {
         flush_pending_fmls();
@@ -1057,6 +1053,64 @@ NodeId Smt2Visitor::build_fml(
 // Formula encoding (NodeId → SAT clauses)
 // ============================================================================
 
+static uint64_t node_pair_key(NodeId a, NodeId b)
+{
+    if (a > b) std::swap(a, b);
+    return (static_cast<uint64_t>(a) << 32) | static_cast<uint64_t>(b);
+}
+
+static uint64_t lit_pair_key(int a, int b)
+{
+    if (a > b) std::swap(a, b);
+    return (static_cast<uint64_t>(static_cast<uint32_t>(a)) << 32)
+         | static_cast<uint32_t>(b);
+}
+
+void Smt2Visitor::collect_top_level_disequalities(NodeId f)
+{
+    NodeManager& nm = ctx_.nm;
+    std::vector<NodeId> work{f};
+    while (!work.empty()) {
+        NodeId n = work.back();
+        work.pop_back();
+        if (nm.is_and(n)) {
+            for (NodeId c : nm.get(n).children)
+                work.push_back(c);
+            continue;
+        }
+        if (!nm.is_not(n)) continue;
+        NodeId child = nm.get(n).children[0];
+        if (!nm.is_eq(child)) continue;
+        NodeId a = nm.get(child).children[0];
+        NodeId b = nm.get(child).children[1];
+        if (a != b)
+            top_level_diseq_pairs_.insert(node_pair_key(a, b));
+    }
+}
+
+void Smt2Visitor::remember_finite_domain_eq_lit(NodeId lhs, NodeId rhs, int lit)
+{
+    if (top_level_diseq_pairs_.empty() || lhs == rhs) return;
+    if (!finite_domain_eq_lits_seen_.insert(lit).second) return;
+
+    auto add_for_endpoint = [&](NodeId endpoint, NodeId other) {
+        auto& seen = finite_domain_eqs_by_endpoint_[endpoint];
+        for (const EqEndpointLit& prev : seen) {
+            if (prev.other == other) continue;
+            if (!top_level_diseq_pairs_.contains(node_pair_key(prev.other, other))) continue;
+            uint64_t key = lit_pair_key(prev.lit, lit);
+            if (!finite_domain_amo_seen_.insert(key).second) continue;
+            std::array<int,2> cl = {-prev.lit, -lit};
+            ctx_.sat.add_clause(std::span<const int>(cl));
+            ++stats_.preproc_finite_domain_amo_clauses;
+        }
+        seen.push_back({other, lit});
+    };
+
+    add_for_endpoint(lhs, rhs);
+    add_for_endpoint(rhs, lhs);
+}
+
 // Return a SAT literal for a sub-formula; introduce Tseitin variable if needed.
 int Smt2Visitor::lit_of_fml(NodeId f)
 {
@@ -1067,7 +1121,9 @@ int Smt2Visitor::lit_of_fml(NodeId f)
     if (nm.is_eq(f)) {
         NodeId c0 = nm.get(f).children[0];
         NodeId c1 = nm.get(f).children[1];
-        return ctx_.euf.register_equality(c0, c1);
+        int lit = ctx_.euf.register_equality(c0, c1);
+        remember_finite_domain_eq_lit(c0, c1, lit);
+        return lit;
     }
     if (nm.is_atom_node(f)) return ctx_.lit_for_node(f);
     if (nm.is_not(f))       return -lit_of_fml(nm.get(f).children[0]);
@@ -1345,6 +1401,9 @@ void Smt2Visitor::flush_pending_fmls()
     }
 
     // Step C: Encode.
+    for (NodeId f : pending_fmls_)
+        collect_top_level_disequalities(f);
+
     if (opts_.selectors) {
         for (NodeId f : pending_fmls_)
             encode_conditioned(f, {});

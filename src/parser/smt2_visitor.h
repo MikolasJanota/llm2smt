@@ -1,6 +1,8 @@
 #pragma once
 
 #include <any>
+#include <cstdint>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -110,6 +112,15 @@ private:
     // Cache: NodeId formula → Tseitin SAT literal (for lit_of_fml reuse).
     std::unordered_map<NodeId, int> fml_lit_cache_;
 
+    // Top-level asserted disequalities, keyed as unordered NodeId pairs.
+    // Used to strengthen finite-domain "x equals one of these distinct values"
+    // disjunctions with SAT-level at-most-one clauses.
+    struct EqEndpointLit { NodeId other; int lit; };
+    std::unordered_set<uint64_t> top_level_diseq_pairs_;
+    std::unordered_set<uint64_t> finite_domain_amo_seen_;
+    std::unordered_set<int> finite_domain_eq_lits_seen_;
+    std::unordered_map<NodeId, std::vector<EqEndpointLit>> finite_domain_eqs_by_endpoint_;
+
     // Build a NodeId formula from a Bool-sorted parse-tree node.
     // Eagerly calls visit_term for U-sorted sub-terms.
     NodeId build_fml(smt2parser::SMTLIBv2Parser::TermContext*);
@@ -122,6 +133,9 @@ private:
 
     // Encode all pending_fmls_ (run simplifier first if preprocess_passes_ > 0).
     void flush_pending_fmls();
+
+    void collect_top_level_disequalities(NodeId f);
+    void remember_finite_domain_eq_lit(NodeId lhs, NodeId rhs, int lit);
 
     // True iff f is an atom or negated atom (usable as a SAT literal directly).
     bool is_literal_fml(NodeId f) const;
