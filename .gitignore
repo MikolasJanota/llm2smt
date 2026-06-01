@@ -39,3 +39,42 @@
 
 # debug information files
 *.dwo
+
+# CMake build trees and generated metadata
+/build*/
+/cmake-build-*/
+compile_commands.json
+/src/compile_commands.json
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local tool caches/config
+/.cache/
+/.claude/
+/src/.cache/
+
+# Local Node tooling
+/node_modules/
+/package.json
+/package-lock.json
+
+# Local benchmark corpora, proof dumps, and reference material
+/sandbox/
+/resources/
+/*.pdf
+
+# Local prompt/proof experiments
+/prompts/*.lean
+/prompts/proof-v*/
+/prompts/proof-v*.txt
+
+# Local scratch files and generated outputs
+/kl
+/resume
+/prop_codex.txt
+/scripts/check_lean.sh
+/scripts/fuzz_fails*/
+*.log
