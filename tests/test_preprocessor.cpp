@@ -1,7 +1,10 @@
 #include <gtest/gtest.h>
 #include <optional>
+#include <string>
+#include <vector>
 #include "core/node.h"
 #include "core/node_manager.h"
+#include "preprocessor/disjunction_bridge.h"
 #include "preprocessor/simplifier.h"
 
 using namespace llm2smt;
@@ -374,6 +377,85 @@ TEST_F(SimpFix, OppositePolarityUnitsAreBothRecorded) {
     s->run_pass(assertions);
     ASSERT_EQ(s->forced_atoms().size(), 2U);
     EXPECT_NE(s->forced_atoms()[0].positive, s->forced_atoms()[1].positive);
+}
+
+TEST_F(SimpFix, ConflictingUnitsDoNotSubstituteIntoCompounds) {
+    NodeId compound = OR(PA, PC);
+    std::vector<NodeId> assertions = {PA, NOT(PA), compound};
+    s->run_pass(assertions);
+
+    EXPECT_EQ(assertions[2], compound);
+    bool has_false = false;
+    for (NodeId f : assertions)
+        if (nm.is_false_node(f)) has_false = true;
+    EXPECT_TRUE(has_false);
+}
+
+TEST_F(SimpFix, SubstitutionSkipsUnrelatedCompoundAssertions) {
+    NodeId unrelated = OR(PB, PC);
+    NodeId affected = OR(NOT(PA), PB);
+    std::vector<NodeId> assertions = {PA, unrelated, affected};
+    s->run_pass(assertions);
+
+    EXPECT_EQ(assertions[1], unrelated);
+    EXPECT_EQ(assertions[2], PB);
+}
+
+TEST_F(SimpFix, BridgeStatsCountsDerivedEquality) {
+    NodeId left = AND(EQ(NA, NB), EQ(NB, NC));
+    NodeId right = AND(EQ(NA, ND), EQ(ND, NC));
+    std::vector<NodeId> assertions = {OR(left, right)};
+    BridgeStats stats;
+    std::vector<BridgeEquality> equalities;
+
+    bridge_disjunctions(assertions, nm, &equalities, &stats);
+
+    EXPECT_EQ(stats.derived_equalities, 1U);
+    EXPECT_EQ(stats.skipped_or_nodes, 0U);
+    ASSERT_EQ(assertions.size(), 2U);
+    EXPECT_EQ(assertions[1], EQ(NA, NC));
+    ASSERT_EQ(equalities.size(), 1U);
+    EXPECT_EQ(EQ(equalities[0].lhs, equalities[0].rhs), EQ(NA, NC));
+}
+
+TEST_F(SimpFix, BridgeSkipsWideOr) {
+    std::vector<NodeId> branches;
+    branches.reserve(65);
+    for (size_t i = 0; i < 65; ++i)
+        branches.push_back(EQ(NA, NB));
+    std::vector<NodeId> assertions = {nm.mk_or(branches)};
+    BridgeStats stats;
+
+    bridge_disjunctions(assertions, nm, nullptr, &stats);
+
+    EXPECT_EQ(stats.derived_equalities, 0U);
+    EXPECT_EQ(stats.skipped_or_nodes, 1U);
+    EXPECT_EQ(assertions.size(), 1U);
+}
+
+TEST_F(SimpFix, BridgeSkipsExpensiveSharedPairs) {
+    std::vector<NodeId> nodes;
+    nodes.reserve(80);
+    for (size_t i = 0; i < 80; ++i) {
+        const std::string name = "bridge_node_" + std::to_string(i);
+        nodes.push_back(nm.mk_const(nm.declare_symbol(name, 0)));
+    }
+
+    std::vector<NodeId> eqs;
+    eqs.reserve(nodes.size() - 1);
+    for (size_t i = 1; i < nodes.size(); ++i)
+        eqs.push_back(EQ(nodes[i - 1], nodes[i]));
+    NodeId branch = nm.mk_and(eqs);
+
+    std::vector<NodeId> branches(64, branch);
+    std::vector<NodeId> assertions = {nm.mk_or(branches)};
+    BridgeStats stats;
+
+    bridge_disjunctions(assertions, nm, nullptr, &stats);
+
+    EXPECT_EQ(stats.derived_equalities, 0U);
+    EXPECT_EQ(stats.skipped_or_nodes, 1U);
+    EXPECT_EQ(assertions.size(), 1U);
 }
 
 TEST_F(SimpFix, ZeroPassesIsNoOp) {

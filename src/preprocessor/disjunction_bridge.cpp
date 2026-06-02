@@ -114,8 +114,8 @@ static void bridge_or(NodeId f, size_t top_idx, NodeManager& nm,
     // For every pair of shared nodes, check if they are equivalent in ALL
     // branch closures and emit a new unit Eq if so.
     std::vector<NodeId> sv(shared.begin(), shared.end());
-    const size_t pair_checks = (sv.size() * (sv.size() - 1) / 2) * branches.size();
-    if (pair_checks > kMaxBridgePairChecks) {
+    const size_t pair_count = sv.size() * (sv.size() - 1) / 2;
+    if (branches.size() != 0 && pair_count > kMaxBridgePairChecks / branches.size()) {
         if (stats) ++stats->skipped_or_nodes;
         return;
     }

@@ -18,10 +18,11 @@ namespace llm2smt {
 //   1. Constant folding: propagate True/False through all connectives.
 //   2. Unit clause propagation: identify unit assertions (a single atom or its
 //      negation) and substitute them into all other assertions, then fold.
-//   3. Equality normalization: maintain a union-find over NodeIds forced equal.
-//      Rewrite every mk_eq(x,y) to mk_eq(find(x), find(y)); if find(x)==find(y)
-//      the atom collapses to True.  This handles transitivity that boolean
-//      substitution alone cannot see.
+//   3. Equality normalization: maintain a union-find over NodeIds forced equal
+//      and a set of known disequalities. Rewrite every mk_eq(x,y) to
+//      mk_eq(find(x), find(y)); if find(x)==find(y) the atom collapses to True,
+//      and if the normalized pair is known disequal it collapses to False.
+//      This handles transitivity that boolean substitution alone cannot see.
 //
 // After run(), forced_atoms() lists every atom that was forced along with its
 // polarity (true = forced true, false = forced false).

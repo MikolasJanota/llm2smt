@@ -490,7 +490,15 @@ bool Simplifier::run_pass(std::vector<NodeId>& assertions)
             }
         }
 
-        subst[atom] = positive ? nm_.mk_true() : nm_.mk_false();
+        NodeId subst_value = positive ? nm_.mk_true() : nm_.mk_false();
+        auto [subst_it, inserted] = subst.emplace(atom, subst_value);
+        if (!inserted && subst_it->second != subst_value) {
+            // Both polarities are present in this pass. The contradiction is
+            // already recorded above; leave compound formulas containing this
+            // atom untouched rather than rewriting them order-dependently.
+            contradiction = true;
+            subst.erase(subst_it);
+        }
     }
 
     if (!parent_.empty() && renormalize_disequalities())
