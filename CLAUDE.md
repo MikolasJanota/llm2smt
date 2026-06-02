@@ -229,3 +229,13 @@ These are observed hotspots / likely inefficiencies to revisit with benchmark da
   families. Our solver still takes about the same time on the core-only file
   (~2.9s release, 74k EUF conflicts), so the core preserves the pathological
   search behavior while being much smaller than the original benchmark.
+- The `2018-Goel-hwbench` firewire-tree SAT instances are Boolean-circuit-heavy
+  QF_UF files: almost every assertion is a definition over 0-ary Bool symbols
+  (`= p (not q)`, `= p (and q r)`) plus a smaller number of UF term definitions.
+  Do not bridge 0-ary Bool symbols into EUF merely because they appear in formula
+  position. They only need `p = __bool_true` / `p = __bool_false` bridge clauses
+  when `visit_term` sees them in a U-sorted position, such as an argument to a UF.
+  Bridging every propositional constant polluted the observed EUF trail and made
+  `QF_UF_firewire_tree.5.prop3_ab_reg_max.smt2` take ~208s release. Keeping pure
+  propositional constants in SAT reduced that case to ~43s; smaller siblings
+  also improved (`size4` ~11.4s to ~3.6s, `size1` ~6.9s to ~1.4s).

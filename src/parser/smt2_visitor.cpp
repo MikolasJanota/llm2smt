@@ -793,7 +793,6 @@ int Smt2Visitor::eval_lit(
         if (fit != ctx_.declared_fns.end()
             && ctx_.bool_fns.contains(fit->second)) {
             NodeId n = ctx_.nm.mk_const(fit->second);
-            link_bool_term_to_euf(n);
             return ctx_.lit_for_node(n);
         }
         // 0-arity define-fun macro expansion
@@ -1028,7 +1027,11 @@ NodeId Smt2Visitor::build_fml(
         if (fit != ctx_.declared_fns.end() && ctx_.bool_fns.contains(fit->second)) {
             if (ctx->term().empty()) {
                 NodeId n = ctx_.nm.mk_const(fit->second);
-                link_bool_term_to_euf(n);
+                // A 0-ary Bool in formula position is pure SAT.  It only needs
+                // EUF true/false bridging if visit_term sees it in a U-sorted
+                // position, for example as an argument to an uninterpreted
+                // function.  Bridging all propositional constants pollutes the
+                // EUF trail on Boolean-circuit-heavy benchmarks.
                 return n;  // Bool-sorted node IS the atom
             }
             std::vector<NodeId> args;
