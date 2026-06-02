@@ -23,6 +23,24 @@ Smt2Visitor::Smt2Visitor(SmtContext& ctx, PreprocOptions opts, Stats& stats)
 // Helpers
 // ============================================================================
 
+Smt2Visitor::LetBinding* Smt2Visitor::find_let_binding(const std::string& name)
+{
+    for (auto it = let_env_.rbegin(); it != let_env_.rend(); ++it) {
+        auto jt = it->find(name);
+        if (jt != it->end()) return &jt->second;
+    }
+    return nullptr;
+}
+
+const Smt2Visitor::LetBinding* Smt2Visitor::find_let_binding(const std::string& name) const
+{
+    for (auto it = let_env_.rbegin(); it != let_env_.rend(); ++it) {
+        auto jt = it->find(name);
+        if (jt != it->end()) return &jt->second;
+    }
+    return nullptr;
+}
+
 std::string Smt2Visitor::symbol_name(
     smt2parser::SMTLIBv2Parser::SymbolContext* sym)
 {
@@ -242,7 +260,7 @@ NodeId Smt2Visitor::visit_term(
             if (ctx->GRW_Exclamation()) { ctx = ctx->term()[0]; continue; }
             let_env_.emplace_back();
             for (auto* vb : ctx->var_binding())
-                let_env_.back()[vb->symbol()->getText()] = vb->term();
+                let_env_.back()[vb->symbol()->getText()].term = vb->term();
             ctx = ctx->term()[0];
             ++frames;
         }
@@ -259,9 +277,10 @@ NodeId Smt2Visitor::visit_term(
 
     // Let variable lookup (search innermost frame first)
     if (ctx->term().empty()) {
-        for (auto it = let_env_.rbegin(); it != let_env_.rend(); ++it) {
-            auto jt = it->find(name);
-            if (jt != it->end()) return visit_term(jt->second);
+        if (auto* binding = find_let_binding(name)) {
+            if (binding->term_node == NULL_NODE)
+                binding->term_node = visit_term(binding->term);
+            return binding->term_node;
         }
     }
 
@@ -372,7 +391,7 @@ void Smt2Visitor::assert_formula(
             if (ctx->GRW_Exclamation()) { ctx = ctx->term()[0]; continue; }
             let_env_.emplace_back();
             for (auto* vb : ctx->var_binding())
-                let_env_.back()[vb->symbol()->getText()] = vb->term();
+                let_env_.back()[vb->symbol()->getText()].term = vb->term();
             ctx = ctx->term()[0];
             ++frames;
         }
@@ -526,7 +545,7 @@ void Smt2Visitor::collect_clause_lits(
             if (ctx->GRW_Exclamation()) { ctx = ctx->term()[0]; continue; }
             let_env_.emplace_back();
             for (auto* vb : ctx->var_binding())
-                let_env_.back()[vb->symbol()->getText()] = vb->term();
+                let_env_.back()[vb->symbol()->getText()].term = vb->term();
             ctx = ctx->term()[0];
             ++frames;
         }
@@ -562,7 +581,7 @@ int Smt2Visitor::eval_lit(
             if (ctx->GRW_Exclamation()) { ctx = ctx->term()[0]; continue; }
             let_env_.emplace_back();
             for (auto* vb : ctx->var_binding())
-                let_env_.back()[vb->symbol()->getText()] = vb->term();
+                let_env_.back()[vb->symbol()->getText()].term = vb->term();
             ctx = ctx->term()[0];
             ++frames;
         }
@@ -784,10 +803,8 @@ int Smt2Visitor::eval_lit(
         if (op == "true")  return get_true_lit();
         if (op == "false") return -get_true_lit();
         // Search let environment first
-        for (auto it = let_env_.rbegin(); it != let_env_.rend(); ++it) {
-            auto jt = it->find(op);
-            if (jt != it->end()) return eval_lit(jt->second);
-        }
+        if (auto* binding = find_let_binding(op))
+            return eval_lit(binding->term);
         // Bool-valued 0-ary declared symbol
         auto fit = ctx_.declared_fns.find(op);
         if (fit != ctx_.declared_fns.end()
@@ -843,7 +860,7 @@ NodeId Smt2Visitor::build_fml(
             if (ctx->GRW_Exclamation()) { ctx = ctx->term()[0]; continue; }
             let_env_.emplace_back();
             for (auto* vb : ctx->var_binding())
-                let_env_.back()[vb->symbol()->getText()] = vb->term();
+                let_env_.back()[vb->symbol()->getText()].term = vb->term();
             ctx = ctx->term()[0];
             ++frames;
         }
@@ -1014,9 +1031,10 @@ NodeId Smt2Visitor::build_fml(
 
     // Let variable reference (0-ary, not a declared symbol)
     if (ctx->term().empty()) {
-        for (auto it = let_env_.rbegin(); it != let_env_.rend(); ++it) {
-            auto jt = it->find(op);
-            if (jt != it->end()) return build_fml(jt->second);
+        if (auto* binding = find_let_binding(op)) {
+            if (binding->fml_node == NULL_NODE)
+                binding->fml_node = build_fml(binding->term);
+            return binding->fml_node;
         }
     }
 

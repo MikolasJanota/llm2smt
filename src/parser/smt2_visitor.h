@@ -32,11 +32,19 @@ public:
 private:
     SmtContext& ctx_;
 
-    // Let environment: stack of (variable-name → bound TermContext*)
-    // Bindings are evaluated lazily on first use.
-    using LetFrame = std::unordered_map<std::string,
-                                        smt2parser::SMTLIBv2Parser::TermContext*>;
+    // Let environment: stack of (variable-name → bound TermContext* plus lazy
+    // NodeId caches). Formula and term uses are cached separately because a
+    // Bool expression in formula position is a SAT formula, while the same
+    // expression in U-sorted position may need EUF Bool-value bridging.
+    struct LetBinding {
+        smt2parser::SMTLIBv2Parser::TermContext* term = nullptr;
+        NodeId term_node = NULL_NODE;
+        NodeId fml_node = NULL_NODE;
+    };
+    using LetFrame = std::unordered_map<std::string, LetBinding>;
     std::vector<LetFrame> let_env_;
+    LetBinding* find_let_binding(const std::string& name);
+    const LetBinding* find_let_binding(const std::string& name) const;
 
     // define-fun macros (0-arity only): name → body TermContext*.
     // Expanded inline wherever the name is referenced.

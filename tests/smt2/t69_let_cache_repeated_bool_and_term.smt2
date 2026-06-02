@@ -1,0 +1,15 @@
+(set-logic QF_UF)
+(declare-sort U 0)
+(declare-fun a () U)
+(declare-fun b () U)
+(declare-fun c () U)
+(declare-fun f (U) U)
+(assert
+  (let ((x (f a))
+        (p (= a b)))
+    (and p p p
+         (= x c)
+         (= x c)
+         (= (f a) c)
+         (not (= b a)))))
+(check-sat)

@@ -395,6 +395,10 @@ add_smt2_test_preproc(deep_or_nostack  t67_deep_or_nostack.smt2  unsat)
 #      introducing Tseitin variables for intermediate AND nodes.
 add_smt2_test(not_and_direct_clause  t68_not_and_direct_clause.smt2  unsat)
 
+# t69: Repeated let-bound Bool formulas and U-terms are cached separately while
+#      building preprocessing NodeId formulas.
+add_smt2_test(let_cache_repeated_bool_and_term  t69_let_cache_repeated_bool_and_term.smt2  unsat)
+
 # Normal command-line runs print build provenance, including the git commit and
 # SAT backend version.  --quiet suppresses that banner.
 add_test(
