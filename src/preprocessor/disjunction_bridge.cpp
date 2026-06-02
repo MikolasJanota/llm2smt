@@ -8,6 +8,9 @@
 
 namespace llm2smt {
 
+static constexpr size_t kMaxBridgeBranches = 64;
+static constexpr size_t kMaxBridgePairChecks = 200000;
+
 // ── Union-find over NodeIds ────────────────────────────────────────────────
 
 struct UF {
@@ -81,11 +84,16 @@ static void collect_or_branches(NodeId f, const NodeManager& nm,
 
 static void bridge_or(NodeId f, size_t top_idx, NodeManager& nm,
                        std::vector<NodeId>& out,
-                       std::vector<BridgeEquality>* eq_out)
+                       std::vector<BridgeEquality>* eq_out,
+                       BridgeStats* stats)
 {
     std::vector<NodeId> branches;
     collect_or_branches(f, nm, branches);
     if (branches.size() < 2) return;
+    if (branches.size() > kMaxBridgeBranches) {
+        if (stats) ++stats->skipped_or_nodes;
+        return;
+    }
 
     // Build union-find closure for each branch.
     std::vector<UF> uf(branches.size());
@@ -106,6 +114,11 @@ static void bridge_or(NodeId f, size_t top_idx, NodeManager& nm,
     // For every pair of shared nodes, check if they are equivalent in ALL
     // branch closures and emit a new unit Eq if so.
     std::vector<NodeId> sv(shared.begin(), shared.end());
+    const size_t pair_checks = (sv.size() * (sv.size() - 1) / 2) * branches.size();
+    if (pair_checks > kMaxBridgePairChecks) {
+        if (stats) ++stats->skipped_or_nodes;
+        return;
+    }
     for (size_t i = 0; i < sv.size(); ++i) {
         for (size_t j = i + 1; j < sv.size(); ++j) {
             NodeId a = sv[i], b = sv[j];
@@ -115,6 +128,7 @@ static void bridge_or(NodeId f, size_t top_idx, NodeManager& nm,
             }
             if (common) {
                 out.push_back(nm.mk_eq(a, b));
+                if (stats) ++stats->derived_equalities;
                 if (eq_out)
                     eq_out->push_back({top_idx, f, a, b});
             }
@@ -126,14 +140,15 @@ static void bridge_or(NodeId f, size_t top_idx, NodeManager& nm,
 
 static void extract_from(NodeId f, size_t top_idx, NodeManager& nm,
                            std::vector<NodeId>& out,
-                           std::vector<BridgeEquality>* eq_out)
+                           std::vector<BridgeEquality>* eq_out,
+                           BridgeStats* stats)
 {
     std::vector<NodeId> work;
     work.push_back(f);
     while (!work.empty()) {
         NodeId n = work.back(); work.pop_back();
         if (nm.is_or(n)) {
-            bridge_or(n, top_idx, nm, out, eq_out);
+            bridge_or(n, top_idx, nm, out, eq_out, stats);
         } else if (nm.is_and(n)) {
             for (NodeId c : nm.get(n).children) work.push_back(c);
         }
@@ -144,11 +159,12 @@ static void extract_from(NodeId f, size_t top_idx, NodeManager& nm,
 
 void bridge_disjunctions(std::vector<NodeId>& fmls,
                           NodeManager& nm,
-                          std::vector<BridgeEquality>* equalities)
+                          std::vector<BridgeEquality>* equalities,
+                          BridgeStats* stats)
 {
     std::vector<NodeId> new_facts;
     for (size_t i = 0; i < fmls.size(); ++i)
-        extract_from(fmls[i], i, nm, new_facts, equalities);
+        extract_from(fmls[i], i, nm, new_facts, equalities, stats);
     fmls.insert(fmls.end(), new_facts.begin(), new_facts.end());
 }
 

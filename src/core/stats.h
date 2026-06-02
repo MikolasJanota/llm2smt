@@ -16,6 +16,9 @@ struct Stats {
     uint64_t preproc_fmls_false_out  = 0; // assertions simplified to False
     uint64_t preproc_forced_atoms    = 0; // atoms extracted as unit clauses
     uint64_t preproc_passes_run      = 0; // simplifier passes that changed something
+    uint64_t preproc_diseq_folds     = 0; // Eq atoms folded false by known disequalities
+    uint64_t preproc_bridge_eqs      = 0; // equalities derived by disjunction bridging
+    uint64_t preproc_bridge_skipped  = 0; // Or nodes skipped by bridge size caps
     uint64_t preproc_simp_ms         = 0; // wall-clock ms for simplifier.run()
     uint64_t preproc_flush_ms        = 0; // wall-clock ms for flush_pending_fmls() (NNF+simp+encode)
     uint64_t preproc_finite_domain_amo_clauses = 0; // SAT AMO clauses from distinct endpoints
@@ -49,6 +52,9 @@ struct Stats {
         row("preproc.fmls_false_out",   preproc_fmls_false_out);
         row("preproc.forced_atoms",     preproc_forced_atoms);
         row("preproc.passes_run",       preproc_passes_run);
+        row("preproc.diseq_folds",      preproc_diseq_folds);
+        row("preproc.bridge_eqs",       preproc_bridge_eqs);
+        row("preproc.bridge_skipped",   preproc_bridge_skipped);
         row("preproc.finite_domain_amo", preproc_finite_domain_amo_clauses);
         row("preproc.finite_domain_eq_defs", preproc_finite_domain_eq_def_clauses);
         out << "  -- euf theory --\n";

@@ -4,10 +4,22 @@
 #include <cassert>
 #include <span>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace llm2smt {
 
 Simplifier::Simplifier(NodeManager& nm) : nm_(nm) {}
+
+static uint64_t node_pair_key(NodeId a, NodeId b)
+{
+    if (a > b) std::swap(a, b);
+    return (static_cast<uint64_t>(a) << 32) | static_cast<uint64_t>(b);
+}
+
+static uint64_t forced_key(NodeId atom, bool positive)
+{
+    return (static_cast<uint64_t>(atom) << 1) | (positive ? 1u : 0u);
+}
 
 // ============================================================================
 // Constant folding + optional And/Or flattening
@@ -295,6 +307,28 @@ void Simplifier::uf_union(NodeId a, NodeId b)
     if (ra != rb) parent_[ra] = rb;
 }
 
+bool Simplifier::renormalize_disequalities()
+{
+    if (diseq_pairs_.empty()) return false;
+
+    std::unordered_set<uint64_t> normalized;
+    normalized.reserve(diseq_pairs_.size());
+    bool contradiction = false;
+    for (uint64_t key : diseq_pairs_) {
+        NodeId a = static_cast<NodeId>(key >> 32);
+        NodeId b = static_cast<NodeId>(key & 0xffffffffu);
+        a = uf_find(a);
+        b = uf_find(b);
+        if (a == b) {
+            contradiction = true;
+            continue;
+        }
+        normalized.insert(node_pair_key(a, b));
+    }
+    diseq_pairs_ = std::move(normalized);
+    return contradiction;
+}
+
 // Rewrite mk_eq(x,y) → mk_eq(find(x), find(y)) throughout f.
 // If find(x)==find(y) the atom collapses to True (via mk_eq's reflexivity rule).
 // Compound nodes whose children changed are re-folded.
@@ -307,7 +341,16 @@ NodeId Simplifier::normalize_eq_fml(NodeId root)
         if (nm_.is_eq(f)) {
             NodeId lhs = nm_.get(f).children[0];
             NodeId rhs = nm_.get(f).children[1];
-            norm_cache_[f] = nm_.mk_eq(uf_find(lhs), uf_find(rhs));
+            lhs = uf_find(lhs);
+            rhs = uf_find(rhs);
+            if (lhs == rhs) {
+                norm_cache_[f] = nm_.mk_true();
+            } else if (diseq_pairs_.contains(node_pair_key(lhs, rhs))) {
+                norm_cache_[f] = nm_.mk_false();
+                ++diseq_folds_;
+            } else {
+                norm_cache_[f] = nm_.mk_eq(lhs, rhs);
+            }
             return;
         }
         if (nm_.is_true_node(f) || nm_.is_false_node(f) || is_atom(f)) {
@@ -406,8 +449,13 @@ bool Simplifier::run_pass(std::vector<NodeId>& assertions)
     // Unit assertions themselves are updated via O(1) index maps.
     std::unordered_map<NodeId, NodeId> subst;  // atom → mk_true()/mk_false()
 
+    bool contradiction = false;
     for (auto& [atom, positive] : units) {
-        if (!forced_set_.insert(atom).second) continue;  // already forced
+        const uint64_t key = forced_key(atom, positive);
+        const uint64_t opp_key = forced_key(atom, !positive);
+        if (forced_set_.contains(opp_key))
+            contradiction = true;
+        if (!forced_set_.insert(key).second) continue;  // already forced
         forced_.push_back({atom, positive});
 
         // For positive Eq units, record the merge in the union-find so that
@@ -416,6 +464,13 @@ bool Simplifier::run_pass(std::vector<NodeId>& assertions)
             NodeId lhs = nm_.get(atom).children[0];
             NodeId rhs = nm_.get(atom).children[1];
             uf_union(lhs, rhs);
+        } else if (nm_.is_eq(atom) && !positive) {
+            NodeId lhs = uf_find(nm_.get(atom).children[0]);
+            NodeId rhs = uf_find(nm_.get(atom).children[1]);
+            if (lhs == rhs)
+                contradiction = true;
+            else
+                diseq_pairs_.insert(node_pair_key(lhs, rhs));
         }
 
         // Update the unit assertion that IS exactly this atom (O(1) lookup).
@@ -438,9 +493,70 @@ bool Simplifier::run_pass(std::vector<NodeId>& assertions)
         subst[atom] = positive ? nm_.mk_true() : nm_.mk_false();
     }
 
+    if (!parent_.empty() && renormalize_disequalities())
+        contradiction = true;
+
+    if (contradiction) {
+        assertions.push_back(nm_.mk_false());
+        changed = true;
+    }
+
     // Apply all substitutions to compound assertions in one memoized sweep.
     if (!subst.empty()) {
         subst_cache_.clear();
+        std::unordered_set<NodeId> subst_atoms;
+        subst_atoms.reserve(subst.size());
+        for (const auto& [atom, _] : subst)
+            subst_atoms.insert(atom);
+
+        std::unordered_map<NodeId, bool> contains_cache;
+        auto contains_subst_atom = [&](NodeId root) {
+            if (auto it = contains_cache.find(root); it != contains_cache.end())
+                return it->second;
+
+            struct Frame { NodeId n; bool ready; };
+            std::vector<Frame> stack{{root, false}};
+            while (!stack.empty()) {
+                NodeId n = stack.back().n;
+                bool ready = stack.back().ready;
+
+                if (contains_cache.contains(n)) {
+                    stack.pop_back();
+                    continue;
+                }
+
+                if (nm_.is_eq(n) || is_atom(n)) {
+                    contains_cache[n] = subst_atoms.contains(n);
+                    stack.pop_back();
+                    continue;
+                }
+                if (nm_.is_true_node(n) || nm_.is_false_node(n)) {
+                    contains_cache[n] = false;
+                    stack.pop_back();
+                    continue;
+                }
+
+                if (!ready) {
+                    stack.back().ready = true;
+                    for (NodeId c : nm_.get(n).children) {
+                        if (!contains_cache.contains(c))
+                            stack.push_back({c, false});
+                    }
+                } else {
+                    stack.pop_back();
+                    bool found = false;
+                    for (NodeId c : nm_.get(n).children) {
+                        if (contains_cache.at(c)) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    contains_cache[n] = found;
+                }
+            }
+            return contains_cache.at(root);
+        };
+
         for (size_t k = 0; k < assertions.size(); ++k) {
             NodeId& f = assertions[k];
             if (nm_.is_true_node(f) || nm_.is_false_node(f)) continue;
@@ -449,6 +565,7 @@ bool Simplifier::run_pass(std::vector<NodeId>& assertions)
                 NodeId ch = nm_.get(f).children[0];
                 if (nm_.is_eq(ch) || is_atom(ch)) continue;
             }
+            if (!contains_subst_atom(f)) continue;
             NodeId new_f = subst_many_and_fold(f, subst);
             if (new_f != f) {
                 f       = new_f;
@@ -459,7 +576,7 @@ bool Simplifier::run_pass(std::vector<NodeId>& assertions)
 
     // Phase 4: normalize Eq atoms by the equality union-find.
     // Handles transitivity: if a=b and b=c are forced, Eq(a,c) collapses to True.
-    if (!parent_.empty()) {
+    if (!parent_.empty() || !diseq_pairs_.empty()) {
         norm_cache_.clear();
         for (auto& f : assertions) {
             if (nm_.is_true_node(f) || nm_.is_false_node(f)) continue;

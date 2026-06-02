@@ -350,6 +350,32 @@ TEST_F(SimpFix, TransitiveEqSymmetric) {
     EXPECT_EQ(assertions[2], PD);
 }
 
+TEST_F(SimpFix, DiseqUnitFoldsEqFalse) {
+    // a=b and a!=c make Eq(b,c) false only after equality normalization.
+    std::vector<NodeId> assertions = {EQ(NA, NB), NOT(EQ(NA, NC)), AND(EQ(NB, NC), PD)};
+    s->run_pass(assertions);
+    EXPECT_TRUE(nm.is_false_node(assertions[2]));
+    EXPECT_GE(s->diseq_folds(), 1U);
+}
+
+TEST_F(SimpFix, TransitiveEqContradictsDiseq) {
+    // a=b and b=c conflict with a!=c after equality UF normalization.
+    std::vector<NodeId> assertions = {EQ(NA, NB), EQ(NB, NC), NOT(EQ(NA, NC))};
+    s->run_pass(assertions);
+    bool has_false = false;
+    for (NodeId f : assertions)
+        if (nm.is_false_node(f)) has_false = true;
+    EXPECT_TRUE(has_false);
+}
+
+TEST_F(SimpFix, OppositePolarityUnitsAreBothRecorded) {
+    NodeId ab = EQ(NA, NB);
+    std::vector<NodeId> assertions = {ab, NOT(ab)};
+    s->run_pass(assertions);
+    ASSERT_EQ(s->forced_atoms().size(), 2U);
+    EXPECT_NE(s->forced_atoms()[0].positive, s->forced_atoms()[1].positive);
+}
+
 TEST_F(SimpFix, ZeroPassesIsNoOp) {
     NodeId e = EQ(NA, NB);
     std::vector<NodeId> assertions = {e, AND(e, PC)};

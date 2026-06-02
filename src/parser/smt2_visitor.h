@@ -145,6 +145,7 @@ private:
     void collect_finite_domain_terms(NodeId f);
     void encode_finite_domain_eq_defs(NodeId f);
     void remember_finite_domain_eq_lit(NodeId lhs, NodeId rhs, int lit);
+    bool known_equality_lit(NodeId lhs, NodeId rhs, int& lit);
 
     // True iff f is an atom or negated atom (usable as a SAT literal directly).
     bool is_literal_fml(NodeId f) const;

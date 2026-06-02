@@ -54,12 +54,15 @@ public:
     // Number of passes that changed at least one assertion (capped at `passes`).
     int passes_run() const { return passes_run_; }
 
+    size_t diseq_folds() const { return diseq_folds_; }
+
 private:
     NodeManager&                       nm_;
     bool                               flatten_ = true;
     std::vector<ForcedAtom>            forced_;
-    std::unordered_set<NodeId>         forced_set_;  // shadow set for O(1) dedup
+    std::unordered_set<uint64_t>       forced_set_;  // (atom, polarity) dedup
     int                                passes_run_ = 0;
+    size_t                             diseq_folds_ = 0;
 
     // Memoization cache for fold(): NodeId → folded NodeId.
     // fold() is pure (NodeManager nodes are immutable), so the result is stable.
@@ -83,6 +86,8 @@ private:
     std::unordered_map<NodeId, NodeId> parent_;
     NodeId uf_find(NodeId n);       // path-compressing find
     void   uf_union(NodeId a, NodeId b);
+    std::unordered_set<uint64_t> diseq_pairs_;
+    bool renormalize_disequalities();
 
     // Rewrite every mk_eq(x,y) in f to mk_eq(find(x), find(y)), folding as needed.
     NodeId normalize_eq_fml(NodeId root);

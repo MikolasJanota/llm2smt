@@ -15,6 +15,11 @@ struct BridgeEquality {
     NodeId lhs, rhs;
 };
 
+struct BridgeStats {
+    size_t derived_equalities = 0;
+    size_t skipped_or_nodes = 0;
+};
+
 // Equality bridging under disjunctions.
 //
 // For every Or(...) subformula in the input, compute the EUF-closure of
@@ -41,6 +46,7 @@ struct BridgeEquality {
 // (used by the proof emitter to build implication-form lemmas).
 void bridge_disjunctions(std::vector<NodeId>& fmls,
                           NodeManager& nm,
-                          std::vector<BridgeEquality>* equalities = nullptr);
+                          std::vector<BridgeEquality>* equalities = nullptr,
+                          BridgeStats* stats = nullptr);
 
 } // namespace llm2smt

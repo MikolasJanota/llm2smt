@@ -1071,6 +1071,29 @@ static uint64_t lit_pair_key(int a, int b)
          | static_cast<uint32_t>(b);
 }
 
+static void split_top_level_conjunctions(std::vector<NodeId>& fmls, NodeManager& nm)
+{
+    std::vector<NodeId> split;
+    split.reserve(fmls.size());
+
+    for (NodeId f : fmls) {
+        std::vector<NodeId> work{f};
+        while (!work.empty()) {
+            NodeId n = work.back();
+            work.pop_back();
+            if (nm.is_and(n)) {
+                const auto& children = nm.get(n).children;
+                for (NodeId child : children | std::views::reverse)
+                    work.push_back(child);
+            } else {
+                split.push_back(n);
+            }
+        }
+    }
+
+    fmls = std::move(split);
+}
+
 // Smaller finite domains (notably NEQ004_size7 and NEQ027_size9) do not
 // benefit enough from the extra clauses; size 10+ is where this paid off.
 static constexpr size_t kMinFiniteDomainEqDefSize = 10;
@@ -1120,6 +1143,20 @@ void Smt2Visitor::remember_finite_domain_eq_lit(NodeId lhs, NodeId rhs, int lit)
 
     add_for_endpoint(lhs, rhs);
     add_for_endpoint(rhs, lhs);
+}
+
+bool Smt2Visitor::known_equality_lit(NodeId lhs, NodeId rhs, int& lit)
+{
+    if (lhs == rhs) {
+        lit = get_true_lit();
+        return true;
+    }
+    if (!top_level_diseq_pairs_.empty() &&
+        top_level_diseq_pairs_.contains(node_pair_key(lhs, rhs))) {
+        lit = -get_true_lit();
+        return true;
+    }
+    return false;
 }
 
 void Smt2Visitor::collect_finite_domain_terms(NodeId f)
@@ -1232,6 +1269,7 @@ void Smt2Visitor::encode_finite_domain_eq_defs(NodeId f)
         const FiniteDomainInfo& linfo = lit->second;
         const FiniteDomainInfo& rinfo = rit->second;
         if (linfo.values.size() != rinfo.values.size() || linfo.values.empty()) continue;
+        if (linfo.values.size() < kMinFiniteDomainEqDefSize) continue;
         if (!finite_domain_eq_defs_seen_.insert(node_pair_key(lhs, rhs)).second) continue;
 
         std::vector<int> rpos_for_lval;
@@ -1271,6 +1309,9 @@ int Smt2Visitor::lit_of_fml(NodeId f)
     if (nm.is_eq(f)) {
         NodeId c0 = nm.get(f).children[0];
         NodeId c1 = nm.get(f).children[1];
+        int known = 0;
+        if (known_equality_lit(c0, c1, known))
+            return known;
         int lit = ctx_.euf.register_equality(c0, c1);
         remember_finite_domain_eq_lit(c0, c1, lit);
         return lit;
@@ -1355,6 +1396,11 @@ void Smt2Visitor::encode_fml(NodeId f)
     if (nm.is_eq(f)) {
         NodeId c0 = nm.get(f).children[0];
         NodeId c1 = nm.get(f).children[1];
+        int known = 0;
+        if (known_equality_lit(c0, c1, known)) {
+            if (known < 0) ctx_.sat.add_clause(std::span<const int>{});
+            return;
+        }
         int l = ctx_.euf.register_equality(c0, c1);
         std::array<int,1> cl = {l};
         ctx_.sat.add_clause(std::span<const int>(cl));
@@ -1367,6 +1413,19 @@ void Smt2Visitor::encode_fml(NodeId f)
     }
     if (nm.is_not(f)) {
         NodeId child = nm.get(f).children[0];
+        if (nm.is_eq(child)) {
+            NodeId c0 = nm.get(child).children[0];
+            NodeId c1 = nm.get(child).children[1];
+            if (c0 == c1) {
+                ctx_.sat.add_clause(std::span<const int>{});
+                return;
+            }
+            int l = ctx_.euf.register_equality(c0, c1);
+            remember_finite_domain_eq_lit(c0, c1, l);
+            std::array<int,1> cl = {-l};
+            ctx_.sat.add_clause(std::span<const int>(cl));
+            return;
+        }
         if (nm.is_and(child)) {
             // NOT(AND(leaf1,...,leafN)): Tseitin variable x for the AND, then assert NOT(x).
             //   {-x, leaf_i}  for each i   (x → leaf_i)
@@ -1460,14 +1519,20 @@ void Smt2Visitor::flush_pending_fmls()
             f = to_nnf(f, nm, opts_.nnf_memo);
     }
 
+    split_top_level_conjunctions(pending_fmls_, nm);
+
     // Step A.5: Equality bridging under disjunctions.
     // Bridge-derived equalities are applied as permanent CC merges immediately
     // so they take effect regardless of whether the Simplifier is enabled.
     if (opts_.eq_bridge) {
         const size_t before = pending_fmls_.size();
         std::vector<BridgeEquality> bridge_equalities;
+        BridgeStats bridge_stats;
         bridge_disjunctions(pending_fmls_, nm,
-                            !opts_.proof_file.empty() ? &bridge_equalities : nullptr);
+                            !opts_.proof_file.empty() ? &bridge_equalities : nullptr,
+                            &bridge_stats);
+        stats_.preproc_bridge_eqs += static_cast<uint64_t>(bridge_stats.derived_equalities);
+        stats_.preproc_bridge_skipped += static_cast<uint64_t>(bridge_stats.skipped_or_nodes);
         for (size_t i = before; i < pending_fmls_.size(); ++i) {
             NodeId f = pending_fmls_[i];
             if (nm.is_eq(f)) {
@@ -1502,6 +1567,7 @@ void Smt2Visitor::flush_pending_fmls()
 
         stats_.preproc_passes_run    += static_cast<uint64_t>(simp.passes_run());
         stats_.preproc_forced_atoms  += static_cast<uint64_t>(simp.forced_atoms().size());
+        stats_.preproc_diseq_folds   += static_cast<uint64_t>(simp.diseq_folds());
         for (NodeId f : pending_fmls_) {
             if (nm.is_true_node(f))  ++stats_.preproc_fmls_true_out;
             if (nm.is_false_node(f)) ++stats_.preproc_fmls_false_out;
