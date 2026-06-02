@@ -1140,6 +1140,39 @@ void Smt2Visitor::collect_top_level_disequalities(NodeId f)
     }
 }
 
+void Smt2Visitor::precollect_finite_domain_amo_lits(NodeId f)
+{
+    if (!opts_.finite_domain_amo || top_level_diseq_pairs_.empty()) return;
+
+    NodeManager& nm = ctx_.nm;
+    std::vector<NodeId> work{f};
+    while (!work.empty()) {
+        NodeId n = work.back();
+        work.pop_back();
+
+        if (nm.is_or(n)) {
+            for (NodeId child : nm.get(n).children) {
+                if (nm.is_eq(child)) {
+                    NodeId lhs = nm.get(child).children[0];
+                    NodeId rhs = nm.get(child).children[1];
+                    if (lhs != rhs) {
+                        int lit = ctx_.euf.register_equality(lhs, rhs);
+                        remember_finite_domain_eq_lit(lhs, rhs, lit);
+                    }
+                }
+            }
+        }
+
+        if (nm.is_and(n) || nm.is_or(n) || nm.is_implies(n) || nm.is_xor(n) ||
+            nm.is_iff(n) || nm.is_ite_bool(n)) {
+            for (NodeId child : nm.get(n).children)
+                work.push_back(child);
+        } else if (nm.is_not(n)) {
+            work.push_back(nm.get(n).children[0]);
+        }
+    }
+}
+
 void Smt2Visitor::remember_finite_domain_eq_lit(NodeId lhs, NodeId rhs, int lit)
 {
     if (!opts_.finite_domain_amo || top_level_diseq_pairs_.empty() || lhs == rhs) return;
@@ -1538,6 +1571,16 @@ void Smt2Visitor::flush_pending_fmls()
     }
 
     split_top_level_conjunctions(pending_fmls_, nm);
+
+    // Preserve top-level disequality facts before simplification rewrites unit
+    // disequality assertions to True.  Finite-domain AMO strengthening needs
+    // these facts later when equality-choice disjunctions are encoded.
+    if (opts_.finite_domain_amo) {
+        for (NodeId f : pending_fmls_)
+            collect_top_level_disequalities(f);
+        for (NodeId f : pending_fmls_)
+            precollect_finite_domain_amo_lits(f);
+    }
 
     // Step A.5: Equality bridging under disjunctions.
     // Bridge-derived equalities are applied as permanent CC merges immediately

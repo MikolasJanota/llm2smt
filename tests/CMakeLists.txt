@@ -399,6 +399,18 @@ add_smt2_test(not_and_direct_clause  t68_not_and_direct_clause.smt2  unsat)
 #      building preprocessing NodeId formulas.
 add_smt2_test(let_cache_repeated_bool_and_term  t69_let_cache_repeated_bool_and_term.smt2  unsat)
 
+# t70: Unit disequalities simplified to True must still feed finite-domain AMO
+#      strengthening before finite-domain equality choices are encoded.
+add_test(
+    NAME "smt2/preproc_keeps_finite_domain_amo"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --preprocess-passes 1 --stats \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t70_preproc_keeps_finite_domain_amo.smt2 \
+         >/tmp/t70.out 2>/tmp/t70.err && \
+         grep -q '^sat' /tmp/t70.out && \
+         grep -q 'preproc.finite_domain_amo     1' /tmp/t70.err"
+)
+
 # Normal command-line runs print build provenance, including the git commit and
 # SAT backend version.  --quiet suppresses that banner.
 add_test(

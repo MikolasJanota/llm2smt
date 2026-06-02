@@ -194,6 +194,13 @@ These are observed hotspots / likely inefficiencies to revisit with benchmark da
   equality/disequality assignment notifications. Disabling AMO times out at 60s
   with many more conflicts. More aggressive theory-propagation schedules
   (`--prop-interval 4/8`, threshold 1, unlimited delivery budget) were worse.
+- Finite-domain AMO strengthening is order-sensitive with simplification.
+  `NEQ027_size8.smt2 --preprocess-passes 2 --eq-bridge` regressed when the
+  simplifier ran before AMO seeding: unit disequalities were folded to `true`
+  and many domain-choice ORs were simplified away, dropping AMO clauses from
+  5,328 to 0/56 and causing timeouts. Keep top-level disequality collection and
+  finite-domain equality-choice AMO seeding before simplification; regression
+  test `smt2/preproc_keeps_finite_domain_amo` checks this.
 - The finite-domain equality-definition pass in `Smt2Visitor` recognizes
   explicit domain closure clauses `(or (= t c0) ... (= t cn))` whose values are
   known distinct, records the existing choice literals, and for equality atoms

@@ -150,6 +150,7 @@ private:
     void flush_pending_fmls();
 
     void collect_top_level_disequalities(NodeId f);
+    void precollect_finite_domain_amo_lits(NodeId f);
     void collect_finite_domain_terms(NodeId f);
     void encode_finite_domain_eq_defs(NodeId f);
     void remember_finite_domain_eq_lit(NodeId lhs, NodeId rhs, int lit);
