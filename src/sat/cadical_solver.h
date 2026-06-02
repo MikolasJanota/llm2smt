@@ -36,6 +36,9 @@ public:
     void enable_clause_recording();
     const std::vector<std::vector<int>>& recorded_clauses() const;
 
+    static const char* version();
+    static const char* signature();
+
 private:
     struct Adapter;  // defined in cadical_solver.cpp
 

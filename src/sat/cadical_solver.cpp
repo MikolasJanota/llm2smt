@@ -60,6 +60,14 @@ CaDiCaLSolver::~CaDiCaLSolver() {
         solver_->disconnect_external_propagator();
 }
 
+const char* CaDiCaLSolver::version() {
+    return CaDiCaL::Solver::version();
+}
+
+const char* CaDiCaLSolver::signature() {
+    return CaDiCaL::Solver::signature();
+}
+
 int CaDiCaLSolver::new_var() {
     return ++next_var_;
 }

@@ -58,8 +58,13 @@ int main(int argc, char** argv) {
     app.set_version_flag("--version", []() -> std::string {
         std::string v;
         v += "llm2smt " LLM2SMT_VERSION " (" LLM2SMT_GIT_DESCRIBE ")\n";
+        v += "Git commit: " LLM2SMT_GIT_COMMIT "\n";
         v += "Build:  " LLM2SMT_BUILD_TYPE "\n";
-        v += "SAT:    " LLM2SMT_SAT_SOLVER;
+        v += "SAT:    " LLM2SMT_SAT_SOLVER " ";
+        v += CaDiCaLSolver::version();
+        v += " (";
+        v += CaDiCaLSolver::signature();
+        v += ")";
 #ifndef NDEBUG
         v += "\nAssertions: enabled";
 #endif
@@ -69,6 +74,8 @@ int main(int argc, char** argv) {
     std::string input_file;
     app.add_option("file", input_file, "SMT2 input file (reads stdin if omitted)")
        ->check(CLI::ExistingFile);
+    bool quiet = false;
+    app.add_flag("-q,--quiet", quiet, "Suppress version/provenance diagnostics");
 
     PreprocOptions opts;
     app.add_option("--preprocess-passes", opts.passes,
@@ -113,7 +120,15 @@ int main(int argc, char** argv) {
 
     CLI11_PARSE(app, argc, argv);
 
-    if (opts.selectors)
+    if (!quiet) {
+        std::cerr << "llm2smt " << LLM2SMT_VERSION
+                  << " git " << LLM2SMT_GIT_COMMIT
+                  << " sat " << LLM2SMT_SAT_SOLVER << " "
+                  << CaDiCaLSolver::version()
+                  << " (" << CaDiCaLSolver::signature() << ")\n";
+    }
+
+    if (opts.selectors && !quiet)
         std::cerr << "Warning: --selectors is deprecated and may be removed in a future version.\n";
 
     try {

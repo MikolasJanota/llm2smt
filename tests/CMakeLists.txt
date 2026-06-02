@@ -5,7 +5,8 @@ include(GoogleTest)
 function(add_smt2_test name file expected)
     add_test(
         NAME "smt2/${name}"
-        COMMAND $<TARGET_FILE:llm2smt> "${CMAKE_CURRENT_SOURCE_DIR}/smt2/${file}"
+        COMMAND $<TARGET_FILE:llm2smt> --quiet
+                "${CMAKE_CURRENT_SOURCE_DIR}/smt2/${file}"
     )
     set_tests_properties("smt2/${name}" PROPERTIES
         PASS_REGULAR_EXPRESSION "^${expected}"
@@ -16,7 +17,7 @@ endfunction()
 function(add_smt2_test_preproc name file expected)
     add_test(
         NAME "smt2/${name}"
-        COMMAND $<TARGET_FILE:llm2smt> --preprocess-passes 1
+        COMMAND $<TARGET_FILE:llm2smt> --quiet --preprocess-passes 1
                 "${CMAKE_CURRENT_SOURCE_DIR}/smt2/${file}"
     )
     set_tests_properties("smt2/${name}" PROPERTIES
@@ -28,7 +29,7 @@ endfunction()
 function(add_smt2_test_nnf name file expected)
     add_test(
         NAME "smt2/${name}"
-        COMMAND $<TARGET_FILE:llm2smt> --preprocess-passes 1 --nnf
+        COMMAND $<TARGET_FILE:llm2smt> --quiet --preprocess-passes 1 --nnf
                 "${CMAKE_CURRENT_SOURCE_DIR}/smt2/${file}"
     )
     set_tests_properties("smt2/${name}" PROPERTIES
@@ -40,7 +41,7 @@ endfunction()
 function(add_smt2_test_selectors name file expected)
     add_test(
         NAME "smt2/${name}"
-        COMMAND $<TARGET_FILE:llm2smt> --preprocess-passes 1 --nnf --selectors
+        COMMAND $<TARGET_FILE:llm2smt> --quiet --preprocess-passes 1 --nnf --selectors
                 "${CMAKE_CURRENT_SOURCE_DIR}/smt2/${file}"
     )
     # --selectors is deprecated; its warning goes to stderr before the result,
@@ -54,7 +55,7 @@ endfunction()
 function(add_smt2_test_eq_bridge name file expected)
     add_test(
         NAME "smt2/${name}"
-        COMMAND $<TARGET_FILE:llm2smt> --eq-bridge
+        COMMAND $<TARGET_FILE:llm2smt> --quiet --eq-bridge
                 "${CMAKE_CURRENT_SOURCE_DIR}/smt2/${file}"
     )
     set_tests_properties("smt2/${name}" PROPERTIES
@@ -165,7 +166,7 @@ add_smt2_test_preproc(preproc_perm_eq_preregistered_crash  t43_preproc_perm_eq_p
 add_test(
     NAME "smt2/lean_proof_generates"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t44_proof.lean \
+        "$<TARGET_FILE:llm2smt> --quiet --proof ${CMAKE_BINARY_DIR}/t44_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t44_lean_proof.smt2 && \
          grep -q '^theorem cl_' ${CMAKE_BINARY_DIR}/t44_proof.lean && \
          grep -q 'grind' ${CMAKE_BINARY_DIR}/t44_proof.lean"
@@ -175,7 +176,7 @@ add_test(
 add_test(
     NAME "smt2/ite_proof_generates"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t51_proof.lean \
+        "$<TARGET_FILE:llm2smt> --quiet --proof ${CMAKE_BINARY_DIR}/t51_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t51_ite_proof.smt2 && \
          grep -q 'ite_pos_0' ${CMAKE_BINARY_DIR}/t51_proof.lean && \
          grep -q 'open Classical' ${CMAKE_BINARY_DIR}/t51_proof.lean"
@@ -187,7 +188,7 @@ add_test(
 add_test(
     NAME "smt2/preproc_perm_eq_proof_no_flat_nodes"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --preprocess-passes 1 --proof ${CMAKE_BINARY_DIR}/t52_proof.lean \
+        "$<TARGET_FILE:llm2smt> --quiet --preprocess-passes 1 --proof ${CMAKE_BINARY_DIR}/t52_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t52_preproc_perm_eq_proof.smt2 && \
          grep -q 'have cl_0' ${CMAKE_BINARY_DIR}/t52_proof.lean && \
          grep -c '__flat_' ${CMAKE_BINARY_DIR}/t52_proof.lean | grep -q '^0\$'"
@@ -199,7 +200,7 @@ add_test(
 add_test(
     NAME "smt2/eq_bridge_proof_simple_bridge_lemmas"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --preprocess-passes 1 --eq-bridge \
+        "$<TARGET_FILE:llm2smt> --quiet --preprocess-passes 1 --eq-bridge \
          --proof ${CMAKE_BINARY_DIR}/t53_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t53_eq_bridge_proof.smt2 && \
          grep -q 'eq_bridge_0' ${CMAKE_BINARY_DIR}/t53_proof.lean && \
@@ -212,7 +213,7 @@ add_test(
 add_test(
     NAME "smt2/eq_bridge_proof_transitive_unit_clause"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --preprocess-passes 1 --eq-bridge \
+        "$<TARGET_FILE:llm2smt> --quiet --preprocess-passes 1 --eq-bridge \
          --proof ${CMAKE_BINARY_DIR}/t54_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t54_eq_bridge_diamond3_proof.smt2 && \
          grep -q 'eq_bridge_' ${CMAKE_BINARY_DIR}/t54_proof.lean && \
@@ -225,7 +226,7 @@ add_test(
 add_test(
     NAME "smt2/perm_dep_nonunit_clause_proof"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --preprocess-passes 1 --proof ${CMAKE_BINARY_DIR}/t56_proof.lean \
+        "$<TARGET_FILE:llm2smt> --quiet --preprocess-passes 1 --proof ${CMAKE_BINARY_DIR}/t56_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t56_eq_bridge_perm_dep_nonunit.smt2 && \
          grep -q 'cl_0 :.*→.*∨' ${CMAKE_BINARY_DIR}/t56_proof.lean"
 )
@@ -236,7 +237,7 @@ add_test(
 add_test(
     NAME "smt2/bool_fml_arg_proof"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t55_proof.lean \
+        "$<TARGET_FILE:llm2smt> --quiet --proof ${CMAKE_BINARY_DIR}/t55_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t55_bool_fml_arg_proof.smt2 && \
          ! grep -q '__bool_fml_' ${CMAKE_BINARY_DIR}/t55_proof.lean && \
          grep -q 'b0 (c1 = c2)' ${CMAKE_BINARY_DIR}/t55_proof.lean"
@@ -250,7 +251,7 @@ add_test(
 add_test(
     NAME "smt2/proof_perm_dep_unit_assign"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t57_proof.lean \
+        "$<TARGET_FILE:llm2smt> --quiet --proof ${CMAKE_BINARY_DIR}/t57_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t57_proof_perm_dep_unit_assign.smt2 && \
          ! grep -qP '^theorem cl_\\d+ : \\w+ = \\w+ := by grind' ${CMAKE_BINARY_DIR}/t57_proof.lean"
 )
@@ -263,7 +264,7 @@ add_test(
 add_test(
     NAME "smt2/proof_preproc_snapshot_after_simp"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --preprocess-passes 1 \
+        "$<TARGET_FILE:llm2smt> --quiet --preprocess-passes 1 \
          --proof ${CMAKE_BINARY_DIR}/t58_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t58_proof_preproc_snapshot.smt2 && \
          ! grep -q 'decide (c2 = c0)' ${CMAKE_BINARY_DIR}/t58_proof.lean"
@@ -276,7 +277,7 @@ add_test(
 add_test(
     NAME "smt2/proof_reflexive_eq_preproc"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --preprocess-passes 1 \
+        "$<TARGET_FILE:llm2smt> --quiet --preprocess-passes 1 \
          --proof ${CMAKE_BINARY_DIR}/t59_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t59_proof_reflexive_eq_preproc.smt2 && \
          grep -q 'hyp2 : False' ${CMAKE_BINARY_DIR}/t59_proof.lean"
@@ -290,7 +291,7 @@ add_test(
 add_test(
     NAME "smt2/proof_forced_atoms_preproc"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --preprocess-passes 1 \
+        "$<TARGET_FILE:llm2smt> --quiet --preprocess-passes 1 \
          --proof ${CMAKE_BINARY_DIR}/t60_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t60_proof_forced_atoms_preproc.smt2 && \
          grep -q 'c1 = (b1 p1)' ${CMAKE_BINARY_DIR}/t60_proof.lean"
@@ -305,7 +306,7 @@ add_test(
 add_test(
     NAME "smt2/proof_hyp_dep_cl"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t61_proof.lean \
+        "$<TARGET_FILE:llm2smt> --quiet --proof ${CMAKE_BINARY_DIR}/t61_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t61_proof_hyp_dep_cl.smt2 && \
          grep -q '^theorem cl_' ${CMAKE_BINARY_DIR}/t61_proof.lean && \
          grep -q 'have cl_.* := cl_' ${CMAKE_BINARY_DIR}/t61_proof.lean"
@@ -320,7 +321,7 @@ add_test(
 add_test(
     NAME "smt2/proof_hyp_dep_cl2"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t62_proof.lean \
+        "$<TARGET_FILE:llm2smt> --quiet --proof ${CMAKE_BINARY_DIR}/t62_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t62_proof_hyp_dep_cl2.smt2 && \
          grep -q '^theorem contradiction' ${CMAKE_BINARY_DIR}/t62_proof.lean && \
          ! grep -q '^theorem cl_' ${CMAKE_BINARY_DIR}/t62_proof.lean"
@@ -332,7 +333,7 @@ add_test(
 add_test(
     NAME "smt2/proof_minimize_bool_pred"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t63_proof.lean --proof-minimize \
+        "$<TARGET_FILE:llm2smt> --quiet --proof ${CMAKE_BINARY_DIR}/t63_proof.lean --proof-minimize \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t63_proof_minimize_bool_pred.smt2 && \
          ! grep -q 'True = ' ${CMAKE_BINARY_DIR}/t63_proof.lean && \
          grep -q '(h ' ${CMAKE_BINARY_DIR}/t63_proof.lean"
@@ -344,7 +345,7 @@ add_test(
 add_test(
     NAME "smt2/proof_ite_proxy_grind"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t64_proof.lean \
+        "$<TARGET_FILE:llm2smt> --quiet --proof ${CMAKE_BINARY_DIR}/t64_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t64_proof_ite_proxy_grind.smt2 && \
          ! grep 'have cl_\\|have ite_pos_\\|have ite_neg_' ${CMAKE_BINARY_DIR}/t64_proof.lean | grep -q '(if '"
 )
@@ -355,7 +356,7 @@ add_test(
 add_test(
     NAME "smt2/proof_ite_branch_atom_bridge"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t65_proof.lean \
+        "$<TARGET_FILE:llm2smt> --quiet --proof ${CMAKE_BINARY_DIR}/t65_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t65_proof_ite_branch_atom_bridge.smt2 && \
          grep -q 'have ite_bridge_' ${CMAKE_BINARY_DIR}/t65_proof.lean"
 )
@@ -369,7 +370,7 @@ add_smt2_test(nary_xor_sat    t49_nary_xor_sat.smt2    sat)
 add_test(
     NAME "smt2/proof_contradiction_uses_bv_decide"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --proof ${CMAKE_BINARY_DIR}/t_bvd_proof.lean \
+        "$<TARGET_FILE:llm2smt> --quiet --proof ${CMAKE_BINARY_DIR}/t_bvd_proof.lean \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t01_unsat_direct.smt2 && \
          awk '/^theorem contradiction/,0' ${CMAKE_BINARY_DIR}/t_bvd_proof.lean | grep -q '  bv_decide' && \
          ! awk '/^theorem contradiction/,0' ${CMAKE_BINARY_DIR}/t_bvd_proof.lean | grep -q '  grind'"
@@ -393,6 +394,21 @@ add_smt2_test_preproc(deep_or_nostack  t67_deep_or_nostack.smt2  unsat)
 # t68: NOT(AND(eq1,...,eqN)) is encoded as one N-literal clause without
 #      introducing Tseitin variables for intermediate AND nodes.
 add_smt2_test(not_and_direct_clause  t68_not_and_direct_clause.smt2  unsat)
+
+# Normal command-line runs print build provenance, including the git commit and
+# SAT backend version.  --quiet suppresses that banner.
+add_test(
+    NAME "cli/provenance_banner"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t01_unsat_direct.smt2 2>&1 | \
+         grep -q 'llm2smt .* git .* sat CaDiCaL'"
+)
+add_test(
+    NAME "cli/quiet_suppresses_provenance"
+    COMMAND bash -c
+        "out=$($<TARGET_FILE:llm2smt> --quiet ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t01_unsat_direct.smt2 2>&1) && \
+         test \"$out\" = unsat"
+)
 
 # ── Unit test binaries ────────────────────────────────────────────────────────
 add_executable(test_node_manager test_node_manager.cpp)

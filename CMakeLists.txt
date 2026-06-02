@@ -12,10 +12,21 @@ if(GIT_FOUND)
         OUTPUT_STRIP_TRAILING_WHITESPACE
         ERROR_QUIET
     )
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE LLM2SMT_GIT_COMMIT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
 else()
     set(LLM2SMT_GIT_DESCRIBE "unknown")
+    set(LLM2SMT_GIT_COMMIT "unknown")
 endif()
-message(STATUS "llm2smt version: ${PROJECT_VERSION}  git: ${LLM2SMT_GIT_DESCRIBE}")
+if(NOT LLM2SMT_GIT_COMMIT)
+    set(LLM2SMT_GIT_COMMIT "unknown")
+endif()
+message(STATUS "llm2smt version: ${PROJECT_VERSION}  git: ${LLM2SMT_GIT_DESCRIBE}  commit: ${LLM2SMT_GIT_COMMIT}")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
