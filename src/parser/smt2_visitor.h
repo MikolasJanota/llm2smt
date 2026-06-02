@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <utility>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -116,10 +117,16 @@ private:
     // Used to strengthen finite-domain "x equals one of these distinct values"
     // disjunctions with SAT-level at-most-one clauses.
     struct EqEndpointLit { NodeId other; int lit; };
+    struct FiniteDomainInfo {
+        std::vector<NodeId> values;
+        std::vector<int>    choice_lits;
+    };
     std::unordered_set<uint64_t> top_level_diseq_pairs_;
     std::unordered_set<uint64_t> finite_domain_amo_seen_;
     std::unordered_set<int> finite_domain_eq_lits_seen_;
     std::unordered_map<NodeId, std::vector<EqEndpointLit>> finite_domain_eqs_by_endpoint_;
+    std::unordered_map<NodeId, FiniteDomainInfo> finite_domain_terms_;
+    std::unordered_set<uint64_t> finite_domain_eq_defs_seen_;
 
     // Build a NodeId formula from a Bool-sorted parse-tree node.
     // Eagerly calls visit_term for U-sorted sub-terms.
@@ -135,6 +142,8 @@ private:
     void flush_pending_fmls();
 
     void collect_top_level_disequalities(NodeId f);
+    void collect_finite_domain_terms(NodeId f);
+    void encode_finite_domain_eq_defs(NodeId f);
     void remember_finite_domain_eq_lit(NodeId lhs, NodeId rhs, int lit);
 
     // True iff f is an atom or negated atom (usable as a SAT literal directly).

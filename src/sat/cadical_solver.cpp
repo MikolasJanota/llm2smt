@@ -43,7 +43,8 @@ struct CaDiCaLSolver::Adapter : public CaDiCaL::ExternalPropagator {
     }
     int cb_add_external_clause_lit() override { return prop_.cb_add_external_clause_lit(); }
 
-private:
+    const std::vector<int>& observed_vars() const { return prop_.observed_vars(); }
+
     OurPropagator& prop_;
 };
 
@@ -96,9 +97,19 @@ SolveResult CaDiCaLSolver::solve() {
     // calls on subsequent solves.
     if (adapter_) {
         int max_var = std::max(next_var_, max_clause_var_);
-        for (int v = last_observed_ + 1; v <= max_var; ++v)
-            solver_->add_observed_var(v);
-        last_observed_ = max_var;
+        const auto& observed = adapter_->observed_vars();
+        if (observed.empty()) {
+            for (int v = last_observed_ + 1; v <= max_var; ++v)
+                solver_->add_observed_var(v);
+            last_observed_ = max_var;
+        } else {
+            for (int v : observed) {
+                if (v > last_observed_) {
+                    solver_->add_observed_var(v);
+                    last_observed_ = v;
+                }
+            }
+        }
     }
 
     int result = solver_->solve();

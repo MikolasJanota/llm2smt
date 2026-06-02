@@ -178,3 +178,54 @@ These are observed hotspots / likely inefficiencies to revisit with benchmark da
   equality terms. A future implementation could iterate equivalence classes from
   one branch and test only pairs within those classes, rather than all shared
   node pairs.
+- NEQ finite-model benchmarks such as
+  `sandbox/non-incremental/QF_UF/NEQ/NEQ027_size11.smt2` remain hard after the
+  finite-domain AMO preprocessing. Size11 has about 20k top-level clauses and
+  gets 17,886 AMO clauses; a 30s release run still times out. Selectively
+  observing only EUF equality variables in CaDiCaL reduces useless external
+  propagation callbacks and is a small general win. Eager U-function Ackermann
+  clauses reduced some EUF work but regressed size9 and did not solve size11;
+  Bool-function Ackermann clauses produced too many clauses. `--eq-bridge`
+  helps size11 but does not close it. The remaining opportunity is likely a
+  finite-domain-aware encoding/search strategy rather than more pairwise AMO.
+- `NEQ027_size10.smt2` solves with the finite-domain AMO preprocessing but is
+  still slow without stronger finite-domain encoding (~42-46s release on this
+  workspace): about 12,430 AMO clauses, 52k EUF conflicts, and 23M
+  equality/disequality assignment notifications. Disabling AMO times out at 60s
+  with many more conflicts. More aggressive theory-propagation schedules
+  (`--prop-interval 4/8`, threshold 1, unlimited delivery budget) were worse.
+- The finite-domain equality-definition pass in `Smt2Visitor` recognizes
+  explicit domain closure clauses `(or (= t c0) ... (= t cn))` whose values are
+  known distinct, records the existing choice literals, and for equality atoms
+  between two such finite-domain terms adds SAT clauses tying equality to
+  matching value choices. It is enabled by default and can be disabled with
+  `--no-finite-domain-eqdefs`; it also requires finite-domain AMO to be enabled.
+  A conservative domain-size threshold of 10 avoids regressions on small cases
+  (`NEQ004_size7`, `NEQ027_size9`) while targeting the hard NEQ027 cases.
+  Measured release results after the pass: `NEQ027_size10` ~26s with 900
+  equality-definition clauses versus ~46s with `--no-finite-domain-eqdefs`;
+  `NEQ027_size11` solves in ~93s with 1,089 definition clauses, while the
+  ablation timed out at 120s.
+- Since the NEQ instances are UNSAT, an external unsat core can guide the next
+  preprocessing pass. The files currently contain one giant assertion, so a core
+  over the original file is useless. Split the top-level conjunction under the
+  nested `let`s into separately named assertions, run a fast solver with
+  `:produce-unsat-cores true`, and inspect whether the core is dominated by
+  domain-membership clauses, predicate clauses, or UF congruence clauses. A
+  small core would point to input reduction/minimization; a large core with many
+  repeated domain choices would point to a finite-domain-aware encoding/search
+  strategy rather than more generic EUF propagation tuning.
+- `scripts/smt2_unsat_core.py` implements that split using assumption guards
+  rather than duplicating all nested `let` bindings. With Z3 4.16 from the local
+  `.venv-z3`, `NEQ027_size10` has a core of 3,520 / 15,369 top-level conjuncts;
+  `NEQ027_size11` has a core of 4,408 / 19,985. The core is not small. It keeps
+  ~74-75% of the domain membership clauses (`or/N[eq:N]`) and ~75-91% of the
+  ternary Horn-like clauses involving one predicate plus equality/disequality
+  literals. This supports focusing on a finite-domain/Horn-style encoding or
+  search strategy, not just trimming irrelevant assertions.
+- Smaller same-family instances are useful testbeds. `NEQ004_size7` has a Z3
+  core of 586 / 1,145 top-level conjuncts. The core keeps all 57 domain
+  membership clauses (`or/7[eq:7]`) and all clauses in several predicate/equality
+  families. Our solver still takes about the same time on the core-only file
+  (~2.9s release, 74k EUF conflicts), so the core preserves the pathological
+  search behavior while being much smaller than the original benchmark.

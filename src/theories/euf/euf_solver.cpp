@@ -31,6 +31,7 @@ int EufSolver::register_equality(NodeId lhs, NodeId rhs) {
     int var = next_var_++;
     EqAtom atom{lhs, rhs, flat_lhs, flat_rhs};
     lit_to_atom_[var] = atom;   // positive literal only; notify_assignment uses |lit|
+    observed_vars_.push_back(var);
     atom_to_lit_[key] = var;
     // Also index by flat node ids so build_conflict can find equations whose
     // lhs/rhs are the flat representatives (not the original NodeIds).

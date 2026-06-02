@@ -45,6 +45,7 @@ public:
     void notify_new_decision_level() override;
     void notify_backtrack(size_t new_level) override;
 
+    const std::vector<int>& observed_vars() const override { return observed_vars_; }
     bool cb_check_found_model(const std::vector<int>& model) override;
 
     bool cb_has_external_clause(bool& is_forgettable) override;
@@ -133,6 +134,7 @@ private:
 
     // SAT literal ↔ equality atom mapping
     std::unordered_map<int, EqAtom>            lit_to_atom_;
+    std::vector<int>                           observed_vars_;
     // Reverse: atom → literal (keyed by ordered pair min(lhs,rhs), max(lhs,rhs))
     std::unordered_map<uint64_t, int>          atom_to_lit_;
     // Same as atom_to_lit_ but keyed by the FLAT node ids (as stored in CC equations).
@@ -172,7 +174,6 @@ private:
     size_t current_level_ = 0;
     // Per-level counts of active diseqs (for backtracking)
     std::vector<size_t> diseq_level_counts_;
-
     // Proof recording
     bool                          record_proofs_   = false;
     std::vector<std::vector<int>> proof_conflicts_;

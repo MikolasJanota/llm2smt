@@ -1,5 +1,7 @@
 #include "parser/smt2_visitor.h"
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <iostream>
 #include <ranges>
@@ -1066,6 +1068,10 @@ static uint64_t lit_pair_key(int a, int b)
          | static_cast<uint32_t>(b);
 }
 
+// Smaller finite domains (notably NEQ004_size7 and NEQ027_size9) do not
+// benefit enough from the extra clauses; size 10+ is where this paid off.
+static constexpr size_t kMinFiniteDomainEqDefSize = 10;
+
 void Smt2Visitor::collect_top_level_disequalities(NodeId f)
 {
     if (!opts_.finite_domain_amo) return;
@@ -1111,6 +1117,145 @@ void Smt2Visitor::remember_finite_domain_eq_lit(NodeId lhs, NodeId rhs, int lit)
 
     add_for_endpoint(lhs, rhs);
     add_for_endpoint(rhs, lhs);
+}
+
+void Smt2Visitor::collect_finite_domain_terms(NodeId f)
+{
+    if (!opts_.finite_domain_amo || !opts_.finite_domain_eq_defs) return;
+
+    NodeManager& nm = ctx_.nm;
+    std::vector<NodeId> work{f};
+    while (!work.empty()) {
+        NodeId n = work.back();
+        work.pop_back();
+
+        if (nm.is_and(n)) {
+            for (NodeId c : nm.get(n).children)
+                work.push_back(c);
+            continue;
+        }
+        if (!nm.is_or(n)) continue;
+
+        const auto& children = nm.get(n).children;
+        if (children.size() < 2) continue;
+
+        auto try_candidate = [&](NodeId term) -> bool {
+            std::vector<NodeId> values;
+            values.reserve(children.size());
+
+            for (NodeId child : children) {
+                if (!nm.is_eq(child)) return false;
+                NodeId a = nm.get(child).children[0];
+                NodeId b = nm.get(child).children[1];
+                if (a == term && b != term) {
+                    values.push_back(b);
+                } else if (b == term && a != term) {
+                    values.push_back(a);
+                } else {
+                    return false;
+                }
+            }
+            if (values.size() < kMinFiniteDomainEqDefSize) return false;
+
+            for (size_t i = 0; i < values.size(); ++i) {
+                for (size_t j = i + 1; j < values.size(); ++j) {
+                    if (!top_level_diseq_pairs_.contains(node_pair_key(values[i], values[j])))
+                        return false;
+                }
+            }
+
+            auto [it, inserted] = finite_domain_terms_.try_emplace(term);
+            if (!inserted && it->second.values.size() >= values.size()) return true;
+
+            FiniteDomainInfo info;
+            info.values = std::move(values);
+            info.choice_lits.reserve(info.values.size());
+            for (NodeId value : info.values) {
+                int lit = ctx_.euf.register_equality(term, value);
+                remember_finite_domain_eq_lit(term, value, lit);
+                info.choice_lits.push_back(lit);
+            }
+            it->second = std::move(info);
+            return true;
+        };
+
+        NodeId first = children.front();
+        if (!nm.is_eq(first)) continue;
+        NodeId a = nm.get(first).children[0];
+        NodeId b = nm.get(first).children[1];
+        if (try_candidate(a)) continue;
+        (void)try_candidate(b);
+    }
+}
+
+static int finite_domain_value_pos(const std::vector<NodeId>& values, NodeId value)
+{
+    auto it = std::find(values.begin(), values.end(), value);
+    if (it == values.end()) return -1;
+    return static_cast<int>(it - values.begin());
+}
+
+void Smt2Visitor::encode_finite_domain_eq_defs(NodeId f)
+{
+    if (!opts_.finite_domain_amo || !opts_.finite_domain_eq_defs) return;
+    if (finite_domain_terms_.empty()) return;
+
+    NodeManager& nm = ctx_.nm;
+    std::vector<NodeId> work{f};
+    while (!work.empty()) {
+        NodeId n = work.back();
+        work.pop_back();
+
+        if (nm.is_not(n)) {
+            work.push_back(nm.get(n).children[0]);
+            continue;
+        }
+        if (nm.is_and(n) || nm.is_or(n) || nm.is_implies(n) || nm.is_xor(n) ||
+            nm.is_iff(n) || nm.is_ite_bool(n)) {
+            for (NodeId c : nm.get(n).children)
+                work.push_back(c);
+            continue;
+        }
+        if (!nm.is_eq(n)) continue;
+
+        NodeId lhs = nm.get(n).children[0];
+        NodeId rhs = nm.get(n).children[1];
+        if (lhs == rhs) continue;
+
+        auto lit = finite_domain_terms_.find(lhs);
+        auto rit = finite_domain_terms_.find(rhs);
+        if (lit == finite_domain_terms_.end() || rit == finite_domain_terms_.end()) continue;
+
+        const FiniteDomainInfo& linfo = lit->second;
+        const FiniteDomainInfo& rinfo = rit->second;
+        if (linfo.values.size() != rinfo.values.size() || linfo.values.empty()) continue;
+        if (!finite_domain_eq_defs_seen_.insert(node_pair_key(lhs, rhs)).second) continue;
+
+        std::vector<int> rpos_for_lval;
+        rpos_for_lval.reserve(linfo.values.size());
+        bool same_domain = true;
+        for (NodeId value : linfo.values) {
+            int pos = finite_domain_value_pos(rinfo.values, value);
+            if (pos < 0) {
+                same_domain = false;
+                break;
+            }
+            rpos_for_lval.push_back(pos);
+        }
+        if (!same_domain) continue;
+
+        int eq = ctx_.euf.register_equality(lhs, rhs);
+
+        for (size_t i = 0; i < linfo.values.size(); ++i) {
+            int li = linfo.choice_lits[i];
+            int ri = rinfo.choice_lits[static_cast<size_t>(rpos_for_lval[i])];
+
+            { std::array<int,3> cl = {-li, -ri, eq}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            { std::array<int,3> cl = {-eq, -li, ri}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            { std::array<int,3> cl = {-eq, -ri, li}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            stats_.preproc_finite_domain_eq_def_clauses += 3;
+        }
+    }
 }
 
 // Return a SAT literal for a sub-formula; introduce Tseitin variable if needed.
@@ -1406,6 +1551,12 @@ void Smt2Visitor::flush_pending_fmls()
     if (opts_.finite_domain_amo) {
         for (NodeId f : pending_fmls_)
             collect_top_level_disequalities(f);
+        if (opts_.finite_domain_eq_defs && opts_.proof_file.empty()) {
+            for (NodeId f : pending_fmls_)
+                collect_finite_domain_terms(f);
+            for (NodeId f : pending_fmls_)
+                encode_finite_domain_eq_defs(f);
+        }
     }
 
     if (opts_.selectors) {

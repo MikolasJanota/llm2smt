@@ -30,6 +30,13 @@ public:
     // Return 0 to let the SAT solver decide.
     virtual int cb_decide() { return 0; }
 
+    // SAT variables whose assignments the propagator needs to observe.
+    // Empty means "observe all variables" for backwards compatibility.
+    virtual const std::vector<int>& observed_vars() const {
+        static const std::vector<int> all;
+        return all;
+    }
+
     // Called to ask the propagator for an implied literal.
     // Return 0 if none.
     virtual int cb_propagate() { return 0; }

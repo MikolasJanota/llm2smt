@@ -50,6 +50,7 @@ compile_commands.json
 __pycache__/
 *.py[cod]
 .pytest_cache/
+/.venv*/
 
 # Local tool caches/config
 /.cache/
