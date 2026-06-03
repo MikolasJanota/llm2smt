@@ -27,6 +27,7 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -336,6 +337,18 @@ def cmd_tune(args: argparse.Namespace) -> int:
             f"Import error: {exc}"
         ) from exc
 
+    dask_client = None
+    if args.workers > 1:
+        try:
+            from distributed import Client
+        except ImportError as exc:
+            raise SystemExit(
+                "Parallel SMAC runs require dask.distributed. Install compatible "
+                "dependencies with:\n"
+                "  python -m pip install -r scripts/requirements-smac.txt\n"
+                f"Import error: {exc}"
+            ) from exc
+
     instances = read_instances(args.instances)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     cs = build_configspace(seed=args.seed)
@@ -345,10 +358,24 @@ def cmd_tune(args: argparse.Namespace) -> int:
         instances=instances,
         instance_features=instance_features(instances),
         n_trials=args.trials,
-        n_workers=args.workers,
+        n_workers=1 if args.workers > 1 else args.workers,
         seed=args.seed,
         output_directory=str(args.output_dir),
     )
+
+    if args.workers > 1:
+        # SMAC creates a process-based Dask client by default and closes it from
+        # DaskParallelRunner.__del__.  On some servers that close can time out
+        # during interpreter shutdown.  Owning a threaded client here is enough
+        # because each target evaluation launches llm2smt as a subprocess, and
+        # it lets us close Dask deterministically before exiting.
+        dask_client = Client(
+            n_workers=args.workers,
+            threads_per_worker=1,
+            processes=False,
+            local_directory=str(args.output_dir),
+        )
+
     evaluator = Llm2SmtTarget(
         solver=args.solver,
         cutoff=args.cutoff,
@@ -365,9 +392,20 @@ def cmd_tune(args: argparse.Namespace) -> int:
     smac = HyperparameterOptimizationFacade(
         scenario,
         target,
+        dask_client=dask_client,
         overwrite=args.overwrite,
     )
-    incumbent = smac.optimize()
+    try:
+        incumbent = smac.optimize()
+    finally:
+        if dask_client is not None:
+            try:
+                dask_client.close(timeout=10)
+            except TypeError:
+                dask_client.close()
+            except Exception as exc:
+                print(f"warning: failed to close Dask client cleanly: {exc}", file=sys.stderr)
+
     incumbent_dict = _as_plain_dict(incumbent)
     incumbent_args = solver_args_from_config(incumbent_dict)
     summary = {
