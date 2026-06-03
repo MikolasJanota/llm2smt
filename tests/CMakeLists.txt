@@ -411,6 +411,21 @@ add_test(
          grep -q 'preproc.finite_domain_amo     1' /tmp/t70.err"
 )
 
+# t71: Keep a one-assertion top-level conjunction as one pending formula when
+#      preprocessing is enabled. Splitting generated NEQ assertions into many
+#      unit assertions lets simplification force disequalities early and causes
+#      much worse EUF propagation under aggressive propagation settings.
+add_test(
+    NAME "smt2/preproc_keeps_top_level_and_unsplit"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --preprocess-passes 1 --stats \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t71_preproc_keeps_top_level_and_unsplit.smt2 \
+         >/tmp/t71.out 2>/tmp/t71.err && \
+         grep -q '^sat' /tmp/t71.out && \
+         grep -q 'preproc.fmls_in               1' /tmp/t71.err && \
+         grep -q 'preproc.finite_domain_amo     6' /tmp/t71.err"
+)
+
 # Normal command-line runs print build provenance, including the git commit and
 # SAT backend version.  --quiet suppresses that banner.
 add_test(
