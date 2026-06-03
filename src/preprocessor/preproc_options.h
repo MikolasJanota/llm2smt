@@ -11,7 +11,6 @@ struct PreprocOptions {
     bool        nary       = true;   // use n-ary AND/OR nodes (false = left-nested binary)
     bool        nnf        = false;  // convert to Negation Normal Form before encoding
     bool        nnf_memo   = false;  // memoize NNF traversal (helps on DAG-heavy inputs)
-    bool        selectors  = false;  // selector variable technique (requires nnf = true)
     std::string proof_file;          // empty = no proof output
     bool        proof_minimize = false; // remove unnecessary theory lemmas via UNSAT core
     bool        eq_bridge  = false;  // add common EUF consequences of disjunction branches

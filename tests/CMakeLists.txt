@@ -37,20 +37,6 @@ function(add_smt2_test_nnf name file expected)
     )
 endfunction()
 
-# Like add_smt2_test but runs with --preprocess-passes 1 --nnf --selectors.
-function(add_smt2_test_selectors name file expected)
-    add_test(
-        NAME "smt2/${name}"
-        COMMAND $<TARGET_FILE:llm2smt> --quiet --preprocess-passes 1 --nnf --selectors
-                "${CMAKE_CURRENT_SOURCE_DIR}/smt2/${file}"
-    )
-    # --selectors is deprecated; its warning goes to stderr before the result,
-    # so use (^|\n) to match expected at the start of a line rather than ^.
-    set_tests_properties("smt2/${name}" PROPERTIES
-        PASS_REGULAR_EXPRESSION "(^|\n)${expected}"
-    )
-endfunction()
-
 # Like add_smt2_test but runs with --eq-bridge.
 function(add_smt2_test_eq_bridge name file expected)
     add_test(
@@ -155,10 +141,10 @@ add_smt2_test(bool_distinct_arg_model  t38_bool_distinct_arg_model.smt2  sat)
 add_smt2_test_nnf(nnf_implies_preproc_unsat  t39_nnf_implies_preproc_unsat.smt2  unsat)
 # t40: NNF + preproc for Xor — xor(P,P) = false → unsat
 add_smt2_test_nnf(nnf_xor_preproc_unsat      t40_nnf_xor_preproc_unsat.smt2      unsat)
-# t41: Selector SAT — compound Or disjuncts; right disjunct (= b c) satisfiable
-add_smt2_test_selectors(selector_or_sat           t41_selector_or_sat.smt2            sat)
-# t42: Selector UNSAT — both alternatives require b=c, which is negated
-add_smt2_test_selectors(selector_or_unsat         t42_selector_or_unsat.smt2          unsat)
+# t41: NNF/preproc SAT — compound Or disjuncts; right disjunct (= b c) satisfiable
+add_smt2_test_nnf(selector_or_sat           t41_selector_or_sat.smt2            sat)
+# t42: NNF/preproc UNSAT — both alternatives require b=c, which is negated
+add_smt2_test_nnf(selector_or_unsat         t42_selector_or_unsat.smt2          unsat)
 # t43: Regression: crash in CaDiCaL analyze() when register_equality is called before
 #      register_permanent_equality for the same pair — tautological conflict/reason clause
 add_smt2_test_preproc(preproc_perm_eq_preregistered_crash  t43_preproc_perm_eq_preregistered_crash.smt2  sat)

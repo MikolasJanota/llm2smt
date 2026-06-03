@@ -1655,142 +1655,14 @@ void Smt2Visitor::flush_pending_fmls()
         }
     }
 
-    if (opts_.selectors) {
-        for (NodeId f : pending_fmls_)
-            encode_conditioned(f, {});
-    } else {
-        for (NodeId f : pending_fmls_)
-            encode_fml(f);
-    }
+    for (NodeId f : pending_fmls_)
+        encode_fml(f);
     pending_fmls_.clear();
     fml_lit_cache_.clear();
 
     auto flush_t1 = std::chrono::steady_clock::now();
     stats_.preproc_flush_ms += static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(flush_t1 - flush_t0).count());
-}
-
-// ============================================================================
-// Selector variable encoding
-// ============================================================================
-
-bool Smt2Visitor::is_literal_fml(NodeId f) const
-{
-    const NodeManager& nm = ctx_.nm;
-    if (nm.is_true_node(f) || nm.is_false_node(f)) return true;
-    if (nm.is_eq(f) || nm.is_atom_node(f)) return true;
-    if (nm.is_not(f)) {
-        NodeId ch = nm.get(f).children[0];
-        return nm.is_eq(ch) || nm.is_atom_node(ch);
-    }
-    return false;
-}
-
-void Smt2Visitor::encode_conditioned(NodeId f, const std::vector<int>& conds)
-{
-    NodeManager& nm = ctx_.nm;
-
-    auto add_cond_clause = [&](const std::vector<int>& extra) {
-        std::vector<int> cl;
-        cl.reserve(conds.size() + extra.size());
-        for (int c : conds) cl.push_back(-c);
-        for (int l : extra) cl.push_back(l);
-        ctx_.sat.add_clause(std::span<const int>(cl));
-    };
-
-    if (nm.is_true_node(f)) return;
-    if (nm.is_false_node(f)) { add_cond_clause({}); return; }
-    if (nm.is_eq(f)) {
-        NodeId c0 = nm.get(f).children[0];
-        NodeId c1 = nm.get(f).children[1];
-        int l = ctx_.euf.register_equality(c0, c1);
-        add_cond_clause({l});
-        return;
-    }
-    if (nm.is_atom_node(f)) {
-        add_cond_clause({ctx_.lit_for_node(f)});
-        return;
-    }
-    if (nm.is_not(f)) {
-        NodeId child = nm.get(f).children[0];
-        add_cond_clause({-lit_of_fml(child)});
-        return;
-    }
-    if (nm.is_and(f)) {
-        NodeId c0 = nm.get(f).children[0];
-        NodeId c1 = nm.get(f).children[1];
-        encode_conditioned(c0, conds);
-        encode_conditioned(c1, conds);
-        return;
-    }
-    if (nm.is_or(f)) {
-        // Collect all disjuncts from the binary Or tree.
-        std::vector<NodeId> children;
-        for (std::vector<NodeId> work{nm.get(f).children[0], nm.get(f).children[1]};
-             !work.empty(); ) {
-            NodeId n = work.back(); work.pop_back();
-            if (nm.is_or(n)) {
-                work.push_back(nm.get(n).children[0]);
-                work.push_back(nm.get(n).children[1]);
-            } else {
-                children.push_back(n);
-            }
-        }
-        encode_or_conditioned(children, conds);
-        return;
-    }
-    // Fallback: get a literal for f and add a conditioned clause.
-    add_cond_clause({lit_of_fml(f)});
-}
-
-void Smt2Visitor::encode_or_conditioned(const std::vector<NodeId>& children,
-                                         std::vector<int> conds)
-{
-    if (children.empty()) {
-        // False disjunction.
-        std::vector<int> cl;
-        cl.reserve(conds.size());
-        for (int c : conds) cl.push_back(-c);
-        ctx_.sat.add_clause(std::span<const int>(cl));
-        return;
-    }
-    if (children.size() == 1) {
-        encode_conditioned(children[0], conds);
-        return;
-    }
-
-    // Check if all children are literals.
-    bool all_lits = true;
-    for (NodeId ch : children) {
-        if (!is_literal_fml(ch)) { all_lits = false; break; }
-    }
-
-    if (all_lits) {
-        std::vector<int> cl;
-        cl.reserve(conds.size() + children.size());
-        for (int c : conds) cl.push_back(-c);
-        for (NodeId ch : children) cl.push_back(lit_of_fml(ch));
-        ctx_.sat.add_clause(std::span<const int>(cl));
-        return;
-    }
-
-    // Binary split: introduce a fresh selector variable s.
-    size_t mid    = children.size() / 2;
-    auto   mid_it = children.begin() + static_cast<ptrdiff_t>(mid);
-    std::vector<NodeId> left(children.begin(), mid_it);
-    std::vector<NodeId> right(mid_it, children.end());
-
-    int s = ctx_.euf.new_var();
-
-    // If s=false (i.e. -s in clause), left half must hold.
-    // If s=true (i.e. +s in clause), right half must hold.
-    // Reuse the by-value conds for one side; copy for the other.
-    std::vector<int> conds_right = conds;
-    conds_right.push_back(-s);
-
-    conds.push_back(s);
-    encode_or_conditioned(left,  std::move(conds));
-    encode_or_conditioned(right, std::move(conds_right));
 }
 
 // ============================================================================

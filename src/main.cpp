@@ -90,9 +90,6 @@ int main(int argc, char** argv) {
     app.add_flag("--nnf-memo", opts.nnf_memo,
                  "Memoize NNF traversal (helps on DAG-heavy inputs)")
        ->needs(nnf_flag);
-    app.add_flag("--selectors", opts.selectors,
-                 "[DEPRECATED] Use selector variable technique for Or-with-compound-disjuncts encoding")
-       ->needs(nnf_flag);
     auto* proof_flag = app.add_option("--proof", opts.proof_file,
                    "Write Lean 4 UNSAT proof to this file (QF_UF only)");
     app.add_flag("--proof-minimize", opts.proof_minimize,
@@ -127,9 +124,6 @@ int main(int argc, char** argv) {
                   << CaDiCaLSolver::version()
                   << " (" << CaDiCaLSolver::signature() << ")\n";
     }
-
-    if (opts.selectors && !quiet)
-        std::cerr << "Warning: --selectors is deprecated and may be removed in a future version.\n";
 
     try {
         std::ifstream file;

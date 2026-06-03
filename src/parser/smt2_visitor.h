@@ -155,17 +155,6 @@ private:
     void remember_finite_domain_eq_lit(NodeId lhs, NodeId rhs, int lit);
     bool known_equality_lit(NodeId lhs, NodeId rhs, int& lit);
 
-    // True iff f is an atom or negated atom (usable as a SAT literal directly).
-    bool is_literal_fml(NodeId f) const;
-
-    // Assert: if all literals in conds are true, then f must hold.
-    void encode_conditioned(NodeId f, const std::vector<int>& conds);
-
-    // Assert: if all conds hold, at least one child in children must hold.
-    // Introduces a fresh selector variable to binary-split when a child is non-literal.
-    void encode_or_conditioned(const std::vector<NodeId>& children,
-                                std::vector<int> conds);
-
     // ── Model extraction ─────────────────────────────────────────────────
     SolveResult last_result_ = SolveResult::UNKNOWN;
 
