@@ -1,0 +1,9 @@
+# Optional dependencies for scripts/smac_llm2smt.py.
+#
+# Install on the tuning server with:
+#   python3 -m venv .venv-smac
+#   . .venv-smac/bin/activate
+#   python -m pip install -r scripts/requirements-smac.txt
+smac>=2.3,<3
+ConfigSpace>=1.2,<2
+scikit-learn>=1.6.1,<1.8

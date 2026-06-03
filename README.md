@@ -73,3 +73,31 @@ bash scripts/compare.sh sandbox/non-incremental/QF_UF/20170829-Rodin 10 build/bi
 
 Prints per-file `OK` / `MISMATCH` / `ERROR` and a summary line.
 Exits 1 if any MISMATCH is found.
+
+## Tuning options with SMAC3
+
+The optional SMAC harness tunes solver command-line options over a list of SMT2
+instances.  It penalizes `unknown`, timeouts, crashes, and wrong answers.
+
+```sh
+python3 -m venv .venv-smac
+. .venv-smac/bin/activate
+python -m pip install -r scripts/requirements-smac.txt
+
+cmake -B build-rel -DCMAKE_BUILD_TYPE=Release
+cmake --build build-rel -j$(nproc)
+
+python scripts/make_smac_instances.py \
+  sandbox/non-incremental/QF_UF/NEQ sandbox/non-incremental/QF_UF/PEQ \
+  -o smac-instances/qf_uf_neq_peq.txt
+
+python scripts/smac_llm2smt.py tune \
+  --solver build-rel/bin/llm2smt \
+  --instances smac-instances/qf_uf_neq_peq.txt \
+  --cutoff 120 --trials 500 --workers 8 \
+  --output-dir smac-runs/qf_uf_neq_peq
+```
+
+Each solver call is logged as JSONL in the output directory.  The final
+incumbent configuration and its corresponding command-line arguments are
+written to `incumbent.json`.

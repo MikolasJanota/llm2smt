@@ -76,6 +76,8 @@ __pycache__/
 /kl
 /resume
 /prop_codex.txt
+/smac-instances/
+/smac-runs/
 /scripts/check_lean.sh
 /scripts/fuzz_fails*/
 *.log

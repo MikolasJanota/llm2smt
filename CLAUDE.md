@@ -215,6 +215,18 @@ These are observed hotspots / likely inefficiencies to revisit with benchmark da
   equality-definition clauses versus ~46s with `--no-finite-domain-eqdefs`;
   `NEQ027_size11` solves in ~93s with 1,089 definition clauses, while the
   ablation timed out at 120s.
+- `PEQ018_size5.smt2` is UNSAT and solves in about 4.4-4.6s release with the
+  default configuration on this workspace. The heavier benchmark flags
+  (`--preprocess-passes 3 --eq-bridge --prop-interval 2
+  --prop-assign-threshold 1 --prop-delivery-budget 0`) are neutral to slightly
+  worse (~4.5-5.4s): simplification does not reduce the formula, eq-bridge
+  derives 0 bridge equalities, and theory propagation considers ~25k candidates
+  without reducing conflicts. The useful default preprocessing signal is finite
+  domain AMO, which adds 420 clauses for this instance.
+- `scripts/smac_llm2smt.py` is the SMAC3 tuning harness. Use a release binary,
+  keep per-run cutoffs explicit, and tune on a mixed family list rather than a
+  single hard benchmark. Generated `smac-runs/` and `smac-instances/` paths are
+  intentionally gitignored.
 - Since the NEQ instances are UNSAT, an external unsat core can guide the next
   preprocessing pass. The files currently contain one giant assertion, so a core
   over the original file is useless. Split the top-level conjunction under the
