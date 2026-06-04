@@ -187,6 +187,95 @@ def append_jsonl(path: Path | None, record: dict[str, Any]) -> None:
         os.close(fd)
 
 
+def _config_key(config: dict[str, Any]) -> str:
+    return json.dumps(config, sort_keys=True, separators=(",", ":"))
+
+
+class RunSummary:
+    def __init__(self, path: Path | None = None) -> None:
+        self.path = path
+        self._groups: dict[str, dict[str, Any]] = {}
+        self.completed_runs = 0
+
+    def add(self, record: dict[str, Any]) -> dict[str, Any]:
+        self.completed_runs += 1
+        cfg = _as_plain_dict(record.get("config", {}))
+        key = _config_key(cfg)
+        group = self._groups.setdefault(
+            key,
+            {
+                "config": cfg,
+                "cost_total": 0.0,
+                "count": 0,
+                "statuses": {},
+                "instances": {},
+            },
+        )
+        cost = float(record.get("cost", 0.0))
+        group["cost_total"] += cost
+        group["count"] += 1
+        status = str(record.get("status", "unknown"))
+        group["statuses"][status] = int(group["statuses"].get(status, 0)) + 1
+        instance = str(record.get("instance", ""))
+        if instance:
+            group["instances"][instance] = cost
+        summary = self.to_dict()
+        if self.path is not None:
+            write_json_atomic(self.path, summary)
+        return summary
+
+    def to_dict(self) -> dict[str, Any]:
+        groups = []
+        for group in self._groups.values():
+            count = int(group["count"])
+            cost_total = float(group["cost_total"])
+            cfg = _as_plain_dict(group["config"])
+            groups.append(
+                {
+                    "avg_cost": cost_total / count if count else float("inf"),
+                    "config": cfg,
+                    "count": count,
+                    "cost_total": cost_total,
+                    "instances": dict(sorted(group["instances"].items())),
+                    "solver_args": solver_args_from_config(cfg),
+                    "statuses": dict(sorted(group["statuses"].items())),
+                }
+            )
+        groups.sort(key=lambda item: (item["avg_cost"], -item["count"]))
+        max_count = max((int(item["count"]) for item in groups), default=0)
+        max_coverage = [item for item in groups if int(item["count"]) == max_count]
+        max_coverage.sort(key=lambda item: item["avg_cost"])
+        return {
+            "completed_runs": self.completed_runs,
+            "configs_seen": len(groups),
+            "best_observed": groups[0] if groups else None,
+            "best_seen_on_most_instances": max_coverage[0] if max_coverage else None,
+            "configs": groups,
+        }
+
+
+def summarize_run_log(path: Path) -> dict[str, Any]:
+    summary = RunSummary()
+    if not path.exists():
+        return summary.to_dict()
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
+            continue
+        try:
+            record = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        summary.add(record)
+    return summary.to_dict()
+
+
+def write_json_atomic(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
 class Llm2SmtTarget:
     def __init__(
         self,
@@ -194,6 +283,7 @@ class Llm2SmtTarget:
         solver: Path,
         cutoff: float,
         run_log: Path | None,
+        best_observed_path: Path | None,
         expected_map: dict[str, str] | None = None,
         timeout_penalty: float = 10.0,
         wrong_penalty: float = 10.0,
@@ -202,6 +292,7 @@ class Llm2SmtTarget:
         self.solver = solver
         self.cutoff = cutoff
         self.run_log = run_log
+        self.best_observed_path = best_observed_path
         self.expected_map = expected_map
         self.timeout_penalty = timeout_penalty
         self.wrong_penalty = wrong_penalty
@@ -222,6 +313,8 @@ class Llm2SmtTarget:
         )
         result["seed"] = seed
         append_jsonl(self.run_log, result)
+        if self.run_log is not None and self.best_observed_path is not None:
+            write_json_atomic(self.best_observed_path, summarize_run_log(self.run_log))
         return float(result["cost"])
 
 
@@ -327,6 +420,14 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
     return 0 if result["status"] == "ok" else 1
 
 
+def cmd_summarize(args: argparse.Namespace) -> int:
+    summary = summarize_run_log(args.run_log)
+    if args.output is not None:
+        write_json_atomic(args.output, summary)
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0 if summary["completed_runs"] else 1
+
+
 def cmd_tune(args: argparse.Namespace) -> int:
     try:
         from smac import HyperparameterOptimizationFacade, Scenario
@@ -352,6 +453,7 @@ def cmd_tune(args: argparse.Namespace) -> int:
     instances = read_instances(args.instances)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     cs = build_configspace(seed=args.seed)
+    walltime_limit = float("inf") if args.walltime_limit <= 0 else float(args.walltime_limit)
     scenario = Scenario(
         cs,
         deterministic=True,
@@ -361,6 +463,7 @@ def cmd_tune(args: argparse.Namespace) -> int:
         n_workers=1 if args.workers > 1 else args.workers,
         seed=args.seed,
         output_directory=str(args.output_dir),
+        walltime_limit=walltime_limit,
     )
 
     if args.workers > 1:
@@ -380,6 +483,7 @@ def cmd_tune(args: argparse.Namespace) -> int:
         solver=args.solver,
         cutoff=args.cutoff,
         run_log=args.output_dir / "llm2smt-runs.jsonl",
+        best_observed_path=args.output_dir / "best-observed.json",
         expected_map=load_expected_map(args.expected_json),
         timeout_penalty=args.timeout_penalty,
         wrong_penalty=args.wrong_penalty,
@@ -395,8 +499,13 @@ def cmd_tune(args: argparse.Namespace) -> int:
         dask_client=dask_client,
         overwrite=args.overwrite,
     )
+    incumbent = None
+    interrupted = False
     try:
         incumbent = smac.optimize()
+    except KeyboardInterrupt:
+        interrupted = True
+        print("Interrupted; writing best-observed summary from completed runs.", file=sys.stderr)
     finally:
         if dask_client is not None:
             try:
@@ -406,23 +515,28 @@ def cmd_tune(args: argparse.Namespace) -> int:
             except Exception as exc:
                 print(f"warning: failed to close Dask client cleanly: {exc}", file=sys.stderr)
 
-    incumbent_dict = _as_plain_dict(incumbent)
-    incumbent_args = solver_args_from_config(incumbent_dict)
+    observed_summary = summarize_run_log(args.output_dir / "llm2smt-runs.jsonl")
+    write_json_atomic(args.output_dir / "best-observed.json", observed_summary)
+
+    incumbent_dict = _as_plain_dict(incumbent) if incumbent is not None else None
+    incumbent_args = solver_args_from_config(incumbent_dict) if incumbent_dict is not None else None
     summary = {
         "incumbent": incumbent_dict,
         "solver_args": incumbent_args,
+        "best_observed": observed_summary.get("best_observed"),
+        "best_seen_on_most_instances": observed_summary.get("best_seen_on_most_instances"),
+        "completed_runs": observed_summary.get("completed_runs", 0),
+        "interrupted": interrupted,
         "solver": str(args.solver),
         "cutoff": args.cutoff,
         "trials": args.trials,
+        "walltime_limit": args.walltime_limit,
         "workers": args.workers,
         "instances": instances,
     }
-    (args.output_dir / "incumbent.json").write_text(
-        json.dumps(summary, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    write_json_atomic(args.output_dir / "incumbent.json", summary)
     print(json.dumps(summary, indent=2, sort_keys=True))
-    return 0
+    return 130 if interrupted else 0
 
 
 def add_common_args(parser: argparse.ArgumentParser) -> None:
@@ -458,6 +572,8 @@ def main() -> int:
                              help="instance-list file")
     tune_parser.add_argument("--trials", type=int, default=200,
                              help="SMAC trial budget")
+    tune_parser.add_argument("--walltime-limit", type=float, default=3600.0,
+                             help="overall SMAC wall-clock budget in seconds; 0 disables the limit")
     tune_parser.add_argument("--workers", type=int, default=1,
                              help="SMAC worker count")
     tune_parser.add_argument("--seed", type=int, default=1,
@@ -468,11 +584,19 @@ def main() -> int:
                              help="allow SMAC to overwrite an existing run directory")
     tune_parser.set_defaults(func=cmd_tune)
 
+    summarize_parser = sub.add_parser("summarize", help="summarize a JSONL run log")
+    summarize_parser.add_argument("run_log", type=Path,
+                                  help="llm2smt-runs.jsonl from a tuning run")
+    summarize_parser.add_argument("-o", "--output", type=Path,
+                                  help="optional JSON summary output path")
+    summarize_parser.set_defaults(func=cmd_summarize)
+
     args = parser.parse_args()
-    if not args.solver.exists():
-        raise SystemExit(f"solver does not exist: {args.solver}")
-    if not os.access(args.solver, os.X_OK):
-        raise SystemExit(f"solver is not executable: {args.solver}")
+    if hasattr(args, "solver"):
+        if not args.solver.exists():
+            raise SystemExit(f"solver does not exist: {args.solver}")
+        if not os.access(args.solver, os.X_OK):
+            raise SystemExit(f"solver is not executable: {args.solver}")
     return int(args.func(args))
 
 

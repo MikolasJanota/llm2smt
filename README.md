@@ -94,10 +94,22 @@ python scripts/make_smac_instances.py \
 python scripts/smac_llm2smt.py tune \
   --solver build-rel/bin/llm2smt \
   --instances smac-instances/qf_uf_neq_peq.txt \
-  --cutoff 120 --trials 500 --workers 8 \
+  --cutoff 120 --trials 500 --workers 8 --walltime-limit 3600 \
   --output-dir smac-runs/qf_uf_neq_peq
 ```
 
-Each solver call is logged as JSONL in the output directory.  The final
-incumbent configuration and its corresponding command-line arguments are
-written to `incumbent.json`.
+`--cutoff` is the per-solver-call timeout.  `--walltime-limit` is the overall
+SMAC run budget in seconds; pass `0` only for an intentionally unbounded run.
+Each solver call is logged immediately to `llm2smt-runs.jsonl`, and
+`best-observed.json` is refreshed from completed calls during the run.  The
+final SMAC incumbent and replayable command-line arguments are written to
+`incumbent.json`.
+
+If a run is interrupted before `incumbent.json` is written, recover a summary
+from the JSONL log:
+
+```sh
+python3 scripts/smac_llm2smt.py summarize \
+  smac-runs/qf_uf_neq_peq/llm2smt-runs.jsonl \
+  -o smac-runs/qf_uf_neq_peq/recovered.json
+```

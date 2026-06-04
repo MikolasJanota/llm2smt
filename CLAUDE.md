@@ -227,6 +227,12 @@ These are observed hotspots / likely inefficiencies to revisit with benchmark da
   keep per-run cutoffs explicit, and tune on a mixed family list rather than a
   single hard benchmark. Generated `smac-runs/` and `smac-instances/` paths are
   intentionally gitignored.
+- SMAC tuning has two independent bounds: `--cutoff` is per solver call, and
+  `--walltime-limit` is the total optimizer budget (default 3600s, `0` means
+  unbounded). Completed calls are appended immediately to
+  `llm2smt-runs.jsonl`; use `scripts/smac_llm2smt.py summarize <jsonl>` to
+  recover partial results if a server job is interrupted before
+  `incumbent.json` is written.
 - Since the NEQ instances are UNSAT, an external unsat core can guide the next
   preprocessing pass. The files currently contain one giant assertion, so a core
   over the original file is useless. Split the top-level conjunction under the
