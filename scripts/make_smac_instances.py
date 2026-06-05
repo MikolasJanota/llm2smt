@@ -27,11 +27,31 @@ def _collect(inputs: list[Path]) -> list[Path]:
     out: list[Path] = []
     for item in inputs:
         if item.is_dir():
-            out.extend(sorted(item.rglob("*.smt2"), key=_size_key))
+            out.extend(sorted(_iter_smt2(item), key=_size_key))
         elif item.is_file():
             out.append(item)
         else:
             raise SystemExit(f"missing input: {item}")
+    return out
+
+
+def _iter_smt2(root: Path) -> list[Path]:
+    out: list[Path] = []
+    seen_dirs: set[Path] = set()
+
+    def visit(directory: Path) -> None:
+        resolved = directory.resolve()
+        if resolved in seen_dirs:
+            return
+        seen_dirs.add(resolved)
+
+        for child in directory.iterdir():
+            if child.is_dir():
+                visit(child)
+            elif child.is_file() and child.name.endswith(".smt2"):
+                out.append(child)
+
+    visit(root)
     return out
 
 
