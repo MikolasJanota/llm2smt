@@ -34,6 +34,8 @@ public:
 
     int register_atom(const Atom& atom);
     void declare_real(const std::string& name);
+    void set_fm_elim_order(std::string order);
+    void set_conflict_minimize_limit(size_t limit);
 
     void notify_assignment(int lit, bool is_fixed) override;
     void notify_new_decision_level() override;
@@ -70,18 +72,24 @@ private:
     std::vector<std::string> real_decls_;
     std::unordered_map<std::string, bool> real_decl_seen_;
     std::map<std::string, Rational> last_model_;
+    bool use_min_fill_elim_ = true;
+    size_t conflict_minimize_limit_ = 64;
 
     static std::string atom_key(const Atom& atom);
     static void add_ineq_for_literal(const Atom& atom, int lit, std::vector<Inequality>& out);
     static void add_diseq_for_literal(const Atom& atom, int lit, std::vector<LinearExpr>& out);
-    static bool feasible(std::vector<Inequality> ineqs, std::map<std::string, Rational>* model);
+    static bool feasible(std::vector<Inequality> ineqs,
+                         std::map<std::string, Rational>* model,
+                         bool use_min_fill_elim);
     static bool feasible_with_disequalities(std::vector<Inequality> ineqs,
                                             const std::vector<LinearExpr>& diseqs,
                                             size_t diseq_idx,
-                                            std::map<std::string, Rational>* model);
+                                            std::map<std::string, Rational>* model,
+                                            bool use_min_fill_elim);
     static bool solve_projected(std::vector<Inequality> ineqs,
                                 std::vector<std::string> vars,
-                                std::map<std::string, Rational>& model);
+                                std::map<std::string, Rational>& model,
+                                bool use_min_fill_elim);
     static bool choose_value_for(const std::string& var,
                                  const std::vector<Inequality>& ineqs,
                                  const std::map<std::string, Rational>& model,

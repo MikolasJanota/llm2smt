@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <CLI/CLI.hpp>
@@ -48,6 +49,34 @@ static void sigterm_handler(int) {
     // Using exit() instead of _Exit() is technically not async-signal-safe, but
     // this is the standard approach for solver timeouts and acceptable in practice.
     std::exit(0);
+}
+
+static std::string shell_quote(const std::string& s) {
+    std::string out = "'";
+    for (char c : s) {
+        if (c == '\'') out += "'\\''";
+        else out += c;
+    }
+    out += "'";
+    return out;
+}
+
+static bool file_declares_qf_lra(const std::string& path) {
+    std::ifstream in(path);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.find("(set-logic QF_LRA)") != std::string::npos) return true;
+        if (line.find("(check-sat") != std::string::npos) break;
+    }
+    return false;
+}
+
+static int run_external_lra_backend(const std::string& backend, const std::string& input_file) {
+    int rc = std::system((backend + " " + shell_quote(input_file)).c_str());
+    if (rc == -1) return 127;
+    if (WIFEXITED(rc)) return WEXITSTATUS(rc);
+    if (WIFSIGNALED(rc)) return 128 + WTERMSIG(rc);
+    return 1;
 }
 
 class CombinedPropagator : public llm2smt::ExternalPropagator {
@@ -174,6 +203,15 @@ int main(int argc, char** argv) {
        ->check(CLI::NonNegativeNumber);
     app.add_flag("--lra-print-conflict-size", opts.lra_print_conflict_size,
                  "Debug: print the minimized LRA conflict clause size after UNSAT QF_LRA checks");
+    app.add_option("--lra-fm-elim-order", opts.lra_fm_elim_order,
+                   "Native QF_LRA Fourier-Motzkin elimination order: min-fill or name")
+       ->check(CLI::IsMember({"min-fill", "name"}));
+    app.add_option("--lra-conflict-minimize-limit", opts.lra_conflict_minimize_limit,
+                   "Minimize native LRA conflicts up to N active literals; 0 disables minimization")
+       ->check(CLI::NonNegativeNumber);
+    std::string lra_backend;
+    app.add_option("--lra-backend", lra_backend,
+                   "External command for QF_LRA files; the SMT2 file path is appended to CMD");
 
     app.add_flag("--stats", g_print_stats, "Print solver statistics to stderr after solving");
 
@@ -188,6 +226,15 @@ int main(int argc, char** argv) {
     }
 
     try {
+        if (!lra_backend.empty()) {
+            if (input_file.empty())
+                throw std::runtime_error("--lra-backend requires an input file");
+            if (!opts.proof_file.empty())
+                throw std::runtime_error("--proof is QF_UF only and cannot be combined with --lra-backend");
+            if (file_declares_qf_lra(input_file))
+                return run_external_lra_backend(lra_backend, input_file);
+        }
+
         std::ifstream file;
         std::unique_ptr<antlr4::ANTLRInputStream> input_stream;
 
@@ -212,6 +259,8 @@ int main(int argc, char** argv) {
         // at that point the callbacks would access freed memory.
         EufSolver      euf(nm, stats);
         lra::LraSolver lra;
+        lra.set_fm_elim_order(opts.lra_fm_elim_order);
+        lra.set_conflict_minimize_limit(static_cast<size_t>(opts.lra_conflict_minimize_limit));
         CombinedPropagator theory(euf, lra);
         CaDiCaLSolver  sat;
         sat.connect_propagator(theory);

@@ -57,6 +57,12 @@ Run just the LRA regressions:
 ctest --test-dir build -R 'smt2/lra' --output-on-failure
 ```
 
+Build the Jupyter Book documentation:
+
+```sh
+bash scripts/build_docs.sh
+```
+
 ## QF_LRA Smoke Benchmarks
 
 Use short external timeouts for the current LRA implementation:
@@ -75,6 +81,32 @@ done
 
 The TTA and spider smoke benchmarks are useful performance targets, but the v1
 coarse-conflict exact checker may return `unknown` under short cutoffs.
+
+For native LRA ablations, compare the default heuristic against the stable
+name-sorted Fourier-Motzkin order and different conflict minimization caps:
+
+```sh
+timeout 60s build/bin/llm2smt --quiet \
+  --lra-fm-elim-order min-fill \
+  --lra-conflict-minimize-limit 64 \
+  sandbox/non-incremental/QF_LRA/tta_startup/simple_startup_3nodes.abstract.base.smt2
+
+timeout 60s build/bin/llm2smt --quiet \
+  --lra-fm-elim-order name \
+  --lra-conflict-minimize-limit 0 \
+  sandbox/non-incremental/QF_LRA/tta_startup/simple_startup_3nodes.abstract.base.smt2
+```
+
+For competitive end-to-end benchmarking while the native LRA engine is still
+being developed, delegate pure `QF_LRA` files to an external backend:
+
+```sh
+build/bin/llm2smt --quiet --lra-backend z3 \
+  sandbox/non-incremental/QF_LRA/tta_startup/simple_startup_3nodes.abstract.base.smt2
+```
+
+The backend command is only used for inputs that declare `(set-logic QF_LRA)`;
+`QF_UF` continues through the native EUF path.
 
 ## Compare Against cvc5
 
@@ -135,6 +167,17 @@ For `QF_UF`, use `tests/smt2` or a `sandbox/non-incremental/QF_UF/*`
 directory as seeds. For `QF_LRA`, start with smaller directories such as
 `sandbox/non-incremental/QF_LRA/check` before moving to industrial benchmark
 families.
+
+On the SLURM host used for cluster testing, the practical workflow is:
+
+```sh
+ssh janotmik@10.35.125.63 'cd ~/llm2smt-fuzz && sbatch yinyang_lra_selected.sbatch'
+ssh janotmik@10.35.125.63 'squeue -u janotmik'
+ssh janotmik@10.35.125.63 'tail -n 80 ~/llm2smt-fuzz/logs/llm2smt-yinyang-*.out'
+```
+
+Use bounded jobs, collect `logs/`, `bench_results/`, and `yinyang_bugs*`, and
+never delete bug artifacts before copying them locally.
 
 ## Unsat Cores From External Solvers
 

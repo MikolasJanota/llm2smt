@@ -99,6 +99,13 @@ Theory propagation options:
 - `--prop-assign-threshold X`
 - `--prop-delivery-budget N`
 
+LRA options:
+
+- `--lra-fm-elim-order min-fill|name`
+- `--lra-conflict-minimize-limit N`
+- `--lra-print-conflict-size`
+- `--lra-backend CMD`
+
 Proof options:
 
 - `--proof FILE`

@@ -4,6 +4,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <set>
+#include <utility>
 
 namespace llm2smt::lra {
 
@@ -31,6 +32,22 @@ void LinearExpr::scale(const Rational& q) {
 void LraSolver::declare_real(const std::string& name) {
     if (real_decl_seen_.emplace(name, true).second)
         real_decls_.push_back(name);
+}
+
+void LraSolver::set_fm_elim_order(std::string order) {
+    if (order == "min-fill") {
+        use_min_fill_elim_ = true;
+        return;
+    }
+    if (order == "name") {
+        use_min_fill_elim_ = false;
+        return;
+    }
+    throw std::runtime_error("unknown LRA Fourier-Motzkin elimination order: " + order);
+}
+
+void LraSolver::set_conflict_minimize_limit(size_t limit) {
+    conflict_minimize_limit_ = limit;
 }
 
 std::string LraSolver::atom_key(const Atom& atom) {
@@ -187,22 +204,48 @@ bool LraSolver::choose_value_for(const std::string& var,
 
 bool LraSolver::solve_projected(std::vector<Inequality> ineqs,
                                 std::vector<std::string> vars,
-                                std::map<std::string, Rational>& model) {
+                                std::map<std::string, Rational>& model,
+                                bool use_min_fill_elim) {
     // Complete Fourier-Motzkin elimination over exact rationals. The recursive
-    // form also reconstructs a satisfying point for model printing.
+    // form also reconstructs a satisfying point for model printing. The choice
+    // of eliminated variable is the main performance lever: eliminating x
+    // creates |lower(x)|*|upper(x)| projected inequalities. Pick the currently
+    // cheapest variable instead of using declaration/name order.
     while (!vars.empty()) {
-        std::string var = vars.back();
-        vars.pop_back();
-
-        bool occurs = false;
-        for (const auto& in : ineqs) {
-            auto it = in.coeffs.find(var);
-            if (it != in.coeffs.end() && !it->second.is_zero()) {
-                occurs = true;
-                break;
+        size_t best_idx = use_min_fill_elim ? vars.size() : vars.size() - 1;
+        size_t best_pairs = 0;
+        size_t best_occurs = 0;
+        if (use_min_fill_elim) {
+            for (size_t i = 0; i < vars.size(); ++i) {
+                size_t pos = 0, neg = 0, occurs = 0;
+                for (const auto& in : ineqs) {
+                    auto it = in.coeffs.find(vars[i]);
+                    if (it == in.coeffs.end() || it->second.is_zero()) continue;
+                    ++occurs;
+                    if (it->second > Rational(0)) ++pos;
+                    else ++neg;
+                }
+                size_t pairs = pos * neg;
+                if (best_idx == vars.size() || pairs < best_pairs ||
+                    (pairs == best_pairs && occurs < best_occurs)) {
+                    best_idx = i;
+                    best_pairs = pairs;
+                    best_occurs = occurs;
+                    if (pairs == 0 && occurs == 0) break;
+                }
+            }
+        } else {
+            for (const auto& in : ineqs) {
+                auto it = in.coeffs.find(vars[best_idx]);
+                if (it == in.coeffs.end() || it->second.is_zero()) continue;
+                ++best_occurs;
             }
         }
-        if (!occurs) {
+
+        std::string var = vars[best_idx];
+        vars.erase(vars.begin() + static_cast<std::ptrdiff_t>(best_idx));
+
+        if (best_occurs == 0) {
             model[var] = Rational(0);
             continue;
         }
@@ -240,7 +283,7 @@ bool LraSolver::solve_projected(std::vector<Inequality> ineqs,
             }
         }
 
-        if (!solve_projected(projected, vars, model)) return false;
+        if (!solve_projected(projected, vars, model, use_min_fill_elim)) return false;
 
         Rational value;
         if (!choose_value_for(var, ineqs, model, value)) return false;
@@ -257,14 +300,17 @@ bool LraSolver::solve_projected(std::vector<Inequality> ineqs,
     return true;
 }
 
-bool LraSolver::feasible(std::vector<Inequality> ineqs, std::map<std::string, Rational>* model) {
+bool LraSolver::feasible(std::vector<Inequality> ineqs,
+                         std::map<std::string, Rational>* model,
+                         bool use_min_fill_elim) {
     std::set<std::string> vars_set;
     for (const auto& in : ineqs)
         for (const auto& [v, _] : in.coeffs) vars_set.insert(v);
     std::vector<std::string> vars(vars_set.begin(), vars_set.end());
 
     std::map<std::string, Rational> candidate;
-    if (!solve_projected(std::move(ineqs), std::move(vars), candidate)) return false;
+    if (!solve_projected(std::move(ineqs), std::move(vars), candidate, use_min_fill_elim))
+        return false;
     if (model) *model = std::move(candidate);
     return true;
 }
@@ -272,8 +318,10 @@ bool LraSolver::feasible(std::vector<Inequality> ineqs, std::map<std::string, Ra
 bool LraSolver::feasible_with_disequalities(std::vector<Inequality> ineqs,
                                             const std::vector<LinearExpr>& diseqs,
                                             size_t diseq_idx,
-                                            std::map<std::string, Rational>* model) {
-    if (diseq_idx == diseqs.size()) return feasible(std::move(ineqs), model);
+                                            std::map<std::string, Rational>* model,
+                                            bool use_min_fill_elim) {
+    if (diseq_idx == diseqs.size())
+        return feasible(std::move(ineqs), model, use_min_fill_elim);
 
     auto push_le_zero = [](const LinearExpr& e, bool strict) {
         Inequality in;
@@ -287,14 +335,16 @@ bool LraSolver::feasible_with_disequalities(std::vector<Inequality> ineqs,
     // This is only used for complete final checks and false equality atoms.
     auto left = ineqs;
     left.push_back(push_le_zero(diseqs[diseq_idx], true));
-    if (feasible_with_disequalities(std::move(left), diseqs, diseq_idx + 1, model))
+    if (feasible_with_disequalities(std::move(left), diseqs, diseq_idx + 1, model,
+                                    use_min_fill_elim))
         return true;
 
     auto neg = diseqs[diseq_idx];
     neg.scale(Rational(-1));
     auto right = std::move(ineqs);
     right.push_back(push_le_zero(neg, true));
-    return feasible_with_disequalities(std::move(right), diseqs, diseq_idx + 1, model);
+    return feasible_with_disequalities(std::move(right), diseqs, diseq_idx + 1, model,
+                                       use_min_fill_elim);
 }
 
 bool LraSolver::feasible_for_literals(const std::vector<int>& lits,
@@ -310,13 +360,18 @@ bool LraSolver::feasible_for_literals(const std::vector<int>& lits,
         else
             add_ineq_for_literal(it->second, lit, ineqs);
     }
-    return feasible_with_disequalities(std::move(ineqs), diseqs, 0, model);
+    return feasible_with_disequalities(std::move(ineqs), diseqs, 0, model, use_min_fill_elim_);
 }
 
 std::vector<int> LraSolver::minimize_conflict(std::vector<int> active) const {
     // Section 3.2.2 explanations need only be sufficient, not globally
     // minimal. This deletion pass computes a subset-minimal exact explanation
     // by asking the same complete LRA checker whether each literal is needed.
+    // On large industrial formulas that can dominate solving time because each
+    // trial re-runs Fourier-Motzkin. Keep the precise minimization for small
+    // explanations and return the sufficient full clause for larger conflicts.
+    if (conflict_minimize_limit_ == 0 || active.size() > conflict_minimize_limit_)
+        return active;
     for (size_t i = 0; i < active.size();) {
         std::vector<int> candidate;
         candidate.reserve(active.size() - 1);
