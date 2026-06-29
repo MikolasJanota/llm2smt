@@ -101,6 +101,41 @@ python3 scripts/minimize_smt2.py \
   -v
 ```
 
+## YinYang Fuzzing
+
+YinYang is the preferred replacement for the handwritten random SMT-LIB
+generator when mutating existing benchmark seeds. Install it separately:
+
+```sh
+python3 -m pip install yinyang
+```
+
+Run a bounded seed-mutation campaign against `llm2smt` and a reference solver:
+
+```sh
+scripts/yinyang_fuzz.sh \
+  --seeds sandbox/non-incremental/QF_LRA/check \
+  --solver 'build-workspace-rel/bin/llm2smt --quiet' \
+  --ref 'z3 model_validate=true' \
+  --seconds 600 \
+  --iterations 100
+```
+
+Useful knobs:
+
+- `--seeds`: a single `.smt2` file or a directory of seeds;
+- `--solver`: the `llm2smt` command and flags to test;
+- `--ref`: reference solver command, usually Z3 or cvc5;
+- `--solver-timeout`: per-solver timeout passed to YinYang;
+- `--bugs`: where YinYang stores discrepancy/crash artifacts;
+- `--scratch`: where temporary mutants are written;
+- `--keep-mutants`: preserve generated mutants for later inspection.
+
+For `QF_UF`, use `tests/smt2` or a `sandbox/non-incremental/QF_UF/*`
+directory as seeds. For `QF_LRA`, start with smaller directories such as
+`sandbox/non-incremental/QF_LRA/check` before moving to industrial benchmark
+families.
+
 ## Unsat Cores From External Solvers
 
 `scripts/smt2_unsat_core.py` can split a single large assertion into guarded
