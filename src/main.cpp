@@ -172,6 +172,8 @@ int main(int argc, char** argv) {
     app.add_option("--prop-delivery-budget", opts.prop_delivery_budget,
                    "Permanently stop EUF propagation discovery after delivering this many theory literals (default 1000; 0=unlimited)")
        ->check(CLI::NonNegativeNumber);
+    app.add_flag("--lra-print-conflict-size", opts.lra_print_conflict_size,
+                 "Debug: print the minimized LRA conflict clause size after UNSAT QF_LRA checks");
 
     app.add_flag("--stats", g_print_stats, "Print solver statistics to stderr after solving");
 

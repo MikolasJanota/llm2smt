@@ -83,6 +83,15 @@ add_test(
          grep -q '    6)' ${CMAKE_BINARY_DIR}/lra08_model.out && \
          ! grep -q '    0)' ${CMAKE_BINARY_DIR}/lra08_model.out"
 )
+add_test(
+    NAME "smt2/lra_min_conflict_size"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --lra-print-conflict-size \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra09_min_conflict.smt2 \
+         > ${CMAKE_BINARY_DIR}/lra09.out 2> ${CMAKE_BINARY_DIR}/lra09.err && \
+         grep -q '^unsat' ${CMAKE_BINARY_DIR}/lra09.out && \
+         grep -q '^lra-conflict-size: 2$' ${CMAKE_BINARY_DIR}/lra09.err"
+)
 
 # Core theory — true / false
 # t09: (assert true) ∧ (assert (not false))  →  sat

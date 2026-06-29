@@ -297,11 +297,11 @@ bool LraSolver::feasible_with_disequalities(std::vector<Inequality> ineqs,
     return feasible_with_disequalities(std::move(right), diseqs, diseq_idx + 1, model);
 }
 
-bool LraSolver::cb_check_found_model(const std::vector<int>&) {
+bool LraSolver::feasible_for_literals(const std::vector<int>& lits,
+                                      std::map<std::string, Rational>* model) const {
     std::vector<Inequality> ineqs;
     std::vector<LinearExpr> diseqs;
-    std::vector<int> active;
-    for (int lit : trail_) {
+    for (int lit : lits) {
         auto it = atoms_.find(std::abs(lit));
         if (it == atoms_.end()) continue;
         Relation rel = lit > 0 ? it->second.rel : negate_rel(it->second.rel);
@@ -309,21 +309,47 @@ bool LraSolver::cb_check_found_model(const std::vector<int>&) {
             add_diseq_for_literal(it->second, lit, diseqs);
         else
             add_ineq_for_literal(it->second, lit, ineqs);
+    }
+    return feasible_with_disequalities(std::move(ineqs), diseqs, 0, model);
+}
+
+std::vector<int> LraSolver::minimize_conflict(std::vector<int> active) const {
+    // Section 3.2.2 explanations need only be sufficient, not globally
+    // minimal. This deletion pass computes a subset-minimal exact explanation
+    // by asking the same complete LRA checker whether each literal is needed.
+    for (size_t i = 0; i < active.size();) {
+        std::vector<int> candidate;
+        candidate.reserve(active.size() - 1);
+        for (size_t j = 0; j < active.size(); ++j)
+            if (j != i) candidate.push_back(active[j]);
+        if (!candidate.empty() && !feasible_for_literals(candidate, nullptr)) {
+            active = std::move(candidate);
+        } else {
+            ++i;
+        }
+    }
+    return active;
+}
+
+bool LraSolver::cb_check_found_model(const std::vector<int>&) {
+    std::vector<int> active;
+    for (int lit : trail_) {
+        auto it = atoms_.find(std::abs(lit));
+        if (it == atoms_.end()) continue;
         active.push_back(lit);
     }
 
     std::map<std::string, Rational> model;
-    if (feasible_with_disequalities(std::move(ineqs), diseqs, 0, &model)) {
+    if (feasible_for_literals(active, &model)) {
         last_model_ = std::move(model);
         return true;
     }
 
-    // Section 3.2.2 explanations: this v1 emits a sound, coarse explanation
-    // consisting of all currently active LRA literals. CDCL can learn from it;
-    // finer Farkas-minimized explanations can replace it later.
+    active = minimize_conflict(std::move(active));
     conflict_clause_.clear();
     for (int lit : active) conflict_clause_.push_back(-lit);
     if (conflict_clause_.empty()) conflict_clause_.push_back(1);
+    last_conflict_size_ = conflict_clause_.size();
     conflict_idx_ = 0;
     has_conflict_ = true;
     return false;

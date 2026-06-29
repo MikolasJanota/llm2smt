@@ -670,6 +670,12 @@ std::any Smt2Visitor::visitCommand(
         case SolveResult::UNSAT:   std::cout << "unsat\n";   break;
         case SolveResult::UNKNOWN: std::cout << "unknown\n"; break;
         }
+        if (opts_.lra_print_conflict_size && ctx_.is_lra_logic() &&
+            last_result_ == SolveResult::UNSAT) {
+            std::cerr << "lra-conflict-size: "
+                      << (ctx_.lra ? ctx_.lra->last_conflict_size() : 0)
+                      << "\n";
+        }
     }
     else if (ctx->cmd_getModel()) {
         if (last_result_ == SolveResult::SAT)

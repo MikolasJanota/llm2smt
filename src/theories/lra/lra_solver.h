@@ -45,6 +45,7 @@ public:
 
     std::optional<Rational> value_of(const std::string& name) const;
     const std::vector<std::string>& real_decls() const { return real_decls_; }
+    size_t last_conflict_size() const { return last_conflict_size_; }
 
 private:
     struct Inequality {
@@ -64,6 +65,7 @@ private:
     std::vector<int> conflict_clause_;
     size_t conflict_idx_ = 0;
     bool has_conflict_ = false;
+    size_t last_conflict_size_ = 0;
 
     std::vector<std::string> real_decls_;
     std::unordered_map<std::string, bool> real_decl_seen_;
@@ -86,6 +88,9 @@ private:
                                  Rational& value);
     static bool check_ineqs(const std::vector<Inequality>& ineqs,
                             const std::map<std::string, Rational>& model);
+    bool feasible_for_literals(const std::vector<int>& lits,
+                               std::map<std::string, Rational>* model) const;
+    std::vector<int> minimize_conflict(std::vector<int> active) const;
 };
 
 } // namespace llm2smt::lra
