@@ -1,0 +1,29 @@
+title: llm2smt Solver Notes
+author: llm2smt developers
+logo: ""
+
+execute:
+  execute_notebooks: "off"
+
+repository:
+  path_to_book: docs
+
+html:
+  use_repository_button: false
+  use_issues_button: false
+  use_edit_page_button: false
+
+parse:
+  myst_enable_extensions:
+    - colon_fence
+    - deflist
+    - fieldlist
+    - linkify
+    - substitution
+    - tasklist
+
+sphinx:
+  config:
+    html_show_copyright: false
+    suppress_warnings:
+      - myst.header

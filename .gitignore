@@ -43,6 +43,7 @@
 # CMake build trees and generated metadata
 /build*/
 /cmake-build-*/
+/docs/_build/
 compile_commands.json
 /src/compile_commands.json
 

@@ -64,6 +64,17 @@ Output is `sat`, `unsat`, or `unknown` on stdout.
 ctest --test-dir build -j$(nproc)
 ```
 
+## Developer documentation
+
+The solver internals are documented as a Jupyter Book under `docs/`.
+
+```sh
+python3 -m venv .venv-docs
+. .venv-docs/bin/activate
+python -m pip install -r docs/requirements.txt
+jupyter-book build docs
+```
+
 ## Comparing against cvc5
 
 ```sh
