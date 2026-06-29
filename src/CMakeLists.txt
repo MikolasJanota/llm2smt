@@ -1,6 +1,7 @@
 add_subdirectory(core)
 add_subdirectory(sat)
 add_subdirectory(theories/euf)
+add_subdirectory(theories/lra)
 add_subdirectory(preprocessor)
 add_subdirectory(parser)
 add_subdirectory(proof)
@@ -11,6 +12,7 @@ target_link_libraries(llm2smt
     core
     sat
     euf
+    lra
     preprocessor
     smt_parser
     proof

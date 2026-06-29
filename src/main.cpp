@@ -6,6 +6,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 #include <unistd.h>
 
 #include <CLI/CLI.hpp>
@@ -17,6 +18,7 @@
 #include "core/node_manager.h"
 #include "core/stats.h"
 #include "theories/euf/euf_solver.h"
+#include "theories/lra/lra_solver.h"
 #include "parser/smt_context.h"
 #include "parser/smt2_visitor.h"
 #include "preprocessor/preproc_options.h"
@@ -47,6 +49,64 @@ static void sigterm_handler(int) {
     // this is the standard approach for solver timeouts and acceptable in practice.
     std::exit(0);
 }
+
+class CombinedPropagator : public llm2smt::ExternalPropagator {
+public:
+    CombinedPropagator(llm2smt::EufSolver& euf, llm2smt::lra::LraSolver& lra)
+        : euf_(euf), lra_(lra) {}
+
+    void notify_assignment(int lit, bool is_fixed) override {
+        euf_.notify_assignment(lit, is_fixed);
+        lra_.notify_assignment(lit, is_fixed);
+    }
+    void notify_new_decision_level() override {
+        euf_.notify_new_decision_level();
+        lra_.notify_new_decision_level();
+    }
+    void notify_backtrack(size_t new_level) override {
+        euf_.notify_backtrack(new_level);
+        lra_.notify_backtrack(new_level);
+    }
+    const std::vector<int>& observed_vars() const override {
+        observed_cache_.clear();
+        observed_cache_.insert(observed_cache_.end(),
+                               euf_.observed_vars().begin(), euf_.observed_vars().end());
+        observed_cache_.insert(observed_cache_.end(),
+                               lra_.observed_vars().begin(), lra_.observed_vars().end());
+        return observed_cache_;
+    }
+    bool cb_check_found_model(const std::vector<int>& model) override {
+        return euf_.cb_check_found_model(model) && lra_.cb_check_found_model(model);
+    }
+    bool cb_has_external_clause(bool& is_forgettable) override {
+        if (euf_.cb_has_external_clause(is_forgettable)) {
+            serving_ = Serving::Euf;
+            return true;
+        }
+        if (lra_.cb_has_external_clause(is_forgettable)) {
+            serving_ = Serving::Lra;
+            return true;
+        }
+        serving_ = Serving::None;
+        return false;
+    }
+    int cb_add_external_clause_lit() override {
+        if (serving_ == Serving::Euf) return euf_.cb_add_external_clause_lit();
+        if (serving_ == Serving::Lra) return lra_.cb_add_external_clause_lit();
+        return 0;
+    }
+    int cb_propagate() override { return euf_.cb_propagate(); }
+    int cb_add_reason_clause_lit(int lit) override {
+        return euf_.cb_add_reason_clause_lit(lit);
+    }
+
+private:
+    enum class Serving { None, Euf, Lra };
+    llm2smt::EufSolver& euf_;
+    llm2smt::lra::LraSolver& lra_;
+    mutable std::vector<int> observed_cache_;
+    Serving serving_ = Serving::None;
+};
 
 int main(int argc, char** argv) {
     g_start_time = std::chrono::steady_clock::now();
@@ -149,8 +209,10 @@ int main(int argc, char** argv) {
         // triggers notify_backtrack() callbacks; if euf were already destroyed
         // at that point the callbacks would access freed memory.
         EufSolver      euf(nm, stats);
+        lra::LraSolver lra;
+        CombinedPropagator theory(euf, lra);
         CaDiCaLSolver  sat;
-        sat.connect_propagator(euf);
+        sat.connect_propagator(theory);
 
         if (!opts.theory_propagation)
             euf.set_propagation(false);
@@ -165,7 +227,7 @@ int main(int argc, char** argv) {
                 sat.enable_clause_recording();
         }
 
-        SmtContext ctx(nm, euf, sat);
+        SmtContext ctx(nm, euf, lra, sat);
 
         SMTLIBv2Lexer  lexer(input_stream.get());
         antlr4::CommonTokenStream tokens(&lexer);

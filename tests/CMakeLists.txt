@@ -66,6 +66,24 @@ add_smt2_test(sat_no_conflict       t07_sat_no_conflict.smt2       sat)
 # t08: a=b  ∧  c=d  ∧  g(a,c)≠g(b,d) →  unsat  (binary congruence)
 add_smt2_test(unsat_binary_congruence t08_unsat_binary_congruence.smt2 unsat)
 
+# QF_LRA regressions
+add_smt2_test(lra_bound_conflict      lra01_bound_conflict.smt2      unsat)
+add_smt2_test(lra_linear_eq_unsat     lra02_linear_eq_unsat.smt2     unsat)
+add_smt2_test(lra_strict_unsat        lra03_strict_unsat.smt2        unsat)
+add_smt2_test(lra_diseq_sat           lra04_diseq_sat.smt2           sat)
+add_smt2_test(lra_arith_ite_sat       lra05_arith_ite_sat.smt2       sat)
+add_smt2_test(lra_large_rational_sat  lra06_large_rational_sat.smt2  sat)
+add_smt2_test(lra_false_equality_unsat lra07_false_equality_unsat.smt2 unsat)
+add_test(
+    NAME "smt2/lra_model_gt"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra08_model_gt.smt2 | \
+         tee ${CMAKE_BINARY_DIR}/lra08_model.out && \
+         grep -q '^sat' ${CMAKE_BINARY_DIR}/lra08_model.out && \
+         grep -q '    6)' ${CMAKE_BINARY_DIR}/lra08_model.out && \
+         ! grep -q '    0)' ${CMAKE_BINARY_DIR}/lra08_model.out"
+)
+
 # Core theory — true / false
 # t09: (assert true) ∧ (assert (not false))  →  sat
 add_smt2_test(true_false_sat          t09_true_false.smt2            sat)

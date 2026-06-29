@@ -1,10 +1,12 @@
 # Architecture
 
-`llm2smt` implements a DPLL(T)-style solver for quantifier-free uninterpreted
-functions. The SAT layer owns Boolean search and calls an EUF theory plugin via
-IPASIR-UP style callbacks. The EUF layer maintains congruence closure,
-discovers conflicts, optionally propagates implied equalities, and explains
-theory lemmas back to the SAT solver.
+`llm2smt` implements DPLL(T)-style paths for quantifier-free uninterpreted
+functions and pure linear real arithmetic. The SAT layer owns Boolean search and
+calls theory plugins via IPASIR-UP style callbacks. The EUF layer maintains
+congruence closure, discovers conflicts, optionally propagates implied
+equalities, and explains theory lemmas back to the SAT solver. The LRA layer
+uses exact rational arithmetic and final-model feasibility checks over active
+linear atoms.
 
 ## Main Components
 
@@ -16,6 +18,7 @@ theory lemmas back to the SAT solver.
 | Preprocessor | `src/preprocessor/*` | NNF, simplification, equality bridging, finite-domain encodings. |
 | SAT backend | `src/sat/cadical_solver*.{h,cpp}`, `src/sat/ipasir_up.h` | CaDiCaL wrapper and external propagator interface. |
 | EUF theory | `src/theories/euf/*` | Term flattening, congruence closure, conflicts, propagation, explanations. |
+| LRA theory | `src/theories/lra/*` | Exact rationals, linear atoms, feasibility checks, LRA conflict clauses. |
 | Proofs | `src/proof/*` | Lean proof generation and optional theory-lemma minimization. |
 | Tests | `tests/*` | Unit tests and SMT2 end-to-end regression tests. |
 
@@ -24,14 +27,14 @@ theory lemmas back to the SAT solver.
 The executable starts in `src/main.cpp`.
 
 1. Parse command-line flags into `PreprocOptions` and solver controls.
-2. Construct `Stats`, `NodeManager`, `EufSolver`, and `CaDiCaLSolver`.
-3. Connect the EUF solver as CaDiCaL's external propagator.
+2. Construct `Stats`, `NodeManager`, `EufSolver`, `LraSolver`, and `CaDiCaLSolver`.
+3. Connect a combined external propagator that dispatches to EUF and LRA.
 4. Parse SMT-LIB2 with ANTLR and visit commands through `Smt2Visitor`.
 5. Declarations populate the symbol table.
 6. Assertions are either encoded directly or accumulated as `NodeId` formulas
    and flushed through preprocessing.
 7. `check-sat` invokes CaDiCaL.
-8. CaDiCaL drives EUF callbacks during search.
+8. CaDiCaL drives theory callbacks during search.
 9. The visitor prints `sat`, `unsat`, or `unknown`.
 10. Optional model/proof/stat output is emitted after solving.
 
@@ -52,18 +55,20 @@ Smt2Visitor
     |
     +--> optional preprocessing over NodeId formulas
     |
-    +--> SAT clauses and EUF equality atoms
+    +--> SAT clauses and EUF equality atoms or LRA atoms
             |
             v
-      CaDiCaL + EufSolver external propagator
+      CaDiCaL + combined theory external propagator
             |
             v
       sat / unsat / unknown
 ```
 
-The important design choice is that formulas and terms share the same `NodeId`
-storage. Boolean connectives are represented as special built-in symbols in
-`NodeManager`; user predicates are Bool-sorted application nodes.
+For `QF_UF`, formulas and terms share the same `NodeId` storage. Boolean
+connectives are represented as special built-in symbols in `NodeManager`; user
+predicates are Bool-sorted application nodes. For `QF_LRA`, the parser bypasses
+the EUF preprocessor and directly encodes Boolean structure plus linear
+arithmetic atoms.
 
 ## Command-Line Surface
 
@@ -98,6 +103,8 @@ Proof options:
 
 - `--proof FILE`
 - `--proof-minimize`
+
+Proof output is `QF_UF` only. `QF_LRA` with `--proof` is rejected.
 
 ## Stats
 

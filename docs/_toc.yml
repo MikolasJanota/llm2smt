@@ -4,6 +4,7 @@ chapters:
   - file: architecture
   - file: ir-and-parsing
   - file: sat-euf
+  - file: qf-lra
   - file: preprocessing
   - file: proofs-models
   - file: operations

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cctype>
 #include <iostream>
 #include <ranges>
 #include <stdexcept>
@@ -60,10 +61,15 @@ std::string Smt2Visitor::identifier_name(
 int Smt2Visitor::get_true_lit()
 {
     if (true_lit_ != 0) return true_lit_;
-    true_lit_ = ctx_.euf.new_var();
+    true_lit_ = fresh_bool_var();
     std::array<int, 1> cl = {true_lit_};
     ctx_.sat.add_clause(std::span<const int>(cl));
     return true_lit_;
+}
+
+int Smt2Visitor::fresh_bool_var()
+{
+    return is_lra_mode() && ctx_.lra ? ctx_.lra->new_var() : ctx_.euf.new_var();
 }
 
 NodeId Smt2Visitor::get_bool_term_node(bool val)
@@ -137,6 +143,425 @@ bool Smt2Visitor::compute_is_bool_sorted(
 }
 
 // ============================================================================
+// QF_LRA helpers
+// ============================================================================
+
+bool Smt2Visitor::is_real_decl(const std::string& name) const
+{
+    auto fit = ctx_.declared_fns.find(name);
+    if (fit == ctx_.declared_fns.end()) return false;
+    auto sit = sym_to_sort_.find(fit->second);
+    return sit != sym_to_sort_.end() && sit->second == "Real";
+}
+
+bool Smt2Visitor::is_lra_number_term(
+    smt2parser::SMTLIBv2Parser::TermContext* t) const
+{
+    return lra_const_value(t).has_value();
+}
+
+lra::Rational Smt2Visitor::lra_number(
+    smt2parser::SMTLIBv2Parser::TermContext* t) const
+{
+    auto v = lra_const_value(t);
+    if (!v)
+        throw std::runtime_error("expected Real numeral, got: " + t->getText());
+    return *v;
+}
+
+std::optional<lra::Rational> Smt2Visitor::lra_const_value(
+    smt2parser::SMTLIBv2Parser::TermContext* t) const
+{
+    while (t->GRW_Exclamation()) t = t->term()[0];
+    if (t->spec_constant() != nullptr) return lra::Rational::parse(t->getText());
+    if (t->qual_identifier() == nullptr) return std::nullopt;
+    std::string op = identifier_name(t->qual_identifier()->identifier());
+    auto terms = t->term();
+    if (op == "-" && terms.size() == 1) {
+        auto v = lra_const_value(terms[0]);
+        if (!v) return std::nullopt;
+        return -*v;
+    }
+    if (op == "/" && terms.size() == 2) {
+        auto a = lra_const_value(terms[0]);
+        auto b = lra_const_value(terms[1]);
+        if (!a || !b) return std::nullopt;
+        return *a / *b;
+    }
+    if (op == "+" || op == "-" || op == "*") {
+        if (terms.empty()) return std::nullopt;
+        auto acc = lra_const_value(terms[0]);
+        if (!acc) return std::nullopt;
+        for (size_t i = 1; i < terms.size(); ++i) {
+            auto v = lra_const_value(terms[i]);
+            if (!v) return std::nullopt;
+            if (op == "+") *acc += *v;
+            else if (op == "-") *acc -= *v;
+            else *acc *= *v;
+        }
+        return acc;
+    }
+    return std::nullopt;
+}
+
+bool Smt2Visitor::is_lra_term_syntax(
+    smt2parser::SMTLIBv2Parser::TermContext* t) const
+{
+    while (t->GRW_Exclamation()) t = t->term()[0];
+    if (t->spec_constant() != nullptr) return true;
+    if (t->qual_identifier() == nullptr) return false;
+    std::string op = identifier_name(t->qual_identifier()->identifier());
+    if (is_real_decl(op)) return true;
+    if (op == "ite")
+        return t->term().size() == 3 && is_lra_term_syntax(t->term()[1]);
+    static const std::unordered_set<std::string> arith_ops = {"+", "-", "*", "/"};
+    return arith_ops.contains(op);
+}
+
+bool Smt2Visitor::is_lra_bool_syntax(
+    smt2parser::SMTLIBv2Parser::TermContext* t) const
+{
+    while (t->GRW_Exclamation()) t = t->term()[0];
+    if (t->qual_identifier() == nullptr) return false;
+    std::string op = identifier_name(t->qual_identifier()->identifier());
+    if (op == "true" || op == "false") return true;
+    static const std::unordered_set<std::string> bool_ops = {
+        "not", "and", "or", "=>", "xor", "=", "distinct", "<", "<=", ">", ">="
+    };
+    if (bool_ops.contains(op) && !is_lra_term_syntax(t)) return true;
+    if (t->term().empty()) {
+        auto fit = ctx_.declared_fns.find(op);
+        return fit != ctx_.declared_fns.end() && ctx_.bool_fns.contains(fit->second);
+    }
+    return false;
+}
+
+lra::LinearExpr Smt2Visitor::lra_term(
+    smt2parser::SMTLIBv2Parser::TermContext* t)
+{
+    while (t->GRW_Exclamation()) t = t->term()[0];
+
+    if (t->GRW_Let()) {
+        int frames = 0;
+        while (t->GRW_Let() || t->GRW_Exclamation()) {
+            if (t->GRW_Exclamation()) { t = t->term()[0]; continue; }
+            let_env_.emplace_back();
+            for (auto* vb : t->var_binding())
+                let_env_.back()[vb->symbol()->getText()].term = vb->term();
+            t = t->term()[0];
+            ++frames;
+        }
+        auto result = lra_term(t);
+        for (int i = 0; i < frames; ++i) let_env_.pop_back();
+        return result;
+    }
+
+    if (t->spec_constant() != nullptr) {
+        lra::LinearExpr e;
+        e.constant = lra_number(t);
+        return e;
+    }
+    if (auto c = lra_const_value(t)) {
+        lra::LinearExpr e;
+        e.constant = *c;
+        return e;
+    }
+    if (t->qual_identifier() == nullptr)
+        throw std::runtime_error("unsupported arithmetic term: " + t->getText());
+
+    std::string op = identifier_name(t->qual_identifier()->identifier());
+    if (t->term().empty()) {
+        if (auto* binding = find_let_binding(op)) return lra_term(binding->term);
+        if (!is_real_decl(op))
+            throw std::runtime_error("undeclared or non-Real arithmetic symbol: " + op);
+        lra::LinearExpr e;
+        e.add_var(op, lra::Rational(1));
+        return e;
+    }
+
+    if (op == "+") {
+        lra::LinearExpr sum;
+        for (auto* sub : t->term()) sum.add(lra_term(sub));
+        return sum;
+    }
+    if (op == "-") {
+        auto terms = t->term();
+        if (terms.size() == 1) {
+            auto e = lra_term(terms[0]);
+            e.scale(lra::Rational(-1));
+            return e;
+        }
+        auto e = lra_term(terms[0]);
+        for (size_t i = 1; i < terms.size(); ++i)
+            e.add(lra_term(terms[i]), lra::Rational(-1));
+        return e;
+    }
+    if (op == "*") {
+        auto terms = t->term();
+        lra::Rational factor(1);
+        smt2parser::SMTLIBv2Parser::TermContext* nonconst = nullptr;
+        for (auto* sub : terms) {
+            if (auto c = lra_const_value(sub)) {
+                factor *= *c;
+            } else if (nonconst == nullptr) {
+                nonconst = sub;
+            } else {
+                throw std::runtime_error("QF_LRA supports multiplication only by rational constants");
+            }
+        }
+        if (nonconst == nullptr) {
+            lra::LinearExpr e;
+            e.constant = factor;
+            return e;
+        }
+        auto e = lra_term(nonconst);
+        e.scale(factor);
+        return e;
+    }
+    if (op == "/") {
+        auto terms = t->term();
+        if (terms.size() != 2 || !is_lra_number_term(terms[1]))
+            throw std::runtime_error("QF_LRA supports division only by rational constants");
+        auto e = lra_term(terms[0]);
+        e.scale(lra::Rational(1) / lra_number(terms[1]));
+        return e;
+    }
+    if (op == "ite" && t->term().size() == 3) {
+        int cond = lra_eval_lit(t->term()[0]);
+        auto then_e = lra_term(t->term()[1]);
+        auto else_e = lra_term(t->term()[2]);
+        std::string aux = "__lra_ite_" + std::to_string(ite_counter_++);
+        ctx_.lra->declare_real(aux);
+        lra::LinearExpr aux_e;
+        aux_e.add_var(aux, lra::Rational(1));
+        auto eq_then = aux_e;
+        eq_then.add(then_e, lra::Rational(-1));
+        auto eq_else = aux_e;
+        eq_else.add(else_e, lra::Rational(-1));
+        int l_then = ctx_.lra->register_atom({eq_then, lra::Relation::Eq});
+        int l_else = ctx_.lra->register_atom({eq_else, lra::Relation::Eq});
+        { std::array<int,2> cl = {-cond, l_then}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        { std::array<int,2> cl = { cond, l_else}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        return aux_e;
+    }
+
+    throw std::runtime_error("unsupported QF_LRA arithmetic operator: " + op);
+}
+
+void Smt2Visitor::lra_collect_clause_lits(
+    smt2parser::SMTLIBv2Parser::TermContext* t,
+    std::vector<int>& lits)
+{
+    while (t->GRW_Exclamation()) t = t->term()[0];
+    if (t->qual_identifier() != nullptr) {
+        std::string op = identifier_name(t->qual_identifier()->identifier());
+        if (op == "or") {
+            for (auto* sub : t->term()) lra_collect_clause_lits(sub, lits);
+            return;
+        }
+    }
+    lits.push_back(lra_eval_lit(t));
+}
+
+int Smt2Visitor::lra_eval_lit(
+    smt2parser::SMTLIBv2Parser::TermContext* t)
+{
+    while (t->GRW_Exclamation()) t = t->term()[0];
+    if (t->GRW_Let()) {
+        int frames = 0;
+        while (t->GRW_Let() || t->GRW_Exclamation()) {
+            if (t->GRW_Exclamation()) { t = t->term()[0]; continue; }
+            let_env_.emplace_back();
+            for (auto* vb : t->var_binding())
+                let_env_.back()[vb->symbol()->getText()].term = vb->term();
+            t = t->term()[0];
+            ++frames;
+        }
+        int result = lra_eval_lit(t);
+        for (int i = 0; i < frames; ++i) let_env_.pop_back();
+        return result;
+    }
+    if (t->qual_identifier() == nullptr)
+        throw std::runtime_error("unsupported QF_LRA formula: " + t->getText());
+    std::string op = identifier_name(t->qual_identifier()->identifier());
+
+    if (op == "true") return get_true_lit();
+    if (op == "false") return -get_true_lit();
+    if (op == "not" && t->term().size() == 1) {
+        auto* inner = t->term()[0];
+        while (inner->GRW_Exclamation()) inner = inner->term()[0];
+        if (inner->qual_identifier() != nullptr &&
+            identifier_name(inner->qual_identifier()->identifier()) == "=" &&
+            inner->term().size() == 2 &&
+            is_lra_term_syntax(inner->term()[0])) {
+            auto e = lra_term(inner->term()[0]);
+            e.add(lra_term(inner->term()[1]), lra::Rational(-1));
+            int lt = ctx_.lra->register_atom({e, lra::Relation::Lt});
+            int gt = ctx_.lra->register_atom({e, lra::Relation::Gt});
+            int y = fresh_bool_var();
+            { std::array<int,3> cl = {-y, lt, gt}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            { std::array<int,2> cl = {-lt, y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            { std::array<int,2> cl = {-gt, y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            return y;
+        }
+        return -lra_eval_lit(inner);
+    }
+
+    if (op == "and") {
+        int y = fresh_bool_var();
+        std::vector<int> sub;
+        for (auto* c : t->term()) sub.push_back(lra_eval_lit(c));
+        for (int l : sub) { std::array<int,2> cl = {-y, l}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        std::vector<int> back{y};
+        for (int l : sub) back.push_back(-l);
+        ctx_.sat.add_clause(std::span<const int>(back));
+        return y;
+    }
+    if (op == "or") {
+        int y = fresh_bool_var();
+        std::vector<int> sub;
+        for (auto* c : t->term()) lra_collect_clause_lits(c, sub);
+        std::vector<int> fwd{-y};
+        for (int l : sub) fwd.push_back(l);
+        ctx_.sat.add_clause(std::span<const int>(fwd));
+        for (int l : sub) { std::array<int,2> cl = {-l, y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        return y;
+    }
+    if (op == "=>" || op == "xor" || (op == "ite" && !is_lra_term_syntax(t))) {
+        auto it = tseitin_cache_.find(t);
+        if (it != tseitin_cache_.end()) return it->second;
+        int y = fresh_bool_var();
+        tseitin_cache_[t] = y;
+        if (op == "=>") {
+            auto terms = t->term();
+            std::vector<int> ds{-y};
+            for (size_t i = 0; i + 1 < terms.size(); ++i) ds.push_back(-lra_eval_lit(terms[i]));
+            ds.push_back(lra_eval_lit(terms.back()));
+            ctx_.sat.add_clause(std::span<const int>(ds));
+            for (size_t i = 1; i < ds.size(); ++i) {
+                std::array<int,2> cl = {-ds[i], y};
+                ctx_.sat.add_clause(std::span<const int>(cl));
+            }
+            return y;
+        }
+        if (op == "ite") {
+            int c = lra_eval_lit(t->term()[0]);
+            int a = lra_eval_lit(t->term()[1]);
+            int b = lra_eval_lit(t->term()[2]);
+            { std::array<int,3> cl = {-c, -a,  y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            { std::array<int,3> cl = {-c,  a, -y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            { std::array<int,3> cl = { c, -b,  y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            { std::array<int,3> cl = { c,  b, -y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            return y;
+        }
+        auto terms = t->term();
+        int acc = lra_eval_lit(terms[0]);
+        for (size_t i = 1; i < terms.size(); ++i) {
+            int a = acc, b = lra_eval_lit(terms[i]);
+            acc = (i + 1 == terms.size()) ? y : fresh_bool_var();
+            { std::array<int,3> cl = {-acc,  a,  b}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            { std::array<int,3> cl = {-acc, -a, -b}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            { std::array<int,3> cl = {-a,  b,  acc}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+            { std::array<int,3> cl = { a, -b,  acc}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        }
+        return y;
+    }
+
+    if (op == "=" && t->term().size() == 2 &&
+        (is_lra_bool_syntax(t->term()[0]) || is_lra_bool_syntax(t->term()[1]))) {
+        int y = fresh_bool_var();
+        int p = lra_eval_lit(t->term()[0]);
+        int q = lra_eval_lit(t->term()[1]);
+        { std::array<int,3> cl = {-y, -p,  q}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        { std::array<int,3> cl = {-y,  p, -q}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        { std::array<int,3> cl = {-p, -q,  y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        { std::array<int,3> cl = { p,  q,  y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        return y;
+    }
+
+    static const std::unordered_map<std::string, lra::Relation> rels = {
+        {"<", lra::Relation::Lt}, {"<=", lra::Relation::Le},
+        {">", lra::Relation::Gt}, {">=", lra::Relation::Ge},
+        {"=", lra::Relation::Eq}
+    };
+    if (auto rit = rels.find(op); rit != rels.end() && t->term().size() == 2) {
+        auto e = lra_term(t->term()[0]);
+        e.add(lra_term(t->term()[1]), lra::Rational(-1));
+        return ctx_.lra->register_atom({e, rit->second});
+    }
+    if (op == "distinct" && t->term().size() == 2) {
+        auto e = lra_term(t->term()[0]);
+        e.add(lra_term(t->term()[1]), lra::Rational(-1));
+        int lt = ctx_.lra->register_atom({e, lra::Relation::Lt});
+        int gt = ctx_.lra->register_atom({e, lra::Relation::Gt});
+        int y = fresh_bool_var();
+        { std::array<int,3> cl = {-y, lt, gt}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        { std::array<int,2> cl = {-lt, y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        { std::array<int,2> cl = {-gt, y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        return y;
+    }
+    if (t->term().empty()) {
+        if (auto* binding = find_let_binding(op)) return lra_eval_lit(binding->term);
+        auto dit = defined_fns_.find(op);
+        if (dit != defined_fns_.end() && defined_bool_fns_.contains(op))
+            return lra_eval_lit(dit->second);
+        auto fit = ctx_.declared_fns.find(op);
+        if (fit != ctx_.declared_fns.end() && ctx_.bool_fns.contains(fit->second)) {
+            NodeId n = ctx_.nm.mk_const(fit->second);
+            return ctx_.lit_for_node(n);
+        }
+    }
+
+    throw std::runtime_error("unsupported QF_LRA formula operator: " + op);
+}
+
+void Smt2Visitor::lra_assert_formula(
+    smt2parser::SMTLIBv2Parser::TermContext* t)
+{
+    while (t->GRW_Exclamation()) t = t->term()[0];
+    if (t->GRW_Let()) {
+        int frames = 0;
+        while (t->GRW_Let() || t->GRW_Exclamation()) {
+            if (t->GRW_Exclamation()) { t = t->term()[0]; continue; }
+            let_env_.emplace_back();
+            for (auto* vb : t->var_binding())
+                let_env_.back()[vb->symbol()->getText()].term = vb->term();
+            t = t->term()[0];
+            ++frames;
+        }
+        lra_assert_formula(t);
+        for (int i = 0; i < frames; ++i) let_env_.pop_back();
+        return;
+    }
+    if (t->qual_identifier() != nullptr) {
+        std::string op = identifier_name(t->qual_identifier()->identifier());
+        if (op == "true") return;
+        if (op == "false") { ctx_.sat.add_clause(std::span<const int>{}); return; }
+        if (op == "and") {
+            for (auto* sub : t->term()) lra_assert_formula(sub);
+            return;
+        }
+        if (op == "or") {
+            std::vector<int> lits;
+            lra_collect_clause_lits(t, lits);
+            ctx_.sat.add_clause(std::span<const int>(lits));
+            return;
+        }
+        if (op == "=>" && t->term().size() >= 2) {
+            auto terms = t->term();
+            std::vector<int> lits;
+            for (size_t i = 0; i + 1 < terms.size(); ++i) lits.push_back(-lra_eval_lit(terms[i]));
+            lits.push_back(lra_eval_lit(terms.back()));
+            ctx_.sat.add_clause(std::span<const int>(lits));
+            return;
+        }
+    }
+    int lit = lra_eval_lit(t);
+    std::array<int,1> cl = {lit};
+    ctx_.sat.add_clause(std::span<const int>(cl));
+}
+
+// ============================================================================
 // Top-level
 // ============================================================================
 
@@ -156,7 +581,9 @@ std::any Smt2Visitor::visitCommand(
     if (ctx->cmd_setLogic()) {
         std::string logic = symbol_name(ctx->symbol(0));
         ctx_.logic = logic;
-        if (logic != "QF_EUF" && logic != "QF_UF") {
+        if (logic == "QF_LRA" && !opts_.proof_file.empty())
+            throw std::runtime_error("--proof is supported for QF_UF only, not QF_LRA");
+        if (logic != "QF_EUF" && logic != "QF_UF" && logic != "QF_LRA") {
             std::cerr << "Warning: unsupported logic " << logic
                       << ", proceeding as QF_UF\n";
         }
@@ -182,6 +609,10 @@ std::any Smt2Visitor::visitCommand(
                          ? static_cast<uint32_t>(sorts.size() - 1)
                          : 0;
         bool ret_is_bool = !sorts.empty() && sorts.back()->getText() == "Bool";
+        if (ctx_.is_lra_logic()) {
+            if (arity != 0 || (sorts.back()->getText() != "Real" && sorts.back()->getText() != "Bool"))
+                throw std::runtime_error("QF_LRA supports only 0-arity Real/Bool declarations");
+        }
         SortId ret_sort_id = ret_is_bool ? BOOL_SORT : NULL_SORT;
         SymbolId sym = ctx_.nm.declare_symbol(name, arity, ret_sort_id);
         ctx_.declared_fns[name] = sym;
@@ -198,11 +629,17 @@ std::any Smt2Visitor::visitCommand(
                 decl.param_sorts.push_back(sorts[i]->getText());
         }
         sym_to_sort_[sym] = decl.return_sort;
+        if (ctx_.is_lra_logic() && decl.return_sort == "Real")
+            ctx_.lra->declare_real(name);
         ctx_.declared_fn_order.push_back(std::move(decl));
     }
     else if (ctx->cmd_assert()) {
         auto terms = ctx->term();
         if (terms.empty()) throw std::runtime_error("assert: missing term");
+        if (ctx_.is_lra_logic()) {
+            lra_assert_formula(terms[0]);
+            return nullptr;
+        }
         // Assertions accumulate in pending_fmls_ and are encoded on check-sat.
         // This keeps one path for structural preprocessing and SAT-strengthening.
         // As an optimization, top-level (distinct t1 ... tn) with n>=3 is split
@@ -226,7 +663,7 @@ std::any Smt2Visitor::visitCommand(
         pending_fmls_.push_back(build_fml(terms[0]));
     }
     else if (ctx->cmd_checkSat()) {
-        flush_pending_fmls();
+        if (!ctx_.is_lra_logic()) flush_pending_fmls();
         last_result_ = ctx_.sat.solve();
         switch (last_result_) {
         case SolveResult::SAT:     std::cout << "sat\n";     break;
@@ -1671,6 +2108,26 @@ void Smt2Visitor::flush_pending_fmls()
 
 void Smt2Visitor::print_model()
 {
+    if (ctx_.is_lra_logic()) {
+        std::cout << "(model\n";
+        for (const auto& decl : ctx_.declared_fn_order) {
+            const std::string sym_name = ctx_.nm.symbol_table().get(decl.sym).name;
+            if (decl.param_sorts.empty() && decl.return_sort == "Real") {
+                auto v = ctx_.lra->value_of(sym_name).value_or(lra::Rational(0));
+                std::cout << "  (define-fun " << sym_name << " () Real\n"
+                          << "    " << v << ")\n";
+            } else if (decl.param_sorts.empty() && decl.return_sort == "Bool") {
+                NodeId node = ctx_.nm.mk_const(decl.sym);
+                auto it = ctx_.node_to_lit.find(node);
+                bool val = it != ctx_.node_to_lit.end() && ctx_.sat.val(it->second) == it->second;
+                std::cout << "  (define-fun " << sym_name << " () Bool\n"
+                          << "    " << (val ? "true" : "false") << ")\n";
+            }
+        }
+        std::cout << ")\n";
+        return;
+    }
+
     Flattener& flattener = ctx_.euf.flattener();
     CC&        cc        = ctx_.euf.cc();
 

@@ -48,7 +48,33 @@ Test categories:
 
 - C++ unit tests for `NodeManager`, `CC`, `EufSolver`, and preprocessing;
 - end-to-end SMT2 regression tests in `tests/smt2`;
+- focused `QF_LRA` SMT2 regressions named `lra*`;
 - proof-generation tests that grep generated Lean output for expected lemmas.
+
+Run just the LRA regressions:
+
+```sh
+ctest --test-dir build -R 'smt2/lra' --output-on-failure
+```
+
+## QF_LRA Smoke Benchmarks
+
+Use short external timeouts for the current LRA implementation:
+
+```sh
+for f in \
+  sandbox/non-incremental/QF_LRA/keymaera/division_dijkstra-node701.smt2 \
+  sandbox/non-incremental/QF_LRA/keymaera/square_root_zuse-node902.smt2 \
+  sandbox/non-incremental/QF_LRA/check/bignum_lra1.smt2 \
+  sandbox/non-incremental/QF_LRA/check/bignum_lra2.smt2 \
+  sandbox/non-incremental/QF_LRA/meti-tarski/Chua/1/VC2/U/Chua-1-VC2-U-chunk-0108.smt2
+do
+  timeout 10s build/bin/llm2smt --quiet "$f"
+done
+```
+
+The TTA and spider smoke benchmarks are useful performance targets, but the v1
+coarse-conflict exact checker may return `unknown` under short cutoffs.
 
 ## Compare Against cvc5
 

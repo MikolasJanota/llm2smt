@@ -1,0 +1,5 @@
+(set-logic QF_LRA)
+(declare-fun x () Real)
+(assert (= (* 123456789123456789123456789 x) 246913578246913578246913578))
+(assert (= x (/ 2 1)))
+(check-sat)

@@ -10,6 +10,7 @@
 #include "core/node.h"
 #include "core/node_manager.h"
 #include "theories/euf/euf_solver.h"
+#include "theories/lra/lra_solver.h"
 #include "sat/ipasir_up.h"
 
 namespace llm2smt {
@@ -32,6 +33,7 @@ struct IteInfo {
 struct SmtContext {
     NodeManager& nm;
     EufSolver&   euf;
+    lra::LraSolver* lra = nullptr;
     SatSolver&   sat;
 
     std::unordered_map<std::string, uint32_t> declared_sorts;
@@ -59,12 +61,16 @@ struct SmtContext {
 
     SmtContext(NodeManager& nm_, EufSolver& euf_, SatSolver& sat_)
         : nm(nm_), euf(euf_), sat(sat_) {}
+    SmtContext(NodeManager& nm_, EufSolver& euf_, lra::LraSolver& lra_, SatSolver& sat_)
+        : nm(nm_), euf(euf_), lra(&lra_), sat(sat_) {}
+
+    bool is_lra_logic() const { return logic == "QF_LRA"; }
 
     // Return (allocating if necessary) the SAT literal for a Bool-valued node.
     int lit_for_node(NodeId n) {
         auto it = node_to_lit.find(n);
         if (it != node_to_lit.end()) return it->second;
-        int lit = euf.new_var();
+        int lit = is_lra_logic() && lra ? lra->new_var() : euf.new_var();
         node_to_lit[n] = lit;
         return lit;
     }

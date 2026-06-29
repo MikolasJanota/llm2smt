@@ -2,6 +2,7 @@
 
 #include <any>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -16,6 +17,7 @@
 #include "core/stats.h"
 #include "parser/smt_context.h"
 #include "preprocessor/preproc_options.h"
+#include "theories/lra/lra_solver.h"
 
 namespace llm2smt {
 
@@ -170,6 +172,20 @@ private:
 
     // Print (model ...) to stdout using CC representatives and SAT model values.
     void print_model();
+
+    // ── QF_LRA parse-tree encoding ───────────────────────────────────────
+    bool is_lra_mode() const { return ctx_.is_lra_logic(); }
+    bool is_real_decl(const std::string& name) const;
+    lra::LinearExpr lra_term(smt2parser::SMTLIBv2Parser::TermContext*);
+    int lra_eval_lit(smt2parser::SMTLIBv2Parser::TermContext*);
+    void lra_assert_formula(smt2parser::SMTLIBv2Parser::TermContext*);
+    void lra_collect_clause_lits(smt2parser::SMTLIBv2Parser::TermContext*, std::vector<int>&);
+    lra::Rational lra_number(smt2parser::SMTLIBv2Parser::TermContext*) const;
+    std::optional<lra::Rational> lra_const_value(smt2parser::SMTLIBv2Parser::TermContext*) const;
+    bool is_lra_number_term(smt2parser::SMTLIBv2Parser::TermContext*) const;
+    bool is_lra_term_syntax(smt2parser::SMTLIBv2Parser::TermContext*) const;
+    bool is_lra_bool_syntax(smt2parser::SMTLIBv2Parser::TermContext*) const;
+    int fresh_bool_var();
 };
 
 } // namespace llm2smt
