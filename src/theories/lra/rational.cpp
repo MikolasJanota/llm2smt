@@ -56,4 +56,11 @@ std::string Rational::str() const {
     return "(/ " + num.str() + " " + den.str() + ")";
 }
 
+std::string DeltaRational::str() const {
+    if (delta.is_zero()) return real.str();
+    if (real.is_zero()) return delta.str() + "*delta";
+    return real.str() + (delta > Rational(0) ? " + " : " - ") +
+           (delta > Rational(0) ? delta : -delta).str() + "*delta";
+}
+
 } // namespace llm2smt::lra

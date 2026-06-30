@@ -124,8 +124,22 @@ public:
         if (serving_ == Serving::Lra) return lra_.cb_add_external_clause_lit();
         return 0;
     }
-    int cb_propagate() override { return euf_.cb_propagate(); }
+    int cb_propagate() override {
+        int lit = euf_.cb_propagate();
+        if (lit != 0) {
+            reason_serving_ = Serving::Euf;
+            return lit;
+        }
+        lit = lra_.cb_propagate();
+        if (lit != 0) {
+            reason_serving_ = Serving::Lra;
+            return lit;
+        }
+        reason_serving_ = Serving::None;
+        return 0;
+    }
     int cb_add_reason_clause_lit(int lit) override {
+        if (reason_serving_ == Serving::Lra) return lra_.cb_add_reason_clause_lit(lit);
         return euf_.cb_add_reason_clause_lit(lit);
     }
 
@@ -135,6 +149,7 @@ private:
     llm2smt::lra::LraSolver& lra_;
     mutable std::vector<int> observed_cache_;
     Serving serving_ = Serving::None;
+    Serving reason_serving_ = Serving::None;
 };
 
 int main(int argc, char** argv) {
@@ -191,7 +206,7 @@ int main(int argc, char** argv) {
     app.add_flag("!--no-finite-domain-eqdefs", opts.finite_domain_eq_defs,
                  "Disable SAT definitions for equalities between finite-domain terms");
     app.add_flag("!--no-theory-prop", opts.theory_propagation,
-                 "Disable EUF theory propagation (ablation: conflict detection is preserved)");
+                 "Disable EUF/LRA theory propagation (ablation: conflict detection is preserved)");
     app.add_option("--prop-interval", opts.prop_interval,
                    "Process EUF propagation candidates every N discovery calls; adaptive doubling up to 1024 (default 32)")
        ->check(CLI::PositiveNumber);
@@ -204,10 +219,10 @@ int main(int argc, char** argv) {
     app.add_flag("--lra-print-conflict-size", opts.lra_print_conflict_size,
                  "Debug: print the minimized LRA conflict clause size after UNSAT QF_LRA checks");
     app.add_option("--lra-fm-elim-order", opts.lra_fm_elim_order,
-                   "Native QF_LRA Fourier-Motzkin elimination order: min-fill or name")
+                   "Obsolete native QF_LRA Fourier-Motzkin option retained for script compatibility")
        ->check(CLI::IsMember({"min-fill", "name"}));
     app.add_option("--lra-conflict-minimize-limit", opts.lra_conflict_minimize_limit,
-                   "Minimize native LRA conflicts up to N active literals; 0 disables minimization")
+                   "Legacy/debug LRA conflict minimization limit; 0 disables minimization")
        ->check(CLI::NonNegativeNumber);
     std::string lra_backend;
     app.add_option("--lra-backend", lra_backend,
@@ -265,8 +280,10 @@ int main(int argc, char** argv) {
         CaDiCaLSolver  sat;
         sat.connect_propagator(theory);
 
-        if (!opts.theory_propagation)
+        if (!opts.theory_propagation) {
             euf.set_propagation(false);
+            lra.set_propagation(false);
+        }
         euf.set_prop_interval(opts.prop_interval);
         euf.set_prop_assign_threshold(opts.prop_assign_threshold);
         euf.set_prop_delivery_budget(opts.prop_delivery_budget);

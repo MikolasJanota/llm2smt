@@ -20,30 +20,42 @@ Mixed `QF_UFLRA` is intentionally unsupported. Lean proof output remains
 ## Mapping To Dutertre/de Moura
 
 The parser normalizes arithmetic terms into linear expressions over exact
-rationals backed by `boost::multiprecision::cpp_int`.
+rationals backed by `boost::multiprecision::cpp_int`. Each SAT-visible
+arithmetic atom is reduced to an elementary lower or upper bound on one internal
+arithmetic variable. For a compound term, the LRA layer introduces a tableau row
+for the term variable and reuses the row when the same normalized expression is
+seen again.
 
-The current native checker follows the DPLL(T) shape of Chapter 3 but uses a
-complete exact Fourier-Motzkin feasibility check at final-model callbacks
-instead of the incremental tableau pivot loop from Figure 3.2. Conflict
-clauses are sound explanations over the currently active LRA literals. Small
-conflicts are deletion-minimized by rechecking candidate subsets, which matches
-the Section 3.2.2 interface but does not yet compute Farkas coefficients.
+The native checker follows Chapter 3's incremental simplex architecture:
 
-Strict inequalities are tracked explicitly during elimination. Combining two
-bounds preserves strictness if either input was strict, corresponding to the
-Section 3.3 infinitesimal view.
+- fixed rows `x_i = c + Σ a_ij x_j` are kept in a tableau;
+- original Real variables start non-basic, term variables start basic;
+- `notify_assignment` updates a bound stack for elementary atoms;
+- Figure 3.1-style `update` / `pivotAndUpdate` repairs assignments;
+- Figure 3.2 `Check` uses a deterministic Bland-style smallest-variable choice;
+- Section 3.2.2 conflict clauses are built from the violated row's active bound
+  sources;
+- Section 3.2.4 backtracking restores only bound-stack entries and leaves the
+  tableau, basis, and current assignment in place.
 
-Disequality is not handled inside the arithmetic core. The parser rewrites
-`(not (= s t))` and `(distinct s t)` into a disjunction of strict inequalities,
-following the report's zero-detection avoidance advice.
+Strict inequalities use the Section 3.3 symbolic infinitesimal representation
+`c + kδ`. The final printed model chooses a positive rational value for `δ` and
+substitutes it into declared Real constants.
 
-Backtracking is cheap: the LRA solver keeps a per-level trail count and restores
-the active literal trail in `notify_backtrack`, as in Section 3.2.4.
+Arithmetic equality is encoded as a SAT-level definition over two elementary
+bounds. Its negation is therefore handled by Boolean structure instead of a
+non-convex disequality branch inside the arithmetic core. `(distinct s t)` and
+explicit `(not (= s t))` remain disjunctions of strict inequalities.
 
-## Native Tuning Knobs
+The IPASIR-UP propagation callback also serves LRA implications. It currently
+performs cheap unate bound propagation for stronger active bounds; the existing
+`--no-theory-prop` flag disables these LRA propagations as well as EUF
+propagations.
 
-The native path is deliberately kept tunable while the implementation moves
-toward a competitive incremental simplex solver.
+## Native Compatibility Knobs
+
+The native path is the incremental tableau solver. These options remain for
+CLI compatibility with earlier benchmark scripts:
 
 ```sh
 build/bin/llm2smt --quiet \
@@ -52,19 +64,12 @@ build/bin/llm2smt --quiet \
   input.smt2
 ```
 
-`--lra-fm-elim-order` controls the variable order used by the complete
-Fourier-Motzkin checker:
+`--lra-fm-elim-order` is obsolete for the native tableau path. Accepted values
+are still parsed so old scripts do not fail.
 
-- `min-fill` is the default. At each elimination step it chooses the variable
-  with the smallest product of lower and upper bounds, reducing projected
-  inequality growth.
-- `name` uses the stable name-sorted order retained for ablations and
-  regression comparisons.
-
-`--lra-conflict-minimize-limit N` controls exact deletion minimization of LRA
-conflict clauses. `0` disables minimization. The default, `64`, keeps compact
-clauses for small formulas while avoiding repeated full Fourier-Motzkin checks
-on large industrial assignments.
+`--lra-conflict-minimize-limit N` is retained for debug/minimization helpers and
+legacy tests. The primary conflict explanations now come from tableau bound
+sources.
 
 ## External Backend Mode
 
@@ -84,23 +89,12 @@ native LRA engine is improved. It does not affect non-`QF_LRA` files.
 ## Models
 
 For `sat`, `get-model` prints declared Real constants. The initial model
-assignment is conservative and currently defaults unconstrained variables to
-`0`; it is intended as a basic model surface rather than a full witness
-reconstruction for every eliminated variable.
+assignment defaults unconstrained variables to `0` and substitutes a concrete
+positive rational for the symbolic `δ` used by strict bounds.
 
 ## Performance Note
 
-The checker is exact and complete for the encoded linear constraints, but the
-v1 final-check strategy and coarse conflict clauses are not competitive with an
-incremental simplex tableau on large Boolean/arithmetic benchmarks. Small
-regressions and several smoke benchmarks complete quickly; some industrial TTA
-and spider benchmarks currently time out under short cutoffs on the native path.
-
-The intended path to a competitive native solver is:
-
-1. replace final-check-only Fourier-Motzkin with an incremental tableau that
-   maintains bounds during SAT search;
-2. explain conflicts from bound dependencies instead of full active-literal
-   clauses;
-3. preserve the current CLI tuning flags as ablation controls while adding
-   simplex-specific knobs only when they are measurable.
+The checker is exact for the encoded linear constraints and now maintains the
+tableau incrementally across SAT callbacks. Propagation is intentionally cheap:
+it starts with unate bound implications and can be extended with row-bound
+refinement when benchmarks show the extra callback traffic is worthwhile.

@@ -77,7 +77,57 @@ private:
     void normalize();
 };
 
+// Values of the form c + k*delta, ordered lexicographically with delta as a
+// positive infinitesimal. This implements Dutertre/de Moura Section 3.3 for
+// strict LRA bounds while keeping all arithmetic exact.
+struct DeltaRational {
+    Rational real{0};
+    Rational delta{0};
+
+    DeltaRational() = default;
+    DeltaRational(Rational r, Rational d = Rational(0))
+        : real(std::move(r)), delta(std::move(d)) {}
+
+    bool is_zero() const { return real.is_zero() && delta.is_zero(); }
+    std::string str() const;
+
+    DeltaRational operator-() const { return DeltaRational(-real, -delta); }
+    DeltaRational& operator+=(const DeltaRational& o) {
+        real += o.real;
+        delta += o.delta;
+        return *this;
+    }
+    DeltaRational& operator-=(const DeltaRational& o) { return *this += -o; }
+    DeltaRational& operator*=(const Rational& q) {
+        real *= q;
+        delta *= q;
+        return *this;
+    }
+    DeltaRational& operator/=(const Rational& q) {
+        real /= q;
+        delta /= q;
+        return *this;
+    }
+
+    friend DeltaRational operator+(DeltaRational a, const DeltaRational& b) { return a += b; }
+    friend DeltaRational operator-(DeltaRational a, const DeltaRational& b) { return a -= b; }
+    friend DeltaRational operator*(DeltaRational a, const Rational& q) { return a *= q; }
+    friend DeltaRational operator*(const Rational& q, DeltaRational a) { return a *= q; }
+    friend DeltaRational operator/(DeltaRational a, const Rational& q) { return a /= q; }
+    friend bool operator==(const DeltaRational& a, const DeltaRational& b) {
+        return a.real == b.real && a.delta == b.delta;
+    }
+    friend std::strong_ordering operator<=>(const DeltaRational& a, const DeltaRational& b) {
+        if (auto c = a.real <=> b.real; c != 0) return c;
+        return a.delta <=> b.delta;
+    }
+};
+
 inline std::ostream& operator<<(std::ostream& os, const Rational& q) {
+    return os << q.str();
+}
+
+inline std::ostream& operator<<(std::ostream& os, const DeltaRational& q) {
     return os << q.str();
 }
 

@@ -470,6 +470,11 @@ target_link_libraries(test_euf_solver PRIVATE euf GTest::gtest_main)
 target_include_directories(test_euf_solver PRIVATE ${CMAKE_SOURCE_DIR}/src)
 gtest_discover_tests(test_euf_solver)
 
+add_executable(test_lra_solver test_lra_solver.cpp)
+target_link_libraries(test_lra_solver PRIVATE lra GTest::gtest_main)
+target_include_directories(test_lra_solver PRIVATE ${CMAKE_SOURCE_DIR}/src)
+gtest_discover_tests(test_lra_solver)
+
 add_executable(test_preprocessor test_preprocessor.cpp)
 target_link_libraries(test_preprocessor PRIVATE preprocessor core GTest::gtest_main)
 target_include_directories(test_preprocessor PRIVATE ${CMAKE_SOURCE_DIR}/src)

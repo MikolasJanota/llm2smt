@@ -79,26 +79,22 @@ do
 done
 ```
 
-The TTA and spider smoke benchmarks are useful performance targets, but the v1
-coarse-conflict exact checker may return `unknown` under short cutoffs.
+The TTA and spider smoke benchmarks are useful performance targets for the
+native incremental tableau solver. Short cutoffs should be treated as
+performance measurements, not as completeness checks.
 
-For native LRA ablations, compare the default heuristic against the stable
-name-sorted Fourier-Motzkin order and different conflict minimization caps:
+For legacy benchmark scripts, the old Fourier-Motzkin option is still accepted
+but no longer changes the native tableau path. Conflict-size printing remains a
+useful smoke diagnostic:
 
 ```sh
 timeout 60s build/bin/llm2smt --quiet \
-  --lra-fm-elim-order min-fill \
-  --lra-conflict-minimize-limit 64 \
-  sandbox/non-incremental/QF_LRA/tta_startup/simple_startup_3nodes.abstract.base.smt2
-
-timeout 60s build/bin/llm2smt --quiet \
-  --lra-fm-elim-order name \
-  --lra-conflict-minimize-limit 0 \
+  --lra-print-conflict-size \
   sandbox/non-incremental/QF_LRA/tta_startup/simple_startup_3nodes.abstract.base.smt2
 ```
 
-For competitive end-to-end benchmarking while the native LRA engine is still
-being developed, delegate pure `QF_LRA` files to an external backend:
+For comparison against another solver, delegate pure `QF_LRA` files to an
+external backend:
 
 ```sh
 build/bin/llm2smt --quiet --lra-backend z3 \

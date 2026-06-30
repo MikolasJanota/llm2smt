@@ -177,6 +177,7 @@ private:
     bool is_lra_mode() const { return ctx_.is_lra_logic(); }
     bool is_real_decl(const std::string& name) const;
     lra::LinearExpr lra_term(smt2parser::SMTLIBv2Parser::TermContext*);
+    int lra_register_equality(lra::LinearExpr e);
     int lra_eval_lit(smt2parser::SMTLIBv2Parser::TermContext*);
     void lra_assert_formula(smt2parser::SMTLIBv2Parser::TermContext*);
     void lra_collect_clause_lits(smt2parser::SMTLIBv2Parser::TermContext*, std::vector<int>&);

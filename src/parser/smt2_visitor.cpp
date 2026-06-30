@@ -236,6 +236,17 @@ bool Smt2Visitor::is_lra_bool_syntax(
     return false;
 }
 
+int Smt2Visitor::lra_register_equality(lra::LinearExpr e)
+{
+    int ge = ctx_.lra->register_atom({e, lra::Relation::Ge});
+    int le = ctx_.lra->register_atom({e, lra::Relation::Le});
+    int y = fresh_bool_var();
+    { std::array<int,2> cl = {-y, ge}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+    { std::array<int,2> cl = {-y, le}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+    { std::array<int,3> cl = {-ge, -le, y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+    return y;
+}
+
 lra::LinearExpr Smt2Visitor::lra_term(
     smt2parser::SMTLIBv2Parser::TermContext* t)
 {
@@ -338,8 +349,8 @@ lra::LinearExpr Smt2Visitor::lra_term(
         eq_then.add(then_e, lra::Rational(-1));
         auto eq_else = aux_e;
         eq_else.add(else_e, lra::Rational(-1));
-        int l_then = ctx_.lra->register_atom({eq_then, lra::Relation::Eq});
-        int l_else = ctx_.lra->register_atom({eq_else, lra::Relation::Eq});
+        int l_then = lra_register_equality(eq_then);
+        int l_else = lra_register_equality(eq_else);
         { std::array<int,2> cl = {-cond, l_then}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         { std::array<int,2> cl = { cond, l_else}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         return aux_e;
@@ -479,10 +490,15 @@ int Smt2Visitor::lra_eval_lit(
         return y;
     }
 
+    if (op == "=" && t->term().size() == 2 && is_lra_term_syntax(t->term()[0])) {
+        auto e = lra_term(t->term()[0]);
+        e.add(lra_term(t->term()[1]), lra::Rational(-1));
+        return lra_register_equality(e);
+    }
+
     static const std::unordered_map<std::string, lra::Relation> rels = {
         {"<", lra::Relation::Lt}, {"<=", lra::Relation::Le},
-        {">", lra::Relation::Gt}, {">=", lra::Relation::Ge},
-        {"=", lra::Relation::Eq}
+        {">", lra::Relation::Gt}, {">=", lra::Relation::Ge}
     };
     if (auto rit = rels.find(op); rit != rels.end() && t->term().size() == 2) {
         auto e = lra_term(t->term()[0]);
