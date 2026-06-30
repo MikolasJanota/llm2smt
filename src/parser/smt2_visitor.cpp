@@ -211,6 +211,10 @@ bool Smt2Visitor::is_lra_term_syntax(
     if (t->spec_constant() != nullptr) return true;
     if (t->qual_identifier() == nullptr) return false;
     std::string op = identifier_name(t->qual_identifier()->identifier());
+    if (t->term().empty()) {
+        if (auto* binding = find_let_binding(op))
+            return is_lra_term_syntax(binding->term);
+    }
     if (is_real_decl(op)) return true;
     if (op == "ite")
         return t->term().size() == 3 && is_lra_term_syntax(t->term()[1]);
@@ -225,6 +229,10 @@ bool Smt2Visitor::is_lra_bool_syntax(
     if (t->qual_identifier() == nullptr) return false;
     std::string op = identifier_name(t->qual_identifier()->identifier());
     if (op == "true" || op == "false") return true;
+    if (t->term().empty()) {
+        if (auto* binding = find_let_binding(op))
+            return is_lra_bool_syntax(binding->term);
+    }
     static const std::unordered_set<std::string> bool_ops = {
         "not", "and", "or", "=>", "xor", "=", "distinct", "<", "<=", ">", ">="
     };
@@ -490,10 +498,29 @@ int Smt2Visitor::lra_eval_lit(
         return y;
     }
 
-    if (op == "=" && t->term().size() == 2 && is_lra_term_syntax(t->term()[0])) {
-        auto e = lra_term(t->term()[0]);
-        e.add(lra_term(t->term()[1]), lra::Rational(-1));
-        return lra_register_equality(e);
+    if (op == "=" && t->term().size() >= 2 && is_lra_term_syntax(t->term()[0])) {
+        auto terms = t->term();
+        std::vector<int> eq_lits;
+        eq_lits.reserve(terms.size() - 1);
+        auto first = lra_term(terms[0]);
+        for (size_t i = 1; i < terms.size(); ++i) {
+            if (!is_lra_term_syntax(terms[i])) break;
+            auto e = first;
+            e.add(lra_term(terms[i]), lra::Rational(-1));
+            eq_lits.push_back(lra_register_equality(e));
+        }
+        if (eq_lits.size() == terms.size() - 1) {
+            if (eq_lits.size() == 1) return eq_lits.front();
+            int y = fresh_bool_var();
+            for (int l : eq_lits) {
+                std::array<int,2> cl = {-y, l};
+                ctx_.sat.add_clause(std::span<const int>(cl));
+            }
+            std::vector<int> back{y};
+            for (int l : eq_lits) back.push_back(-l);
+            ctx_.sat.add_clause(std::span<const int>(back));
+            return y;
+        }
     }
 
     static const std::unordered_map<std::string, lra::Relation> rels = {
