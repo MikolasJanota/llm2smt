@@ -38,6 +38,36 @@ The executable starts in `src/main.cpp`.
 9. The visitor prints `sat`, `unsat`, or `unknown`.
 10. Optional model/proof/stat output is emitted after solving.
 
+## Memory Lifetime
+
+The solver is designed around one SMT-LIB run per process. Most long-lived
+storage is append-oriented and is reclaimed when the process exits, not during
+search:
+
+- `NodeManager` hash-conses `NodeId` terms in vectors and lookup tables; nodes
+  are never individually deleted.
+- `Smt2Visitor` caches parse-time encodings, Boolean literals, finite-domain
+  information, model-printing records, and LRA-local atom definitions until the
+  visitor is destroyed.
+- `CaDiCaLSolver` owns the underlying CaDiCaL instance through RAII; clauses and
+  variables stay in CaDiCaL for the lifetime of that solver object.
+- `EufSolver` and `LraSolver` keep registered atoms, flattening/tableau data,
+  explanation caches, and propagation queues for the lifetime of the solver
+  object.
+
+Backtracking restores logical state rather than compacting memory. EUF pops
+congruence-closure merges and active disequalities back to the requested
+decision level. LRA restores bound-stack entries while keeping the tableau,
+basis, and current assignment from the last successful check. SAT backtracking
+undoes assignments inside CaDiCaL, but learned/input clauses and variable
+storage remain owned by the SAT solver.
+
+Short-lived temporary vectors and maps inside preprocessing passes or callbacks
+are freed normally when they go out of scope. The important operational
+consequence is that peak memory tracks the largest encoded formula/search state
+seen in the current process; there is no arena compaction or per-assertion
+garbage collection.
+
 ## End-To-End Data Flow
 
 ```text
@@ -101,10 +131,7 @@ Theory propagation options:
 
 LRA options:
 
-- `--lra-fm-elim-order min-fill|name`
-- `--lra-conflict-minimize-limit N`
 - `--lra-print-conflict-size`
-- `--lra-backend CMD`
 
 Proof options:
 

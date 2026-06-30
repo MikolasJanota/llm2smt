@@ -36,8 +36,6 @@ public:
 
     int register_atom(const Atom& atom);
     void declare_real(const std::string& name);
-    void set_fm_elim_order(std::string order);
-    void set_conflict_minimize_limit(size_t limit);
     void set_propagation(bool v) { propagation_enabled_ = v; }
 
     void notify_assignment(int lit, bool is_fixed) override;

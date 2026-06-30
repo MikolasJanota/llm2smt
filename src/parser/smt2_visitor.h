@@ -177,16 +177,27 @@ private:
     bool is_lra_mode() const { return ctx_.is_lra_logic(); }
     bool is_real_decl(const std::string& name) const;
     lra::LinearExpr lra_term(smt2parser::SMTLIBv2Parser::TermContext*);
+    int lra_register_atom(lra::LinearExpr e, lra::Relation rel);
     int lra_register_equality(lra::LinearExpr e);
+    int lra_register_disequality(lra::LinearExpr e);
     int lra_eval_lit(smt2parser::SMTLIBv2Parser::TermContext*);
     void lra_assert_formula(smt2parser::SMTLIBv2Parser::TermContext*);
     void lra_collect_clause_lits(smt2parser::SMTLIBv2Parser::TermContext*, std::vector<int>&);
+    std::string lra_expr_key(const lra::LinearExpr& e) const;
+    std::string lra_atom_key(const lra::LinearExpr& e, lra::Relation rel) const;
+    std::optional<bool> lra_const_relation(const lra::LinearExpr& e, lra::Relation rel) const;
     lra::Rational lra_number(smt2parser::SMTLIBv2Parser::TermContext*) const;
     std::optional<lra::Rational> lra_const_value(smt2parser::SMTLIBv2Parser::TermContext*) const;
     bool is_lra_number_term(smt2parser::SMTLIBv2Parser::TermContext*) const;
     bool is_lra_term_syntax(smt2parser::SMTLIBv2Parser::TermContext*) const;
     bool is_lra_bool_syntax(smt2parser::SMTLIBv2Parser::TermContext*) const;
     int fresh_bool_var();
+
+    // LRA-local preprocessing caches. The NodeId preprocessor is EUF-oriented
+    // and QF_LRA bypasses it, so repeated arithmetic definitions are shared here.
+    std::unordered_map<std::string, int> lra_atom_lit_cache_;
+    std::unordered_map<std::string, int> lra_eq_lit_cache_;
+    std::unordered_map<std::string, int> lra_diseq_lit_cache_;
 };
 
 } // namespace llm2smt

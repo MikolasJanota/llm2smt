@@ -36,15 +36,6 @@ void LraSolver::declare_real(const std::string& name) {
     ensure_real_var(name);
 }
 
-void LraSolver::set_fm_elim_order(std::string order) {
-    if (order != "min-fill" && order != "name")
-        throw std::runtime_error("unknown LRA elimination order: " + order);
-}
-
-void LraSolver::set_conflict_minimize_limit(size_t limit) {
-    conflict_minimize_limit_ = limit;
-}
-
 Relation LraSolver::negate_rel(Relation r) {
     switch (r) {
     case Relation::Le: return Relation::Gt;

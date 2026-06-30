@@ -81,11 +81,8 @@ done
 
 The TTA and spider smoke benchmarks are useful performance targets for the
 native incremental tableau solver. Short cutoffs should be treated as
-performance measurements, not as completeness checks.
-
-For legacy benchmark scripts, the old Fourier-Motzkin option is still accepted
-but no longer changes the native tableau path. Conflict-size printing remains a
-useful smoke diagnostic:
+performance measurements, not as completeness checks. Conflict-size printing
+remains a useful smoke diagnostic:
 
 ```sh
 timeout 60s build/bin/llm2smt --quiet \
@@ -93,16 +90,8 @@ timeout 60s build/bin/llm2smt --quiet \
   sandbox/non-incremental/QF_LRA/tta_startup/simple_startup_3nodes.abstract.base.smt2
 ```
 
-For comparison against another solver, delegate pure `QF_LRA` files to an
-external backend:
-
-```sh
-build/bin/llm2smt --quiet --lra-backend z3 \
-  sandbox/non-incremental/QF_LRA/tta_startup/simple_startup_3nodes.abstract.base.smt2
-```
-
-The backend command is only used for inputs that declare `(set-logic QF_LRA)`;
-`QF_UF` continues through the native EUF path.
+For comparison against another solver, run that solver directly on the same
+SMT-LIB file and use the same timeout policy.
 
 ## Compare Against cvc5
 

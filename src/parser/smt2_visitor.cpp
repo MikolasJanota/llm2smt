@@ -6,6 +6,7 @@
 #include <cctype>
 #include <iostream>
 #include <ranges>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -244,14 +245,90 @@ bool Smt2Visitor::is_lra_bool_syntax(
     return false;
 }
 
+std::string Smt2Visitor::lra_expr_key(const lra::LinearExpr& e) const
+{
+    std::ostringstream os;
+    os << e.constant << ":";
+    for (const auto& [name, coeff] : e.coeffs) os << name << "=" << coeff << ";";
+    return os.str();
+}
+
+std::string Smt2Visitor::lra_atom_key(const lra::LinearExpr& e, lra::Relation rel) const
+{
+    return std::to_string(static_cast<int>(rel)) + ":" + lra_expr_key(e);
+}
+
+std::optional<bool> Smt2Visitor::lra_const_relation(
+    const lra::LinearExpr& e,
+    lra::Relation rel) const
+{
+    if (!e.coeffs.empty()) return std::nullopt;
+    const auto& c = e.constant;
+    switch (rel) {
+    case lra::Relation::Le: return c <= lra::Rational(0);
+    case lra::Relation::Lt: return c <  lra::Rational(0);
+    case lra::Relation::Ge: return c >= lra::Rational(0);
+    case lra::Relation::Gt: return c >  lra::Rational(0);
+    case lra::Relation::Eq: return c == lra::Rational(0);
+    case lra::Relation::Ne: return c != lra::Rational(0);
+    }
+    return std::nullopt;
+}
+
+int Smt2Visitor::lra_register_atom(lra::LinearExpr e, lra::Relation rel)
+{
+    if (auto v = lra_const_relation(e, rel))
+        return *v ? get_true_lit() : -get_true_lit();
+
+    // Canonicalize lower bounds to equivalent upper bounds. This keeps the SAT
+    // abstraction smaller before the tableau's own atom table sees the atom.
+    if (rel == lra::Relation::Ge) {
+        e.scale(lra::Rational(-1));
+        rel = lra::Relation::Le;
+    } else if (rel == lra::Relation::Gt) {
+        e.scale(lra::Rational(-1));
+        rel = lra::Relation::Lt;
+    }
+
+    std::string key = lra_atom_key(e, rel);
+    auto it = lra_atom_lit_cache_.find(key);
+    if (it != lra_atom_lit_cache_.end()) return it->second;
+    int lit = ctx_.lra->register_atom({e, rel});
+    lra_atom_lit_cache_[std::move(key)] = lit;
+    return lit;
+}
+
 int Smt2Visitor::lra_register_equality(lra::LinearExpr e)
 {
-    int ge = ctx_.lra->register_atom({e, lra::Relation::Ge});
-    int le = ctx_.lra->register_atom({e, lra::Relation::Le});
+    if (auto v = lra_const_relation(e, lra::Relation::Eq))
+        return *v ? get_true_lit() : -get_true_lit();
+    std::string key = lra_expr_key(e);
+    auto it = lra_eq_lit_cache_.find(key);
+    if (it != lra_eq_lit_cache_.end()) return it->second;
+    int ge = lra_register_atom(e, lra::Relation::Ge);
+    int le = lra_register_atom(e, lra::Relation::Le);
     int y = fresh_bool_var();
     { std::array<int,2> cl = {-y, ge}; ctx_.sat.add_clause(std::span<const int>(cl)); }
     { std::array<int,2> cl = {-y, le}; ctx_.sat.add_clause(std::span<const int>(cl)); }
     { std::array<int,3> cl = {-ge, -le, y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+    lra_eq_lit_cache_[std::move(key)] = y;
+    return y;
+}
+
+int Smt2Visitor::lra_register_disequality(lra::LinearExpr e)
+{
+    if (auto v = lra_const_relation(e, lra::Relation::Ne))
+        return *v ? get_true_lit() : -get_true_lit();
+    std::string key = lra_expr_key(e);
+    auto it = lra_diseq_lit_cache_.find(key);
+    if (it != lra_diseq_lit_cache_.end()) return it->second;
+    int lt = lra_register_atom(e, lra::Relation::Lt);
+    int gt = lra_register_atom(e, lra::Relation::Gt);
+    int y = fresh_bool_var();
+    { std::array<int,3> cl = {-y, lt, gt}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+    { std::array<int,2> cl = {-lt, y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+    { std::array<int,2> cl = {-gt, y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+    lra_diseq_lit_cache_[std::move(key)] = y;
     return y;
 }
 
@@ -415,13 +492,7 @@ int Smt2Visitor::lra_eval_lit(
             is_lra_term_syntax(inner->term()[0])) {
             auto e = lra_term(inner->term()[0]);
             e.add(lra_term(inner->term()[1]), lra::Rational(-1));
-            int lt = ctx_.lra->register_atom({e, lra::Relation::Lt});
-            int gt = ctx_.lra->register_atom({e, lra::Relation::Gt});
-            int y = fresh_bool_var();
-            { std::array<int,3> cl = {-y, lt, gt}; ctx_.sat.add_clause(std::span<const int>(cl)); }
-            { std::array<int,2> cl = {-lt, y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
-            { std::array<int,2> cl = {-gt, y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
-            return y;
+            return lra_register_disequality(e);
         }
         return -lra_eval_lit(inner);
     }
@@ -530,18 +601,34 @@ int Smt2Visitor::lra_eval_lit(
     if (auto rit = rels.find(op); rit != rels.end() && t->term().size() == 2) {
         auto e = lra_term(t->term()[0]);
         e.add(lra_term(t->term()[1]), lra::Rational(-1));
-        return ctx_.lra->register_atom({e, rit->second});
+        return lra_register_atom(e, rit->second);
     }
-    if (op == "distinct" && t->term().size() == 2) {
-        auto e = lra_term(t->term()[0]);
-        e.add(lra_term(t->term()[1]), lra::Rational(-1));
-        int lt = ctx_.lra->register_atom({e, lra::Relation::Lt});
-        int gt = ctx_.lra->register_atom({e, lra::Relation::Gt});
-        int y = fresh_bool_var();
-        { std::array<int,3> cl = {-y, lt, gt}; ctx_.sat.add_clause(std::span<const int>(cl)); }
-        { std::array<int,2> cl = {-lt, y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
-        { std::array<int,2> cl = {-gt, y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
-        return y;
+    if (op == "distinct" && t->term().size() >= 2 && is_lra_term_syntax(t->term()[0])) {
+        auto terms = t->term();
+        std::vector<int> diseqs;
+        for (size_t i = 0; i < terms.size(); ++i) {
+            if (!is_lra_term_syntax(terms[i])) break;
+            for (size_t j = i + 1; j < terms.size(); ++j) {
+                if (!is_lra_term_syntax(terms[j])) break;
+                auto e = lra_term(terms[i]);
+                e.add(lra_term(terms[j]), lra::Rational(-1));
+                diseqs.push_back(lra_register_disequality(e));
+            }
+        }
+        const size_t expected = terms.size() * (terms.size() - 1) / 2;
+        if (diseqs.size() == expected) {
+            if (diseqs.empty()) return get_true_lit();
+            if (diseqs.size() == 1) return diseqs.front();
+            int y = fresh_bool_var();
+            for (int l : diseqs) {
+                std::array<int,2> cl = {-y, l};
+                ctx_.sat.add_clause(std::span<const int>(cl));
+            }
+            std::vector<int> back{y};
+            for (int l : diseqs) back.push_back(-l);
+            ctx_.sat.add_clause(std::span<const int>(back));
+            return y;
+        }
     }
     if (t->term().empty()) {
         if (auto* binding = find_let_binding(op)) return lra_eval_lit(binding->term);

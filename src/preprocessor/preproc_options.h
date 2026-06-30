@@ -21,8 +21,6 @@ struct PreprocOptions {
     double      prop_assign_threshold = 0.25; // skip candidate processing when (assigned/total) >= threshold; 0 = guard disabled
     int         prop_delivery_budget = 1000;  // permanently stop discovery after this many propagations delivered (0 = unlimited)
     bool        lra_print_conflict_size = false; // debug: print final minimized LRA conflict size
-    std::string lra_fm_elim_order = "min-fill"; // "min-fill" or "name"
-    int         lra_conflict_minimize_limit = 64; // max active LRA literals for exact deletion minimization; 0 disables
 };
 
 } // namespace llm2smt

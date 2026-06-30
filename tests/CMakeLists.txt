@@ -74,6 +74,8 @@ add_smt2_test(lra_diseq_sat           lra04_diseq_sat.smt2           sat)
 add_smt2_test(lra_arith_ite_sat       lra05_arith_ite_sat.smt2       sat)
 add_smt2_test(lra_large_rational_sat  lra06_large_rational_sat.smt2  sat)
 add_smt2_test(lra_false_equality_unsat lra07_false_equality_unsat.smt2 unsat)
+add_smt2_test(lra_const_fold_unsat    lra10_const_fold_unsat.smt2    unsat)
+add_smt2_test(lra_nary_distinct_unsat lra11_nary_distinct_unsat.smt2 unsat)
 add_test(
     NAME "smt2/lra_model_gt"
     COMMAND bash -c
