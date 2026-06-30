@@ -140,6 +140,13 @@ public:
     }
     int cb_add_reason_clause_lit(int lit) override {
         if (reason_serving_ == Serving::Lra) return lra_.cb_add_reason_clause_lit(lit);
+        if (reason_serving_ == Serving::Euf) return euf_.cb_add_reason_clause_lit(lit);
+
+        // CaDiCaL may ask for a reason after intervening propagation callbacks
+        // have returned 0. Dispatch by availability so a stale serving tag does
+        // not produce an empty reason clause for a theory-propagated literal.
+        int lra_lit = lra_.cb_add_reason_clause_lit(lit);
+        if (lra_lit != 0) return lra_lit;
         return euf_.cb_add_reason_clause_lit(lit);
     }
 
