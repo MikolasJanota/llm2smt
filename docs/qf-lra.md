@@ -154,43 +154,48 @@ hits. It also prints SAT encoding size counters. Extra propagation traffic can
 speed up hard bound-heavy cases but can also slow the SAT search, so PAR2 is
 tracked alongside solved counts when comparing these options.
 
-### SLURM QF_LRA Comparison, 2026-06-30
+### SLURM QF_LRA Progress Log
 
-After the let-bound equality parser fix in commit `3e7e422`, the native solver
-was compared with Z3 4.16.0 on the same SLURM machine and the same 137-file
-pure `QF_LRA` set:
+Native LRA changes are tracked against Z3 4.16.0 on the same SLURM machine and
+the same 137-file pure `QF_LRA` set:
 
 - `sandbox/non-incremental/QF_LRA/check`;
 - `sandbox/non-incremental/QF_LRA/keymaera`;
 - `sandbox/non-incremental/QF_LRA/spider_benchmarks`;
 - `sandbox/non-incremental/QF_LRA/tta_startup`.
 
-Both runs used a 60 second per-file timeout. PAR2 counts each timeout as twice
-the timeout budget, so one timeout contributes 120 seconds.
+PAR2 counts each timeout as twice the timeout budget. At 60 seconds, one
+timeout contributes 120 seconds; at 20 seconds, one timeout contributes 40
+seconds. The progress table records the timeout with each row so 20-second and
+60-second runs are not compared as raw PAR2 equivalents.
 
-| Solver | Solved | Timeouts | Errors | PAR2 | Solved runtime sum |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| native `llm2smt` | 77 / 137 | 60 | 0 | 55.416 s | 392 s |
-| Z3 4.16.0 | 128 / 137 | 9 | 0 | 8.869 s | 135 s |
+Append new rows after each completed campaign with: date, solver/configuration,
+timeout, solved files, `tta_startup` solved files, timeouts, errors, PAR2,
+artifact stem, and the decision made from the run.
 
-Suite-level breakdown:
+| Date | Solver / configuration | Timeout | Solved | `tta_startup` solved | Timeouts | Errors | PAR2 | Artifact | Decision |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| 2026-06-30 | native after let-bound equality fix | 60 s | 77 / 137 | 12 / 72 | 60 | 0 | 55.416 s | `lra-eval-106840` | Baseline native run after parser/runtime errors were removed. |
+| 2026-06-30 | Z3 4.16.0 reference | 60 s | 128 / 137 | 63 / 72 | 9 | 0 | 8.869 s | `z3-lra-eval-106853` | Reference target; the native gap is concentrated in `tta_startup`. |
+| 2026-07-01 | native after equality, Boolean cache, and incremental propagation scan tuning | 20 s | 86 / 137 | 21 / 72 | 51 | 0 | 16.679 s | `lra-eval-107582` | Short-timeout baseline for iteration. |
+| 2026-07-01 | same native build as previous row | 60 s | 93 / 137 | 28 / 72 | 44 | 0 | 42.146 s | `lra-eval-107583` | Confirms extra time mainly buys more `tta_startup` cases. |
+| 2026-07-01 | row-bound propagation enabled immediately | 20 s | 83 / 137 | 18 / 72 | 54 | 0 | 17.195 s | `llm2smt-lra-row20-107585` | Rejected as the default; it helps a few induction cases but loses more base cases. |
+| 2026-07-01 | row-bound propagation disabled, current default | 20 s | 87 / 137 | 22 / 72 | 50 | 0 | 16.515 s | `llm2smt-lra-norow20-107586` | Accepted as the default; one more solved file than `lra-eval-107582`. |
+| 2026-07-01 | adaptive row-bound threshold 500 | 20 s | 84 / 137 | 19 / 72 | 53 | 0 | 16.972 s | `llm2smt-lra-adapt20-107598` | Rejected and reverted; worse than the current default. |
 
-| Suite | Native solved | Native PAR2 | Z3 solved | Z3 PAR2 |
-| --- | ---: | ---: | ---: | ---: |
-| `check` | 2 / 2 | 0.000 s | 2 / 2 | 0.500 s |
-| `keymaera` | 21 / 21 | 0.000 s | 21 / 21 | 0.000 s |
-| `spider_benchmarks` | 42 / 42 | 4.167 s | 42 / 42 | 0.048 s |
-| `tta_startup` | 12 / 72 | 103.014 s | 63 / 72 | 16.833 s |
+All native rows in this log solve `check`, `keymaera`, and `spider_benchmarks`
+completely; the moving metric is `tta_startup`. Where compared, no answer
+disagreements with Z3 were observed on commonly solved files. Row-bound
+propagation remains available by CLI option because it uniquely solves some
+induction instances, but it is not the default because the current PAR2 and
+solved-count results are worse.
 
-There were no answer disagreements on commonly solved files. The native solver
-did not solve any file that Z3 timed out on, while Z3 solved 51 files that the
-native solver timed out on. The remaining performance gap is therefore
-concentrated in `tta_startup`, especially inductive cases; parser/runtime
-errors were eliminated in this run.
+The next optimization targets should be chosen from fast-Z3/slow-native
+`tta_startup` files, for example:
 
-Raw artifacts from the comparison are kept in the workspace as:
+- `simple_startup_10nodes.missing.induct.smt2`;
+- `simple_startup_12nodes.abstract.base.smt2`;
+- `simple_startup_14nodes.abstract.base.smt2`.
 
-- `eval_results/lra-eval-106840.tsv`;
-- `eval_results/z3-lra-eval-106853.tsv`;
-- `eval_results/lra-eval-106840.summary`;
-- `eval_results/z3-lra-eval-106853.summary`.
+Raw artifacts for the rows above are kept in the workspace as matching
+`eval_results/*.tsv` and `eval_results/*.summary` files.
