@@ -204,6 +204,13 @@ int main(int argc, char** argv) {
                  "Disable QF_LRA Boolean OR SAT-literal reuse");
     app.add_flag("!--no-lra-bool-cache-eq", opts.lra_bool_cache_eq,
                  "Disable QF_LRA Boolean equality/distinct SAT-literal reuse");
+    app.add_flag("!--no-lra-term-cache", opts.lra_term_cache,
+                 "Disable QF_LRA arithmetic term normalization reuse");
+    app.add_flag("!--no-lra-eq-elim", opts.lra_eq_elim,
+                 "Disable QF_LRA top-level linear equality elimination");
+    app.add_option("--lra-eq-elim-limit", opts.lra_eq_elim_limit,
+                   "Maximum top-level QF_LRA equality rows processed for elimination")
+       ->check(CLI::NonNegativeNumber);
     app.add_flag("!--no-lra-incremental-prop-scan", opts.lra_incremental_prop_scan,
                  "Disable dirty-variable scanning for QF_LRA propagation discovery");
     app.add_flag("--lra-row-bound-prop", opts.lra_row_bound_prop,

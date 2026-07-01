@@ -258,6 +258,29 @@ std::string Smt2Visitor::lra_atom_key(const lra::LinearExpr& e, lra::Relation re
     return std::to_string(static_cast<int>(rel)) + ":" + lra_expr_key(e);
 }
 
+lra::LinearExpr Smt2Visitor::lra_canonical_zero_test(lra::LinearExpr e) const
+{
+    if (e.coeffs.empty()) return e;
+    const auto& first_coeff = e.coeffs.begin()->second;
+    if (first_coeff < lra::Rational(0)) e.scale(lra::Rational(-1));
+    return e;
+}
+
+lra::LinearExpr Smt2Visitor::lra_rewrite_expr(const lra::LinearExpr& e) const
+{
+    lra::LinearExpr out;
+    out.constant = e.constant;
+    for (const auto& [name, coeff] : e.coeffs) {
+        auto it = lra_eq_elim_subst_.find(name);
+        if (it == lra_eq_elim_subst_.end()) {
+            out.add_var(name, coeff);
+        } else {
+            out.add(it->second, coeff);
+        }
+    }
+    return out;
+}
+
 std::optional<std::pair<std::string, lra::Rational>>
 Smt2Visitor::lra_simple_equality(const lra::LinearExpr& e) const
 {
@@ -286,6 +309,7 @@ std::optional<bool> Smt2Visitor::lra_const_relation(
 
 int Smt2Visitor::lra_register_atom(lra::LinearExpr e, lra::Relation rel)
 {
+    e = lra_rewrite_expr(e);
     if (auto v = lra_const_relation(e, rel))
         return *v ? get_true_lit() : -get_true_lit();
 
@@ -312,6 +336,8 @@ int Smt2Visitor::lra_register_atom(lra::LinearExpr e, lra::Relation rel)
 
 int Smt2Visitor::lra_register_equality(lra::LinearExpr e)
 {
+    e = lra_rewrite_expr(e);
+    e = lra_canonical_zero_test(std::move(e));
     if (auto v = lra_const_relation(e, lra::Relation::Eq))
         return *v ? get_true_lit() : -get_true_lit();
 
@@ -358,6 +384,8 @@ int Smt2Visitor::lra_register_equality(lra::LinearExpr e)
 
 int Smt2Visitor::lra_register_disequality(lra::LinearExpr e)
 {
+    e = lra_rewrite_expr(e);
+    e = lra_canonical_zero_test(std::move(e));
     if (auto v = lra_const_relation(e, lra::Relation::Ne))
         return *v ? get_true_lit() : -get_true_lit();
     std::string key = lra_expr_key(e);
@@ -377,8 +405,20 @@ lra::LinearExpr Smt2Visitor::lra_term(
     smt2parser::SMTLIBv2Parser::TermContext* t)
 {
     while (t->GRW_Exclamation()) t = t->term()[0];
+    auto remember = [&](const lra::LinearExpr& e) {
+        if (opts_.lra_term_cache) lra_term_cache_[t] = e;
+        return e;
+    };
+    if (opts_.lra_term_cache) {
+        auto it = lra_term_cache_.find(t);
+        if (it != lra_term_cache_.end()) {
+            ++stats_.lra_term_cache_hits;
+            return it->second;
+        }
+    }
 
     if (t->GRW_Let()) {
+        auto* original = t;
         int frames = 0;
         while (t->GRW_Let() || t->GRW_Exclamation()) {
             if (t->GRW_Exclamation()) { t = t->term()[0]; continue; }
@@ -390,18 +430,19 @@ lra::LinearExpr Smt2Visitor::lra_term(
         }
         auto result = lra_term(t);
         for (int i = 0; i < frames; ++i) let_env_.pop_back();
+        if (opts_.lra_term_cache) lra_term_cache_[original] = result;
         return result;
     }
 
     if (t->spec_constant() != nullptr) {
         lra::LinearExpr e;
         e.constant = lra_number(t);
-        return e;
+        return remember(e);
     }
     if (auto c = lra_const_value(t)) {
         lra::LinearExpr e;
         e.constant = *c;
-        return e;
+        return remember(e);
     }
     if (t->qual_identifier() == nullptr)
         throw std::runtime_error("unsupported arithmetic term: " + t->getText());
@@ -411,27 +452,29 @@ lra::LinearExpr Smt2Visitor::lra_term(
         if (auto* binding = find_let_binding(op)) return lra_term(binding->term);
         if (!is_real_decl(op))
             throw std::runtime_error("undeclared or non-Real arithmetic symbol: " + op);
+        auto sit = lra_eq_elim_subst_.find(op);
+        if (sit != lra_eq_elim_subst_.end()) return remember(sit->second);
         lra::LinearExpr e;
         e.add_var(op, lra::Rational(1));
-        return e;
+        return remember(e);
     }
 
     if (op == "+") {
         lra::LinearExpr sum;
         for (auto* sub : t->term()) sum.add(lra_term(sub));
-        return sum;
+        return remember(sum);
     }
     if (op == "-") {
         auto terms = t->term();
         if (terms.size() == 1) {
             auto e = lra_term(terms[0]);
             e.scale(lra::Rational(-1));
-            return e;
+            return remember(e);
         }
         auto e = lra_term(terms[0]);
         for (size_t i = 1; i < terms.size(); ++i)
             e.add(lra_term(terms[i]), lra::Rational(-1));
-        return e;
+        return remember(e);
     }
     if (op == "*") {
         auto terms = t->term();
@@ -449,11 +492,11 @@ lra::LinearExpr Smt2Visitor::lra_term(
         if (nonconst == nullptr) {
             lra::LinearExpr e;
             e.constant = factor;
-            return e;
+            return remember(e);
         }
         auto e = lra_term(nonconst);
         e.scale(factor);
-        return e;
+        return remember(e);
     }
     if (op == "/") {
         auto terms = t->term();
@@ -461,7 +504,7 @@ lra::LinearExpr Smt2Visitor::lra_term(
             throw std::runtime_error("QF_LRA supports division only by rational constants");
         auto e = lra_term(terms[0]);
         e.scale(lra::Rational(1) / lra_number(terms[1]));
-        return e;
+        return remember(e);
     }
     if (op == "ite" && t->term().size() == 3) {
         int cond = lra_eval_lit(t->term()[0]);
@@ -480,10 +523,140 @@ lra::LinearExpr Smt2Visitor::lra_term(
         int l_else = lra_register_equality(eq_else);
         { std::array<int,2> cl = {-cond, l_then}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         { std::array<int,2> cl = { cond, l_else}; ctx_.sat.add_clause(std::span<const int>(cl)); }
-        return aux_e;
+        return remember(aux_e);
     }
 
     throw std::runtime_error("unsupported QF_LRA arithmetic operator: " + op);
+}
+
+bool Smt2Visitor::lra_term_is_elim_safe(
+    smt2parser::SMTLIBv2Parser::TermContext* t) const
+{
+    while (t->GRW_Exclamation()) t = t->term()[0];
+    if (t->GRW_Let()) return false;
+    if (t->spec_constant() != nullptr) return true;
+    if (t->qual_identifier() == nullptr) return false;
+    std::string op = identifier_name(t->qual_identifier()->identifier());
+    if (t->term().empty()) return is_real_decl(op);
+    if (op == "ite") return false;
+    if (op != "+" && op != "-" && op != "*" && op != "/") return false;
+    for (auto* sub : t->term())
+        if (!lra_term_is_elim_safe(sub)) return false;
+    return true;
+}
+
+void Smt2Visitor::lra_try_eliminate_equality(lra::LinearExpr e)
+{
+    if (!opts_.lra_eq_elim || lra_eq_elim_unsat_) return;
+    if (stats_.lra_eq_elim_rows >= opts_.lra_eq_elim_limit) return;
+
+    e = lra_rewrite_expr(e);
+    ++stats_.lra_eq_elim_rows;
+    if (e.coeffs.empty()) {
+        if (e.constant != lra::Rational(0)) {
+            ctx_.sat.add_clause(std::span<const int>{});
+            lra_eq_elim_unsat_ = true;
+            ++stats_.lra_eq_elim_contradictions;
+        }
+        return;
+    }
+
+    auto pivot_it = e.coeffs.end();
+    for (auto it = e.coeffs.begin(); it != e.coeffs.end(); ++it) {
+        if (it->first.rfind("__lra_", 0) == 0) {
+            pivot_it = it;
+            break;
+        }
+        if (pivot_it == e.coeffs.end()) pivot_it = it;
+    }
+    if (pivot_it == e.coeffs.end() || pivot_it->second.is_zero()) return;
+
+    const std::string pivot = pivot_it->first;
+    const lra::Rational pivot_coeff = pivot_it->second;
+    e.coeffs.erase(pivot_it);
+
+    lra::LinearExpr rhs;
+    rhs.constant = -e.constant / pivot_coeff;
+    for (const auto& [name, coeff] : e.coeffs)
+        rhs.add_var(name, -coeff / pivot_coeff);
+
+    for (auto& [name, subst] : lra_eq_elim_subst_) {
+        auto it = subst.coeffs.find(pivot);
+        if (it == subst.coeffs.end()) continue;
+        lra::Rational coeff = it->second;
+        subst.coeffs.erase(it);
+        subst.add(rhs, coeff);
+    }
+    lra_eq_elim_subst_[pivot] = std::move(rhs);
+    ++stats_.lra_eq_elim_vars;
+}
+
+void Smt2Visitor::lra_collect_unconditional_equalities(
+    smt2parser::SMTLIBv2Parser::TermContext* t)
+{
+    if (!opts_.lra_eq_elim || lra_eq_elim_unsat_) return;
+    while (t->GRW_Exclamation()) t = t->term()[0];
+    if (t->GRW_Let()) return;
+    if (t->qual_identifier() == nullptr) return;
+    std::string op = identifier_name(t->qual_identifier()->identifier());
+    if (op == "and") {
+        for (auto* sub : t->term()) lra_collect_unconditional_equalities(sub);
+        return;
+    }
+    if (op != "=" || t->term().size() < 2 || !is_lra_term_syntax(t->term()[0]))
+        return;
+
+    auto terms = t->term();
+    for (auto* term : terms) {
+        if (!is_lra_term_syntax(term) || !lra_term_is_elim_safe(term)) return;
+    }
+
+    auto first = lra_term(terms[0]);
+    for (size_t i = 1; i < terms.size(); ++i) {
+        auto e = first;
+        e.add(lra_term(terms[i]), lra::Rational(-1));
+        lra_try_eliminate_equality(std::move(e));
+        if (stats_.lra_eq_elim_rows >= opts_.lra_eq_elim_limit || lra_eq_elim_unsat_)
+            break;
+    }
+}
+
+void Smt2Visitor::lra_flush_assertions()
+{
+    if (pending_lra_asserts_.empty()) return;
+    if (opts_.lra_eq_elim) {
+        lra_term_cache_.clear();
+        for (auto* t : pending_lra_asserts_)
+            lra_collect_unconditional_equalities(t);
+        lra_term_cache_.clear();
+    }
+    for (auto* t : pending_lra_asserts_)
+        lra_assert_formula(t);
+    pending_lra_asserts_.clear();
+}
+
+std::optional<lra::Rational> Smt2Visitor::lra_model_value(
+    const std::string& name) const
+{
+    if (auto cached = lra_model_value_cache_.find(name);
+        cached != lra_model_value_cache_.end()) {
+        return cached->second;
+    }
+
+    auto subst_it = lra_eq_elim_subst_.find(name);
+    if (subst_it == lra_eq_elim_subst_.end()) {
+        auto direct = ctx_.lra->value_of(name);
+        if (direct) lra_model_value_cache_[name] = *direct;
+        return direct;
+    }
+
+    lra::Rational value = subst_it->second.constant;
+    for (const auto& [sub_name, coeff] : subst_it->second.coeffs) {
+        auto sub_value = lra_model_value(sub_name).value_or(lra::Rational(0));
+        value += coeff * sub_value;
+    }
+    lra_model_value_cache_[name] = value;
+    return value;
 }
 
 void Smt2Visitor::lra_collect_clause_lits(
@@ -838,7 +1011,7 @@ std::any Smt2Visitor::visitCommand(
         auto terms = ctx->term();
         if (terms.empty()) throw std::runtime_error("assert: missing term");
         if (ctx_.is_lra_logic()) {
-            lra_assert_formula(terms[0]);
+            pending_lra_asserts_.push_back(terms[0]);
             return nullptr;
         }
         // Assertions accumulate in pending_fmls_ and are encoded on check-sat.
@@ -864,7 +1037,8 @@ std::any Smt2Visitor::visitCommand(
         pending_fmls_.push_back(build_fml(terms[0]));
     }
     else if (ctx->cmd_checkSat()) {
-        if (!ctx_.is_lra_logic()) flush_pending_fmls();
+        if (ctx_.is_lra_logic()) lra_flush_assertions();
+        else flush_pending_fmls();
         last_result_ = ctx_.sat.solve();
         switch (last_result_) {
         case SolveResult::SAT:     std::cout << "sat\n";     break;
@@ -2316,11 +2490,12 @@ void Smt2Visitor::flush_pending_fmls()
 void Smt2Visitor::print_model()
 {
     if (ctx_.is_lra_logic()) {
+        lra_model_value_cache_.clear();
         std::cout << "(model\n";
         for (const auto& decl : ctx_.declared_fn_order) {
             const std::string sym_name = ctx_.nm.symbol_table().get(decl.sym).name;
             if (decl.param_sorts.empty() && decl.return_sort == "Real") {
-                auto v = ctx_.lra->value_of(sym_name).value_or(lra::Rational(0));
+                auto v = lra_model_value(sym_name).value_or(lra::Rational(0));
                 std::cout << "  (define-fun " << sym_name << " () Real\n"
                           << "    " << v << ")\n";
             } else if (decl.param_sorts.empty() && decl.return_sort == "Bool") {

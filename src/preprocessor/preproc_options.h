@@ -25,6 +25,9 @@ struct PreprocOptions {
     bool        lra_bool_cache_and = true; // reuse repeated QF_LRA Boolean and compounds
     bool        lra_bool_cache_or = true;  // reuse repeated QF_LRA Boolean or compounds
     bool        lra_bool_cache_eq = true;  // reuse repeated QF_LRA Boolean equality/distinct compounds
+    bool        lra_term_cache = true; // reuse normalized QF_LRA arithmetic terms
+    bool        lra_eq_elim = true; // eliminate variables using unconditional top-level QF_LRA equalities
+    size_t      lra_eq_elim_limit = 10000; // maximum top-level equality rows processed by QF_LRA elimination
     bool        lra_incremental_prop_scan = true; // scan only LRA vars whose bounds changed during propagation discovery
     bool        lra_row_bound_prop = false; // propagate elementary atoms implied by tableau row bounds
     bool        lra_row_bound_dirty_scan = false; // experimental: restrict row-bound propagation to rows touching dirty bounds

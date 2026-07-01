@@ -51,12 +51,29 @@ is parser/SAT encoding work, not theory solving:
 parse-tree encoder performs a small LRA-local preprocessing pass while lowering:
 it expands `let` and 0-arity `define-fun`, folds constant arithmetic relations,
 canonicalizes lower-bound atoms to equivalent upper-bound atoms for sharing,
-reuses repeated arithmetic atoms and equality/disequality definitions, and
-expands n-ary arithmetic `distinct` into pairwise disequality constraints.
+uses unconditional top-level arithmetic equalities to eliminate variables before
+later atom registration, reuses repeated arithmetic atoms and
+equality/disequality definitions, and expands n-ary arithmetic `distinct` into
+pairwise disequality constraints.
 Repeated Boolean compound definitions in the LRA parser path are also shared by
 default. Use `--no-lra-bool-cache` to disable all of that sharing for ablation,
 or `--no-lra-bool-cache-and`, `--no-lra-bool-cache-or`, and
 `--no-lra-bool-cache-eq` to isolate one Boolean connective class.
+Normalized arithmetic term results are cached by parse-tree node as well; this
+is especially important for arithmetic `ite`, where repeated uses of the same
+SMT-LIB term should reuse one auxiliary Real variable. Use
+`--no-lra-term-cache` to disable this cache for ablation.
+
+Equality elimination is deliberately conservative. It only consumes arithmetic
+equalities asserted unconditionally at top level, either as direct assertions or
+as children of a top-level `and`; it does not use equalities guarded by `or`,
+`=>`, Boolean `ite`, or negation, and it skips arithmetic equalities whose terms
+contain arithmetic `ite`. Rows are processed with exact rational arithmetic into
+a substitution map, dependent rows are ignored, inconsistent rows add an
+immediate empty SAT clause, and `get-model` reconstructs eliminated declared
+Real constants from the remaining LRA model. The pass is on by default; use
+`--no-lra-eq-elim` to disable it and `--lra-eq-elim-limit N` to cap the number
+of equality rows processed.
 
 Arithmetic equality is encoded as a SAT-level definition over two elementary
 bounds:
@@ -112,12 +129,18 @@ propagations as well as EUF propagations.
 
 ## Current Limits
 
-The LRA-local preprocessing is intentionally conservative. It removes constants
-and repeated arithmetic definitions before SAT encoding, but it does not yet
-build a separate theory-level DAG for linear terms and bounds. Consequently,
-these theory-side optimizations are still incomplete in the native path:
+The LRA-local preprocessing is intentionally conservative. It folds constant
+relations, eliminates only unconditional top-level equalities, reuses repeated
+atoms and equality definitions, shares repeated Boolean compounds, and caches
+normalized arithmetic terms by parse-tree node.
+It still does not build a global, algebraic theory DAG for all linear terms and
+bounds before SAT encoding. Consequently, these theory-side optimizations are
+still incomplete in the native path:
 
-- global sharing and simplification across all normalized linear expressions;
+- global sharing and simplification across equivalent normalized linear
+  expressions that arise from different parse-tree nodes;
+- simplification of large Boolean/`let` structures before they are Tseitin
+  encoded in the LRA parser path;
 - row-bound tightening before SAT search starts;
 - a full preprocessing statistics breakdown for LRA formulas.
 
@@ -149,10 +172,11 @@ path.
 `--stats` prints LRA counters for assignments, simplex checks, pivots,
 conflicts, conflict-clause literals, delivered propagations, propagation
 candidates considered, registered elementary atoms, tableau term variables, Real
-variables, row-bound candidates, row-bound propagations, and LRA-local cache
-hits. It also prints SAT encoding size counters. Extra propagation traffic can
-speed up hard bound-heavy cases but can also slow the SAT search, so PAR2 is
-tracked alongside solved counts when comparing these options.
+variables, row-bound candidates, row-bound propagations, equality-elimination
+rows/variables/contradictions, and LRA-local cache hits. It also prints SAT
+encoding size counters. Extra propagation traffic can speed up hard bound-heavy
+cases but can also slow the SAT search, so PAR2 is tracked alongside solved
+counts when comparing these options.
 
 ### SLURM QF_LRA Progress Log
 

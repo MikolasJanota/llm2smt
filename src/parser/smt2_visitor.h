@@ -177,14 +177,21 @@ private:
     bool is_lra_mode() const { return ctx_.is_lra_logic(); }
     bool is_real_decl(const std::string& name) const;
     lra::LinearExpr lra_term(smt2parser::SMTLIBv2Parser::TermContext*);
+    lra::LinearExpr lra_rewrite_expr(const lra::LinearExpr& e) const;
     int lra_register_atom(lra::LinearExpr e, lra::Relation rel);
     int lra_register_equality(lra::LinearExpr e);
     int lra_register_disequality(lra::LinearExpr e);
     int lra_eval_lit(smt2parser::SMTLIBv2Parser::TermContext*);
     void lra_assert_formula(smt2parser::SMTLIBv2Parser::TermContext*);
+    void lra_flush_assertions();
+    void lra_collect_unconditional_equalities(smt2parser::SMTLIBv2Parser::TermContext*);
+    void lra_try_eliminate_equality(lra::LinearExpr e);
+    bool lra_term_is_elim_safe(smt2parser::SMTLIBv2Parser::TermContext*) const;
+    std::optional<lra::Rational> lra_model_value(const std::string& name) const;
     void lra_collect_clause_lits(smt2parser::SMTLIBv2Parser::TermContext*, std::vector<int>&);
     std::string lra_expr_key(const lra::LinearExpr& e) const;
     std::string lra_atom_key(const lra::LinearExpr& e, lra::Relation rel) const;
+    lra::LinearExpr lra_canonical_zero_test(lra::LinearExpr e) const;
     std::optional<std::pair<std::string, lra::Rational>>
         lra_simple_equality(const lra::LinearExpr& e) const;
     std::optional<bool> lra_const_relation(const lra::LinearExpr& e, lra::Relation rel) const;
@@ -201,8 +208,14 @@ private:
     std::unordered_map<std::string, int> lra_eq_lit_cache_;
     std::unordered_map<std::string, int> lra_diseq_lit_cache_;
     std::unordered_map<std::string, int> lra_simple_eq_lit_cache_;
+    std::unordered_map<smt2parser::SMTLIBv2Parser::TermContext*, lra::LinearExpr>
+        lra_term_cache_;
     std::unordered_map<std::string, std::vector<std::pair<std::string, int>>>
         lra_simple_eqs_by_var_;
+    std::vector<smt2parser::SMTLIBv2Parser::TermContext*> pending_lra_asserts_;
+    std::unordered_map<std::string, lra::LinearExpr> lra_eq_elim_subst_;
+    mutable std::unordered_map<std::string, lra::Rational> lra_model_value_cache_;
+    bool lra_eq_elim_unsat_ = false;
 };
 
 } // namespace llm2smt

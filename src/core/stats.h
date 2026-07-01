@@ -30,7 +30,11 @@ struct Stats {
     uint64_t lra_bool_cache_hits_eq  = 0; // QF_LRA Boolean/equality/distinct cache hits
     uint64_t lra_eq_cache_hits       = 0; // QF_LRA arithmetic equality definition cache hits
     uint64_t lra_atom_cache_hits     = 0; // QF_LRA elementary arithmetic atom cache hits
+    uint64_t lra_term_cache_hits     = 0; // QF_LRA arithmetic term normalization cache hits
     uint64_t lra_ite_terms           = 0; // QF_LRA arithmetic ite auxiliary terms introduced
+    uint64_t lra_eq_elim_rows        = 0; // top-level equality rows processed by QF_LRA elimination
+    uint64_t lra_eq_elim_vars        = 0; // variables eliminated by QF_LRA equality elimination
+    uint64_t lra_eq_elim_contradictions = 0; // inconsistent equality rows detected before SAT search
 
     // ── SAT encoding ───────────────────────────────────────────────────────
     uint64_t sat_vars                = 0; // SAT variables allocated through the wrapper
@@ -91,7 +95,11 @@ struct Stats {
         row("lra.bool_cache_hits.eq",   lra_bool_cache_hits_eq);
         row("lra.eq_cache_hits",        lra_eq_cache_hits);
         row("lra.atom_cache_hits",      lra_atom_cache_hits);
+        row("lra.term_cache_hits",      lra_term_cache_hits);
         row("lra.ite_terms",            lra_ite_terms);
+        row("lra.eq_elim_rows",         lra_eq_elim_rows);
+        row("lra.eq_elim_vars",         lra_eq_elim_vars);
+        row("lra.eq_elim_contradictions", lra_eq_elim_contradictions);
         out << "  -- sat encoding --\n";
         row("sat.vars",                 sat_vars);
         row("sat.clauses",              sat_clauses);

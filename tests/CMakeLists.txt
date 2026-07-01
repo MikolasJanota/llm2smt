@@ -76,6 +76,35 @@ add_smt2_test(lra_large_rational_sat  lra06_large_rational_sat.smt2  sat)
 add_smt2_test(lra_false_equality_unsat lra07_false_equality_unsat.smt2 unsat)
 add_smt2_test(lra_const_fold_unsat    lra10_const_fold_unsat.smt2    unsat)
 add_smt2_test(lra_nary_distinct_unsat lra11_nary_distinct_unsat.smt2 unsat)
+add_smt2_test(lra_eq_elim_triangular  lra15_eq_elim_triangular.smt2  unsat)
+add_smt2_test(lra_eq_elim_inconsistent lra16_eq_elim_inconsistent.smt2 unsat)
+add_smt2_test(lra_eq_elim_rational    lra17_eq_elim_rational.smt2    sat)
+add_smt2_test(lra_eq_elim_guarded     lra18_eq_elim_guarded.smt2     sat)
+add_test(
+    NAME "smt2/lra_eq_elim_model"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra19_eq_elim_model.smt2 | \
+         tee ${CMAKE_BINARY_DIR}/lra19_model.out && \
+         grep -q '^sat' ${CMAKE_BINARY_DIR}/lra19_model.out && \
+         grep -q 'define-fun x' ${CMAKE_BINARY_DIR}/lra19_model.out && \
+         grep -q '    5)' ${CMAKE_BINARY_DIR}/lra19_model.out && \
+         grep -q 'define-fun y' ${CMAKE_BINARY_DIR}/lra19_model.out && \
+         grep -q '    3)' ${CMAKE_BINARY_DIR}/lra19_model.out"
+)
+add_test(
+    NAME "smt2/lra_eq_elim_cli_gate"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra20_eq_elim_disabled_stats.smt2 \
+         >/tmp/lra20_on.out 2>/tmp/lra20_on.err && \
+         grep -q '^sat' /tmp/lra20_on.out && \
+         grep -Eq 'lra\\.eq_elim_vars[[:space:]]+2$' /tmp/lra20_on.err && \
+         $<TARGET_FILE:llm2smt> --quiet --stats --no-lra-eq-elim \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra20_eq_elim_disabled_stats.smt2 \
+         >/tmp/lra20_off.out 2>/tmp/lra20_off.err && \
+         grep -q '^sat' /tmp/lra20_off.out && \
+         grep -Eq 'lra\\.eq_elim_vars[[:space:]]+0$' /tmp/lra20_off.err"
+)
 add_test(
     NAME "smt2/lra_simple_eq_amo_cli_gate"
     COMMAND bash -c
@@ -89,6 +118,31 @@ add_test(
          >/tmp/lra12_off.out 2>/tmp/lra12_off.err && \
          grep -q '^sat' /tmp/lra12_off.out && \
          grep -q 'preproc.finite_domain_amo     0' /tmp/lra12_off.err"
+)
+add_test(
+    NAME "smt2/lra_term_cache_ite_cli_gate"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra13_term_cache_ite.smt2 \
+         >/tmp/lra13_on.out 2>/tmp/lra13_on.err && \
+         grep -q '^sat' /tmp/lra13_on.out && \
+         grep -q 'lra.term_cache_hits' /tmp/lra13_on.err && \
+         grep -q 'lra.ite_terms                 1' /tmp/lra13_on.err && \
+         $<TARGET_FILE:llm2smt> --quiet --stats --no-lra-term-cache \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra13_term_cache_ite.smt2 \
+         >/tmp/lra13_off.out 2>/tmp/lra13_off.err && \
+         grep -q '^sat' /tmp/lra13_off.out && \
+         grep -q 'lra.ite_terms                 2' /tmp/lra13_off.err"
+)
+add_test(
+    NAME "smt2/lra_symmetric_eq_cache"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats --no-lra-eq-elim \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra14_symmetric_eq_cache.smt2 \
+         >/tmp/lra14.out 2>/tmp/lra14.err && \
+         grep -q '^sat' /tmp/lra14.out && \
+         grep -Eq 'lra\\.eq_cache_hits[[:space:]]+1$' /tmp/lra14.err && \
+         grep -Eq 'lra\\.atoms[[:space:]]+2$' /tmp/lra14.err"
 )
 add_test(
     NAME "smt2/lra_model_gt"
