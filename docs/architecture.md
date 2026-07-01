@@ -5,8 +5,8 @@ functions and pure linear real arithmetic. The SAT layer owns Boolean search and
 calls theory plugins via IPASIR-UP style callbacks. The EUF layer maintains
 congruence closure, discovers conflicts, optionally propagates implied
 equalities, and explains theory lemmas back to the SAT solver. The LRA layer
-uses exact rational arithmetic and final-model feasibility checks over active
-linear atoms.
+uses exact rational arithmetic, an incremental dual-simplex tableau, bound-stack
+backtracking, and theory propagation over active linear bounds.
 
 ## Main Components
 
@@ -18,7 +18,7 @@ linear atoms.
 | Preprocessor | `src/preprocessor/*` | NNF, simplification, equality bridging, finite-domain encodings. |
 | SAT backend | `src/sat/cadical_solver*.{h,cpp}`, `src/sat/ipasir_up.h` | CaDiCaL wrapper and external propagator interface. |
 | EUF theory | `src/theories/euf/*` | Term flattening, congruence closure, conflicts, propagation, explanations. |
-| LRA theory | `src/theories/lra/*` | Exact rationals, linear atoms, feasibility checks, LRA conflict clauses. |
+| LRA theory | `src/theories/lra/*` | Exact rationals, elementary bound atoms, incremental simplex checks, LRA propagation and conflict clauses. |
 | Proofs | `src/proof/*` | Lean proof generation and optional theory-lemma minimization. |
 | Tests | `tests/*` | Unit tests and SMT2 end-to-end regression tests. |
 
@@ -130,6 +130,9 @@ Theory propagation options:
 
 - `--no-theory-prop`
 - `--no-lra-incremental-prop-scan`
+- `--no-lra-row-bound-prop`
+- `--lra-row-bound-dirty-scan`
+- `--lra-row-bound-prop-budget N`
 - `--prop-interval N`
 - `--prop-assign-threshold X`
 - `--prop-delivery-budget N`
@@ -155,7 +158,8 @@ normal execution and printed only with `--stats`. The stats are grouped into:
 - QF_LRA local encoding cache counters;
 - SAT encoding size counters;
 - EUF assignment, conflict, and propagation counters.
-- LRA assignment, check, conflict, propagation, and tableau-size counters.
+- LRA assignment, check, conflict, propagation, row-bound propagation, and
+  tableau-size counters.
 
 The SIGTERM handler prints `unknown` and uses an `atexit` handler so timeout
 runs can still produce stats when `--stats` is active.

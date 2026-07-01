@@ -26,6 +26,9 @@ struct PreprocOptions {
     bool        lra_bool_cache_or = true;  // reuse repeated QF_LRA Boolean or compounds
     bool        lra_bool_cache_eq = true;  // reuse repeated QF_LRA Boolean equality/distinct compounds
     bool        lra_incremental_prop_scan = true; // scan only LRA vars whose bounds changed during propagation discovery
+    bool        lra_row_bound_prop = true; // propagate elementary atoms implied by tableau row bounds
+    bool        lra_row_bound_dirty_scan = false; // experimental: restrict row-bound propagation to rows touching dirty bounds
+    size_t      lra_row_bound_prop_budget = 0; // max row-bound atom candidates per discovery; 0 means unlimited
 };
 
 } // namespace llm2smt

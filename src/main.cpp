@@ -206,6 +206,12 @@ int main(int argc, char** argv) {
                  "Disable QF_LRA Boolean equality/distinct SAT-literal reuse");
     app.add_flag("!--no-lra-incremental-prop-scan", opts.lra_incremental_prop_scan,
                  "Disable dirty-variable scanning for QF_LRA propagation discovery");
+    app.add_flag("!--no-lra-row-bound-prop", opts.lra_row_bound_prop,
+                 "Disable QF_LRA propagation from tableau row-derived bounds");
+    app.add_flag("--lra-row-bound-dirty-scan", opts.lra_row_bound_dirty_scan,
+                 "Restrict QF_LRA row-bound propagation to rows touching recently changed bounds");
+    app.add_option("--lra-row-bound-prop-budget", opts.lra_row_bound_prop_budget,
+                   "Maximum QF_LRA row-bound propagation candidates per discovery (0 = unlimited)");
 
     app.add_flag("--stats", g_print_stats, "Print solver statistics to stderr after solving");
 
@@ -253,6 +259,9 @@ int main(int argc, char** argv) {
             lra.set_propagation(false);
         }
         lra.set_incremental_prop_scan(opts.lra_incremental_prop_scan);
+        lra.set_row_bound_propagation(opts.lra_row_bound_prop);
+        lra.set_row_bound_dirty_scan(opts.lra_row_bound_dirty_scan);
+        lra.set_row_bound_propagation_budget(opts.lra_row_bound_prop_budget);
         euf.set_prop_interval(opts.prop_interval);
         euf.set_prop_assign_threshold(opts.prop_assign_threshold);
         euf.set_prop_delivery_budget(opts.prop_delivery_budget);

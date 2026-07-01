@@ -102,21 +102,23 @@ Strict inequalities use the Section 3.3 symbolic infinitesimal representation
 `c + kδ`. The final printed model chooses a positive rational value for `δ` and
 substitutes it into declared Real constants.
 
-The IPASIR-UP propagation callback also serves LRA implications. It currently
-performs cheap unate bound propagation for stronger active bounds; the existing
-`--no-theory-prop` flag disables these LRA propagations as well as EUF
-propagations.
+The IPASIR-UP propagation callback also serves LRA implications. It performs
+unate bound propagation for stronger active bounds and row-bound propagation
+from the current tableau: when the active bounds on the variables in a row imply
+a lower or upper bound on the basic variable, the solver propagates matching
+elementary arithmetic literals with a reason clause built from the contributing
+bound-source literals. The existing `--no-theory-prop` flag disables these LRA
+propagations as well as EUF propagations.
 
 ## Current Limits
 
 The LRA-local preprocessing is intentionally conservative. It removes constants
 and repeated arithmetic definitions before SAT encoding, but it does not yet
 build a separate theory-level DAG for linear terms and bounds. Consequently,
-these theory-side optimizations are still missing from the native path:
+these theory-side optimizations are still incomplete in the native path:
 
 - global sharing and simplification across all normalized linear expressions;
 - row-bound tightening before SAT search starts;
-- stronger theory propagation from tableau row bounds;
 - a full preprocessing statistics breakdown for LRA formulas.
 
 ## Models
@@ -128,19 +130,27 @@ positive rational for the symbolic `δ` used by strict bounds.
 ## Performance Notes
 
 The checker is exact for the encoded linear constraints and maintains the
-tableau incrementally across SAT callbacks. Current theory propagation is cheap:
-it starts with unate bound implications. Propagation discovery normally scans
+tableau incrementally across SAT callbacks. Propagation discovery normally scans
 only arithmetic variables whose active bounds changed since the previous scan;
 after a backtrack, currently bounded variables are marked for conservative
 rediscovery. Use `--no-lra-incremental-prop-scan` to restore the older full-atom
 scan for benchmarking.
 
+Row-bound propagation is enabled by default. `--no-lra-row-bound-prop` disables
+it for ablation, `--lra-row-bound-prop-budget N` limits the number of row-bound
+atom candidates inspected per discovery call (`0` means unlimited), and
+`--lra-row-bound-dirty-scan` enables an experimental cheaper scan that only
+visits rows touching recently changed bounds. The dirty-row scan can miss useful
+propagations after pivots, so it is a benchmarking knob rather than the default
+path.
+
 `--stats` prints LRA counters for assignments, simplex checks, pivots,
 conflicts, conflict-clause literals, delivered propagations, propagation
 candidates considered, registered elementary atoms, tableau term variables, Real
-variables, and LRA-local cache hits. It also prints SAT encoding size counters.
-Row-bound refinement is a likely next step, but it needs benchmarking because
-extra propagation traffic can also slow the SAT search.
+variables, row-bound candidates, row-bound propagations, and LRA-local cache
+hits. It also prints SAT encoding size counters. Extra propagation traffic can
+speed up hard bound-heavy cases but can also slow the SAT search, so PAR2 is
+tracked alongside solved counts when comparing these options.
 
 ### SLURM QF_LRA Comparison, 2026-06-30
 

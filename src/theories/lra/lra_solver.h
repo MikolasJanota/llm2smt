@@ -44,6 +44,9 @@ public:
     void declare_real(const std::string& name);
     void set_propagation(bool v) { propagation_enabled_ = v; }
     void set_incremental_prop_scan(bool v) { incremental_prop_scan_ = v; }
+    void set_row_bound_propagation(bool v) { row_bound_propagation_ = v; }
+    void set_row_bound_dirty_scan(bool v) { row_bound_dirty_scan_ = v; }
+    void set_row_bound_propagation_budget(size_t v) { row_bound_propagation_budget_ = v; }
 
     void notify_assignment(int lit, bool is_fixed) override;
     void notify_new_decision_level() override;
@@ -90,6 +93,7 @@ private:
 
     int next_var_ = 1;
     std::vector<int> observed_vars_;
+    std::vector<int> atom_assignment_; // indexed by SAT variable: -1 false, 0 unassigned, 1 true
     std::unordered_map<int, Atom> atoms_;
     std::map<std::string, int> atom_keys_;
     std::unordered_map<int, ElementaryAtom> elementary_atoms_;
@@ -110,6 +114,9 @@ private:
     std::map<std::string, Rational> last_model_;
     bool propagation_enabled_ = true;
     bool incremental_prop_scan_ = true;
+    bool row_bound_propagation_ = true;
+    bool row_bound_dirty_scan_ = false;
+    size_t row_bound_propagation_budget_ = 0;
     size_t conflict_minimize_limit_ = 64;
     Stats* stats_ = nullptr;
     bool tableau_dirty_ = false;
@@ -154,7 +161,10 @@ private:
     void rebuild_model();
     Rational choose_delta() const;
     void discover_bound_propagations();
+    void discover_row_bound_propagations();
     void mark_all_bound_vars_for_propagation();
+    int current_lit_value(int lit) const;
+    bool enqueue_propagation(int lit, std::vector<int> reason, bool row_bound);
     bool feasible_for_literals(const std::vector<int>& lits,
                                std::map<std::string, Rational>* model) const;
     std::vector<int> minimize_conflict(std::vector<int> active) const;

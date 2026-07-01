@@ -64,6 +64,43 @@ TEST(LraSolver, TableauDetectsRowBoundConflict) {
     EXPECT_FALSE(forgettable);
 }
 
+TEST(LraSolver, RowBoundPropagationExplainsWithSourceBounds) {
+    LraSolver solver;
+    solver.declare_real("x");
+    solver.declare_real("y");
+
+    LinearExpr x_minus_two;
+    x_minus_two.add_var("x", Rational(1));
+    x_minus_two.constant = Rational(-2);
+
+    LinearExpr y_minus_three;
+    y_minus_three.add_var("y", Rational(1));
+    y_minus_three.constant = Rational(-3);
+
+    LinearExpr sum_minus_five;
+    sum_minus_five.add_var("x", Rational(1));
+    sum_minus_five.add_var("y", Rational(1));
+    sum_minus_five.constant = Rational(-5);
+
+    int x_ge = solver.register_atom({x_minus_two, Relation::Ge});
+    int y_ge = solver.register_atom({y_minus_three, Relation::Ge});
+    int sum_ge = solver.register_atom({sum_minus_five, Relation::Ge});
+
+    solver.notify_assignment(x_ge, false);
+    solver.notify_assignment(y_ge, false);
+
+    EXPECT_EQ(solver.cb_propagate(), sum_ge);
+    EXPECT_EQ(solver.cb_add_reason_clause_lit(sum_ge), sum_ge);
+
+    std::vector<int> antecedents;
+    for (int lit = solver.cb_add_reason_clause_lit(sum_ge); lit != 0;
+         lit = solver.cb_add_reason_clause_lit(sum_ge)) {
+        antecedents.push_back(lit);
+    }
+    std::sort(antecedents.begin(), antecedents.end());
+    EXPECT_EQ(antecedents, (std::vector<int>{-y_ge, -x_ge}));
+}
+
 TEST(LraSolver, DirectEqualityAtomAppliesBothBounds) {
     LraSolver solver;
     solver.declare_real("x");

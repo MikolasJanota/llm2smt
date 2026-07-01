@@ -54,6 +54,8 @@ struct Stats {
     uint64_t lra_conflict_lits_total = 0; // total literals across all LRA conflicts
     uint64_t lra_propagations        = 0; // theory literals delivered to SAT
     uint64_t lra_prop_candidates_considered = 0; // elementary atoms inspected by propagation discovery
+    uint64_t lra_row_prop_candidates_considered = 0; // row-bound atoms inspected by propagation discovery
+    uint64_t lra_row_bound_propagations = 0; // literals enqueued from derived row bounds
     uint64_t lra_atoms               = 0; // unique elementary LRA atoms registered
     uint64_t lra_term_vars           = 0; // unique tableau term variables introduced
     uint64_t lra_real_vars           = 0; // unique user/internal Real variables declared
@@ -110,6 +112,8 @@ struct Stats {
         row("lra.conflict_lits_total",  lra_conflict_lits_total);
         row("lra.propagations",         lra_propagations);
         row("lra.prop_candidates_considered", lra_prop_candidates_considered);
+        row("lra.row_prop_candidates_considered", lra_row_prop_candidates_considered);
+        row("lra.row_bound_propagations", lra_row_bound_propagations);
         row("lra.atoms",                lra_atoms);
         row("lra.term_vars",            lra_term_vars);
         row("lra.real_vars",            lra_real_vars);

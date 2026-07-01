@@ -120,6 +120,8 @@ int LraSolver::register_atom(const Atom& atom) {
     if (it != atom_keys_.end()) return it->second;
 
     int sat_var = new_var();
+    if (static_cast<int>(atom_assignment_.size()) <= sat_var)
+        atom_assignment_.resize(sat_var + 1, 0);
     if (stats_) ++stats_->lra_atoms;
     atoms_[sat_var] = atom;
     atom_keys_[std::move(key)] = sat_var;
@@ -198,6 +200,10 @@ bool LraSolver::apply_bound(int var, BoundKind kind, const DeltaRational& value,
 void LraSolver::notify_assignment(int lit, bool) {
     auto it = elementary_atoms_.find(std::abs(lit));
     if (it == elementary_atoms_.end()) return;
+    int sat_var = std::abs(lit);
+    if (static_cast<int>(atom_assignment_.size()) <= sat_var)
+        atom_assignment_.resize(sat_var + 1, 0);
+    atom_assignment_[sat_var] = lit > 0 ? 1 : -1;
     if (stats_) ++stats_->lra_assignments;
     tableau_dirty_ = true;
     trail_.push_back(lit);
@@ -232,7 +238,13 @@ void LraSolver::notify_backtrack(size_t new_level) {
     while (level_counts_.size() > new_level + 1) {
         size_t n = level_counts_.back();
         level_counts_.pop_back();
-        while (n-- > 0) trail_.pop_back();
+        while (n-- > 0) {
+            int lit = trail_.back();
+            trail_.pop_back();
+            int sat_var = std::abs(lit);
+            if (static_cast<int>(atom_assignment_.size()) > sat_var)
+                atom_assignment_[sat_var] = 0;
+        }
     }
     while (bound_level_counts_.size() > new_level + 1) {
         size_t n = bound_level_counts_.back();
@@ -479,14 +491,143 @@ void LraSolver::mark_all_bound_vars_for_propagation() {
     }
 }
 
+int LraSolver::current_lit_value(int lit) const {
+    int sat_var = std::abs(lit);
+    if (static_cast<int>(atom_assignment_.size()) <= sat_var) return 0;
+    int value = atom_assignment_[sat_var];
+    if (value == 0) return 0;
+    return lit > 0 ? value : -value;
+}
+
+bool LraSolver::enqueue_propagation(int lit, std::vector<int> reason, bool row_bound) {
+    if (has_conflict_) return false;
+    if (std::find(reason.begin(), reason.end(), -lit) != reason.end()) return false;
+    std::sort(reason.begin(), reason.end());
+    reason.erase(std::unique(reason.begin(), reason.end()), reason.end());
+    reason.erase(std::remove(reason.begin(), reason.end(), lit), reason.end());
+    reason.insert(reason.begin(), lit);
+
+    int assigned = current_lit_value(lit);
+    if (assigned > 0) return false;
+    if (assigned < 0) {
+        set_conflict(reason);
+        return false;
+    }
+
+    if (prop_enqueued_.insert(lit).second) {
+        prop_queue_.push_back(lit);
+        reason_clauses_[lit] = std::move(reason);
+        if (row_bound && stats_) ++stats_->lra_row_bound_propagations;
+        return true;
+    }
+    return false;
+}
+
+void LraSolver::discover_row_bound_propagations() {
+    if (!row_bound_propagation_) return;
+    size_t candidates_this_discovery = 0;
+
+    auto enqueue = [&](int lit, std::vector<int> reason) {
+        enqueue_propagation(lit, std::move(reason), true);
+    };
+
+    auto inspect_atom = [&](int sat_var,
+                            const ElementaryAtom& ea,
+                            const std::optional<DeltaRational>& lower_value,
+                            const std::vector<int>& lower_sources,
+                            const std::optional<DeltaRational>& upper_value,
+                            const std::vector<int>& upper_sources) {
+        if (row_bound_propagation_budget_ > 0 &&
+            candidates_this_discovery >= row_bound_propagation_budget_)
+            return;
+        ++candidates_this_discovery;
+        if (stats_) ++stats_->lra_row_prop_candidates_considered;
+        if (lower_value) {
+            if (ea.positive_kind == BoundKind::Lower && *lower_value >= ea.positive_value)
+                enqueue(sat_var, lower_sources);
+            if (ea.positive_kind == BoundKind::Upper && *lower_value > ea.positive_value)
+                enqueue(-sat_var, lower_sources);
+        }
+        if (upper_value) {
+            if (ea.positive_kind == BoundKind::Upper && *upper_value <= ea.positive_value)
+                enqueue(sat_var, upper_sources);
+            if (ea.positive_kind == BoundKind::Lower && *upper_value < ea.positive_value)
+                enqueue(-sat_var, upper_sources);
+        }
+    };
+
+    auto row_is_dirty = [&](int basic, const TableauRow& row) {
+        if (!row_bound_dirty_scan_ || !incremental_prop_scan_) return true;
+        if (basic >= 0 && static_cast<size_t>(basic) < prop_var_dirty_.size() &&
+            prop_var_dirty_[basic])
+            return true;
+        for (const auto& [x, _] : row.coeffs) {
+            if (x >= 0 && static_cast<size_t>(x) < prop_var_dirty_.size() &&
+                prop_var_dirty_[x])
+                return true;
+        }
+        return false;
+    };
+
+    for (int basic : basic_vars_) {
+        if (has_conflict_) return;
+        if (row_bound_propagation_budget_ > 0 &&
+            candidates_this_discovery >= row_bound_propagation_budget_)
+            return;
+        if (static_cast<size_t>(basic) >= atoms_by_var_.size() || atoms_by_var_[basic].empty())
+            continue;
+        const TableauRow& row = rows_[row_of_basic_[basic]];
+        if (!row_is_dirty(basic, row)) continue;
+
+        std::optional<DeltaRational> row_lower = row.constant;
+        std::optional<DeltaRational> row_upper = row.constant;
+        std::vector<int> lower_sources;
+        std::vector<int> upper_sources;
+
+        for (const auto& [x, a] : row.coeffs) {
+            if (a > Rational(0)) {
+                if (row_lower && lower_[x].active) {
+                    *row_lower += lower_[x].value * a;
+                    lower_sources.push_back(-lower_[x].source_lit);
+                } else {
+                    row_lower.reset();
+                }
+                if (row_upper && upper_[x].active) {
+                    *row_upper += upper_[x].value * a;
+                    upper_sources.push_back(-upper_[x].source_lit);
+                } else {
+                    row_upper.reset();
+                }
+            } else if (a < Rational(0)) {
+                if (row_lower && upper_[x].active) {
+                    *row_lower += upper_[x].value * a;
+                    lower_sources.push_back(-upper_[x].source_lit);
+                } else {
+                    row_lower.reset();
+                }
+                if (row_upper && lower_[x].active) {
+                    *row_upper += lower_[x].value * a;
+                    upper_sources.push_back(-lower_[x].source_lit);
+                } else {
+                    row_upper.reset();
+                }
+            }
+            if (!row_lower && !row_upper) break;
+        }
+
+        if (!row_lower && !row_upper) continue;
+        for (int sat_var : atoms_by_var_[basic]) {
+            auto it = elementary_atoms_.find(sat_var);
+            if (it == elementary_atoms_.end()) continue;
+            inspect_atom(sat_var, it->second, row_lower, lower_sources, row_upper, upper_sources);
+        }
+    }
+}
+
 void LraSolver::discover_bound_propagations() {
     if (!propagation_enabled_) return;
     auto enqueue = [&](int lit, std::vector<int> reason) {
-        if (reason.size() > 1 && lit == -reason[1]) return;
-        if (prop_enqueued_.insert(lit).second) {
-            prop_queue_.push_back(lit);
-            reason_clauses_[lit] = std::move(reason);
-        }
+        enqueue_propagation(lit, std::move(reason), false);
     };
     auto inspect_atom = [&](int sat_var, const ElementaryAtom& ea) {
         if (stats_) ++stats_->lra_prop_candidates_considered;
@@ -508,6 +649,8 @@ void LraSolver::discover_bound_propagations() {
 
     if (!incremental_prop_scan_) {
         for (const auto& [sat_var, ea] : elementary_atoms_) inspect_atom(sat_var, ea);
+        if (has_conflict_) return;
+        discover_row_bound_propagations();
         for (int var : prop_dirty_vars_) {
             if (var >= 0 && static_cast<size_t>(var) < prop_var_dirty_.size())
                 prop_var_dirty_[var] = false;
@@ -517,6 +660,7 @@ void LraSolver::discover_bound_propagations() {
     }
 
     for (int var : prop_dirty_vars_) {
+        if (has_conflict_) return;
         if (var < 0 || static_cast<size_t>(var) >= atoms_by_var_.size()) continue;
         for (int sat_var : atoms_by_var_[var]) {
             auto it = elementary_atoms_.find(sat_var);
@@ -524,6 +668,7 @@ void LraSolver::discover_bound_propagations() {
             inspect_atom(sat_var, it->second);
         }
     }
+    discover_row_bound_propagations();
     for (int var : prop_dirty_vars_) {
         if (var >= 0 && static_cast<size_t>(var) < prop_var_dirty_.size())
             prop_var_dirty_[var] = false;
@@ -570,6 +715,7 @@ int LraSolver::cb_propagate() {
     if (!check()) return 0;
     tableau_dirty_ = false;
     discover_bound_propagations();
+    if (has_conflict_) return 0;
     while (prop_head_ < prop_queue_.size()) {
         if (stats_) ++stats_->lra_propagations;
         return prop_queue_[prop_head_++];
