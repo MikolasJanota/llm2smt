@@ -136,9 +136,11 @@ after a backtrack, currently bounded variables are marked for conservative
 rediscovery. Use `--no-lra-incremental-prop-scan` to restore the older full-atom
 scan for benchmarking.
 
-Row-bound propagation is enabled by default. `--no-lra-row-bound-prop` disables
-it for ablation, `--lra-row-bound-prop-budget N` limits the number of row-bound
-atom candidates inspected per discovery call (`0` means unlimited), and
+Row-bound propagation is implemented but disabled by default because current
+benchmarks show mixed effects: it helps some induction cases and slows some base
+cases. `--lra-row-bound-prop` enables it for ablation,
+`--lra-row-bound-prop-budget N` limits the number of row-bound atom candidates
+inspected per discovery call (`0` means unlimited), and
 `--lra-row-bound-dirty-scan` enables an experimental cheaper scan that only
 visits rows touching recently changed bounds. The dirty-row scan can miss useful
 propagations after pivots, so it is a benchmarking knob rather than the default

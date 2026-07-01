@@ -114,7 +114,7 @@ private:
     std::map<std::string, Rational> last_model_;
     bool propagation_enabled_ = true;
     bool incremental_prop_scan_ = true;
-    bool row_bound_propagation_ = true;
+    bool row_bound_propagation_ = false;
     bool row_bound_dirty_scan_ = false;
     size_t row_bound_propagation_budget_ = 0;
     size_t conflict_minimize_limit_ = 64;

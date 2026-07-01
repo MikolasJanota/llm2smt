@@ -130,6 +130,7 @@ Theory propagation options:
 
 - `--no-theory-prop`
 - `--no-lra-incremental-prop-scan`
+- `--lra-row-bound-prop`
 - `--no-lra-row-bound-prop`
 - `--lra-row-bound-dirty-scan`
 - `--lra-row-bound-prop-budget N`

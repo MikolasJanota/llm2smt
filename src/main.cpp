@@ -206,8 +206,10 @@ int main(int argc, char** argv) {
                  "Disable QF_LRA Boolean equality/distinct SAT-literal reuse");
     app.add_flag("!--no-lra-incremental-prop-scan", opts.lra_incremental_prop_scan,
                  "Disable dirty-variable scanning for QF_LRA propagation discovery");
+    app.add_flag("--lra-row-bound-prop", opts.lra_row_bound_prop,
+                 "Enable QF_LRA propagation from tableau row-derived bounds");
     app.add_flag("!--no-lra-row-bound-prop", opts.lra_row_bound_prop,
-                 "Disable QF_LRA propagation from tableau row-derived bounds");
+                 "Disable QF_LRA row-bound propagation (accepted for benchmark scripts)");
     app.add_flag("--lra-row-bound-dirty-scan", opts.lra_row_bound_dirty_scan,
                  "Restrict QF_LRA row-bound propagation to rows touching recently changed bounds");
     app.add_option("--lra-row-bound-prop-budget", opts.lra_row_bound_prop_budget,

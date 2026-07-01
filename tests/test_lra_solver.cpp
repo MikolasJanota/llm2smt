@@ -66,6 +66,7 @@ TEST(LraSolver, TableauDetectsRowBoundConflict) {
 
 TEST(LraSolver, RowBoundPropagationExplainsWithSourceBounds) {
     LraSolver solver;
+    solver.set_row_bound_propagation(true);
     solver.declare_real("x");
     solver.declare_real("y");
 
