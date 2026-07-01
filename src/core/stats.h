@@ -33,6 +33,14 @@ struct Stats {
     uint64_t euf_conflict_lits_total = 0; // total literals across all conflict clauses
     uint64_t euf_prop_candidates_considered = 0; // equality atoms inspected by propagation discovery
 
+    // ── LRA theory ─────────────────────────────────────────────────────────
+    uint64_t lra_assignments         = 0; // notify_assignment callbacks on arithmetic atoms
+    uint64_t lra_check_calls         = 0; // simplex consistency checks
+    uint64_t lra_pivots              = 0; // successful tableau pivots
+    uint64_t lra_conflicts           = 0; // theory conflict clauses generated
+    uint64_t lra_conflict_lits_total = 0; // total literals across all LRA conflicts
+    uint64_t lra_propagations        = 0; // theory literals delivered to SAT
+
     // ── Overall timing ──────────────────────────────────────────────────────
     uint64_t total_ms                = 0; // wall-clock ms for the full solve (set in main)
 
@@ -65,6 +73,13 @@ struct Stats {
         row("euf.conflicts",            euf_conflicts);
         row("euf.conflict_lits_total",  euf_conflict_lits_total);
         row("euf.prop_candidates_considered", euf_prop_candidates_considered);
+        out << "  -- lra theory --\n";
+        row("lra.assignments",          lra_assignments);
+        row("lra.check_calls",          lra_check_calls);
+        row("lra.pivots",               lra_pivots);
+        row("lra.conflicts",            lra_conflicts);
+        row("lra.conflict_lits_total",  lra_conflict_lits_total);
+        row("lra.propagations",         lra_propagations);
     }
 };
 

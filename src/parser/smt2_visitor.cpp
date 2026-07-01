@@ -258,6 +258,15 @@ std::string Smt2Visitor::lra_atom_key(const lra::LinearExpr& e, lra::Relation re
     return std::to_string(static_cast<int>(rel)) + ":" + lra_expr_key(e);
 }
 
+std::optional<std::pair<std::string, lra::Rational>>
+Smt2Visitor::lra_simple_equality(const lra::LinearExpr& e) const
+{
+    if (e.coeffs.size() != 1) return std::nullopt;
+    const auto& [name, coeff] = *e.coeffs.begin();
+    if (coeff.is_zero()) return std::nullopt;
+    return std::make_pair(name, -e.constant / coeff);
+}
+
 std::optional<bool> Smt2Visitor::lra_const_relation(
     const lra::LinearExpr& e,
     lra::Relation rel) const
@@ -302,6 +311,15 @@ int Smt2Visitor::lra_register_equality(lra::LinearExpr e)
 {
     if (auto v = lra_const_relation(e, lra::Relation::Eq))
         return *v ? get_true_lit() : -get_true_lit();
+
+    std::optional<std::pair<std::string, lra::Rational>> simple = lra_simple_equality(e);
+    std::string simple_key;
+    if (simple) {
+        simple_key = simple->first + "=" + simple->second.str();
+        auto sit = lra_simple_eq_lit_cache_.find(simple_key);
+        if (sit != lra_simple_eq_lit_cache_.end()) return sit->second;
+    }
+
     std::string key = lra_expr_key(e);
     auto it = lra_eq_lit_cache_.find(key);
     if (it != lra_eq_lit_cache_.end()) return it->second;
@@ -312,6 +330,20 @@ int Smt2Visitor::lra_register_equality(lra::LinearExpr e)
     { std::array<int,2> cl = {-y, le}; ctx_.sat.add_clause(std::span<const int>(cl)); }
     { std::array<int,3> cl = {-ge, -le, y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
     lra_eq_lit_cache_[std::move(key)] = y;
+    if (simple) {
+        const std::string value_key = simple->second.str();
+        lra_simple_eq_lit_cache_[std::move(simple_key)] = y;
+        if (!opts_.finite_domain_amo) return y;
+
+        auto& previous = lra_simple_eqs_by_var_[simple->first];
+        for (const auto& [other_value, other_lit] : previous) {
+            if (other_value == value_key) continue;
+            std::array<int,2> cl = {-y, -other_lit};
+            ctx_.sat.add_clause(std::span<const int>(cl));
+            ++stats_.preproc_finite_domain_amo_clauses;
+        }
+        previous.emplace_back(value_key, y);
+    }
     return y;
 }
 
@@ -497,8 +529,20 @@ int Smt2Visitor::lra_eval_lit(
         return -lra_eval_lit(inner);
     }
 
+    auto cacheable_bool_term = [&]() {
+        if (op == "and" || op == "or" || op == "=>" || op == "xor") return true;
+        if (op == "ite" && !is_lra_term_syntax(t)) return true;
+        if ((op == "=" || op == "distinct") && !t->term().empty()) return true;
+        return false;
+    };
+    if (opts_.lra_bool_cache && cacheable_bool_term()) {
+        auto it = tseitin_cache_.find(t);
+        if (it != tseitin_cache_.end()) return it->second;
+    }
+
     if (op == "and") {
         int y = fresh_bool_var();
+        if (opts_.lra_bool_cache) tseitin_cache_[t] = y;
         std::vector<int> sub;
         for (auto* c : t->term()) sub.push_back(lra_eval_lit(c));
         for (int l : sub) { std::array<int,2> cl = {-y, l}; ctx_.sat.add_clause(std::span<const int>(cl)); }
@@ -509,6 +553,7 @@ int Smt2Visitor::lra_eval_lit(
     }
     if (op == "or") {
         int y = fresh_bool_var();
+        if (opts_.lra_bool_cache) tseitin_cache_[t] = y;
         std::vector<int> sub;
         for (auto* c : t->term()) lra_collect_clause_lits(c, sub);
         std::vector<int> fwd{-y};
@@ -518,10 +563,8 @@ int Smt2Visitor::lra_eval_lit(
         return y;
     }
     if (op == "=>" || op == "xor" || (op == "ite" && !is_lra_term_syntax(t))) {
-        auto it = tseitin_cache_.find(t);
-        if (it != tseitin_cache_.end()) return it->second;
         int y = fresh_bool_var();
-        tseitin_cache_[t] = y;
+        if (opts_.lra_bool_cache) tseitin_cache_[t] = y;
         if (op == "=>") {
             auto terms = t->term();
             std::vector<int> ds{-y};
@@ -560,6 +603,7 @@ int Smt2Visitor::lra_eval_lit(
     if (op == "=" && t->term().size() == 2 &&
         (is_lra_bool_syntax(t->term()[0]) || is_lra_bool_syntax(t->term()[1]))) {
         int y = fresh_bool_var();
+        if (opts_.lra_bool_cache) tseitin_cache_[t] = y;
         int p = lra_eval_lit(t->term()[0]);
         int q = lra_eval_lit(t->term()[1]);
         { std::array<int,3> cl = {-y, -p,  q}; ctx_.sat.add_clause(std::span<const int>(cl)); }
@@ -583,6 +627,7 @@ int Smt2Visitor::lra_eval_lit(
         if (eq_lits.size() == terms.size() - 1) {
             if (eq_lits.size() == 1) return eq_lits.front();
             int y = fresh_bool_var();
+            if (opts_.lra_bool_cache) tseitin_cache_[t] = y;
             for (int l : eq_lits) {
                 std::array<int,2> cl = {-y, l};
                 ctx_.sat.add_clause(std::span<const int>(cl));
@@ -620,6 +665,7 @@ int Smt2Visitor::lra_eval_lit(
             if (diseqs.empty()) return get_true_lit();
             if (diseqs.size() == 1) return diseqs.front();
             int y = fresh_bool_var();
+            if (opts_.lra_bool_cache) tseitin_cache_[t] = y;
             for (int l : diseqs) {
                 std::array<int,2> cl = {-y, l};
                 ctx_.sat.add_clause(std::span<const int>(cl));

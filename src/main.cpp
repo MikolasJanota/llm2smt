@@ -196,6 +196,8 @@ int main(int argc, char** argv) {
        ->check(CLI::NonNegativeNumber);
     app.add_flag("--lra-print-conflict-size", opts.lra_print_conflict_size,
                  "Debug: print the minimized LRA conflict clause size after UNSAT QF_LRA checks");
+    app.add_flag("!--no-lra-bool-cache", opts.lra_bool_cache,
+                 "Disable QF_LRA Boolean compound SAT-literal reuse");
 
     app.add_flag("--stats", g_print_stats, "Print solver statistics to stderr after solving");
 
@@ -233,7 +235,7 @@ int main(int argc, char** argv) {
         // triggers notify_backtrack() callbacks; if euf were already destroyed
         // at that point the callbacks would access freed memory.
         EufSolver      euf(nm, stats);
-        lra::LraSolver lra;
+        lra::LraSolver lra(&stats);
         CombinedPropagator theory(euf, lra);
         CaDiCaLSolver  sat;
         sat.connect_propagator(theory);

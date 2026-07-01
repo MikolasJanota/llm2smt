@@ -121,6 +121,7 @@ Preprocessing and encoding options:
 - `--eq-bridge`
 - `--no-finite-domain-amo`
 - `--no-finite-domain-eqdefs`
+- `--no-lra-bool-cache`
 
 Theory propagation options:
 

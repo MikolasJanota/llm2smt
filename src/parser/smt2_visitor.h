@@ -185,6 +185,8 @@ private:
     void lra_collect_clause_lits(smt2parser::SMTLIBv2Parser::TermContext*, std::vector<int>&);
     std::string lra_expr_key(const lra::LinearExpr& e) const;
     std::string lra_atom_key(const lra::LinearExpr& e, lra::Relation rel) const;
+    std::optional<std::pair<std::string, lra::Rational>>
+        lra_simple_equality(const lra::LinearExpr& e) const;
     std::optional<bool> lra_const_relation(const lra::LinearExpr& e, lra::Relation rel) const;
     lra::Rational lra_number(smt2parser::SMTLIBv2Parser::TermContext*) const;
     std::optional<lra::Rational> lra_const_value(smt2parser::SMTLIBv2Parser::TermContext*) const;
@@ -198,6 +200,9 @@ private:
     std::unordered_map<std::string, int> lra_atom_lit_cache_;
     std::unordered_map<std::string, int> lra_eq_lit_cache_;
     std::unordered_map<std::string, int> lra_diseq_lit_cache_;
+    std::unordered_map<std::string, int> lra_simple_eq_lit_cache_;
+    std::unordered_map<std::string, std::vector<std::pair<std::string, int>>>
+        lra_simple_eqs_by_var_;
 };
 
 } // namespace llm2smt

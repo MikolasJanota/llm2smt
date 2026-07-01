@@ -77,6 +77,20 @@ add_smt2_test(lra_false_equality_unsat lra07_false_equality_unsat.smt2 unsat)
 add_smt2_test(lra_const_fold_unsat    lra10_const_fold_unsat.smt2    unsat)
 add_smt2_test(lra_nary_distinct_unsat lra11_nary_distinct_unsat.smt2 unsat)
 add_test(
+    NAME "smt2/lra_simple_eq_amo_cli_gate"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra12_simple_eq_amo.smt2 \
+         >/tmp/lra12_on.out 2>/tmp/lra12_on.err && \
+         grep -q '^sat' /tmp/lra12_on.out && \
+         grep -q 'preproc.finite_domain_amo     3' /tmp/lra12_on.err && \
+         $<TARGET_FILE:llm2smt> --quiet --stats --no-finite-domain-amo \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra12_simple_eq_amo.smt2 \
+         >/tmp/lra12_off.out 2>/tmp/lra12_off.err && \
+         grep -q '^sat' /tmp/lra12_off.out && \
+         grep -q 'preproc.finite_domain_amo     0' /tmp/lra12_off.err"
+)
+add_test(
     NAME "smt2/lra_model_gt"
     COMMAND bash -c
         "$<TARGET_FILE:llm2smt> --quiet ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra08_model_gt.smt2 | \

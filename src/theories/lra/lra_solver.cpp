@@ -186,6 +186,8 @@ bool LraSolver::apply_bound(int var, BoundKind kind, const DeltaRational& value,
 void LraSolver::notify_assignment(int lit, bool) {
     auto it = elementary_atoms_.find(std::abs(lit));
     if (it == elementary_atoms_.end()) return;
+    if (stats_) ++stats_->lra_assignments;
+    tableau_dirty_ = true;
     trail_.push_back(lit);
     level_counts_.back()++;
 
@@ -232,6 +234,7 @@ void LraSolver::notify_backtrack(size_t new_level) {
     has_conflict_ = false;
     conflict_clause_.clear();
     conflict_idx_ = 0;
+    tableau_dirty_ = true;
     prop_queue_.clear();
     prop_head_ = 0;
     prop_enqueued_.clear();
@@ -293,6 +296,7 @@ bool LraSolver::pivot(int basic, int nonbasic) {
     };
     replace(basic_vars_, basic, nonbasic);
     replace(nonbasic_vars_, nonbasic, basic);
+    if (stats_) ++stats_->lra_pivots;
     return true;
 }
 
@@ -351,6 +355,7 @@ std::vector<int> LraSolver::explain_upper_conflict(int basic) const {
 
 bool LraSolver::check() {
     // Dutertre/de Moura Figure 3.2 Check, using Bland's smallest-variable rule.
+    if (stats_) ++stats_->lra_check_calls;
     while (true) {
         int bad = -1;
         bool below = false;
@@ -413,6 +418,10 @@ void LraSolver::set_conflict(std::vector<int> clause) {
     if (clause.empty()) clause.push_back(1);
     conflict_clause_ = std::move(clause);
     last_conflict_size_ = conflict_clause_.size();
+    if (stats_) {
+        ++stats_->lra_conflicts;
+        stats_->lra_conflict_lits_total += last_conflict_size_;
+    }
     conflict_idx_ = 0;
     has_conflict_ = true;
 }
@@ -472,7 +481,10 @@ void LraSolver::discover_bound_propagations() {
 
 bool LraSolver::cb_check_found_model(const std::vector<int>&) {
     if (has_conflict_) return false;
-    if (!check()) return false;
+    if (tableau_dirty_) {
+        if (!check()) return false;
+        tableau_dirty_ = false;
+    }
     rebuild_model();
     discover_bound_propagations();
     return true;
@@ -496,9 +508,20 @@ int LraSolver::cb_add_external_clause_lit() {
 
 int LraSolver::cb_propagate() {
     if (has_conflict_) return 0;
+    while (prop_head_ < prop_queue_.size()) {
+        if (stats_) ++stats_->lra_propagations;
+        return prop_queue_[prop_head_++];
+    }
+    prop_queue_.clear();
+    prop_head_ = 0;
+    if (!tableau_dirty_) return 0;
     if (!check()) return 0;
+    tableau_dirty_ = false;
     discover_bound_propagations();
-    while (prop_head_ < prop_queue_.size()) return prop_queue_[prop_head_++];
+    while (prop_head_ < prop_queue_.size()) {
+        if (stats_) ++stats_->lra_propagations;
+        return prop_queue_[prop_head_++];
+    }
     prop_queue_.clear();
     prop_head_ = 0;
     return 0;

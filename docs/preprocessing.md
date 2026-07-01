@@ -72,8 +72,10 @@ node so the Lean emitter can generate implication-form bridge lemmas.
 ## Finite-Domain AMO
 
 The finite-domain AMO pass recognizes terms constrained to equal one of several
-distinct values. Top-level disequalities among the values justify SAT-level
-at-most-one clauses among the value-choice literals.
+distinct values. Top-level disequalities among EUF values justify SAT-level
+at-most-one clauses among the value-choice literals. In the QF_LRA parser path,
+simple equalities over one Real variable, such as `x = 1`, `x = 2`, and
+`x = 3`, also get SAT-level at-most-one clauses directly.
 
 This is enabled by default and disabled with:
 
@@ -82,7 +84,9 @@ This is enabled by default and disabled with:
 ```
 
 The pass was added for NEQ-style finite-model benchmarks where generic EUF
-search spends too much time rediscovering simple domain-choice exclusivity.
+search spends too much time rediscovering simple domain-choice exclusivity, and
+for QF_LRA encodings that model small numeric domains with equality
+disjunctions.
 
 ## Finite-Domain Equality Definitions
 

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "sat/ipasir_up.h"
+#include "core/stats.h"
 #include "theories/lra/rational.h"
 
 namespace llm2smt::lra {
@@ -32,6 +33,8 @@ struct Atom {
 
 class LraSolver : public ExternalPropagator {
 public:
+    explicit LraSolver(Stats* stats = nullptr) : stats_(stats) {}
+
     int new_var() { return next_var_++; }
 
     int register_atom(const Atom& atom);
@@ -102,6 +105,8 @@ private:
     std::map<std::string, Rational> last_model_;
     bool propagation_enabled_ = true;
     size_t conflict_minimize_limit_ = 64;
+    Stats* stats_ = nullptr;
+    bool tableau_dirty_ = false;
 
     int next_lra_var_ = 0;
     std::unordered_map<std::string, int> real_to_var_;

@@ -53,6 +53,8 @@ it expands `let` and 0-arity `define-fun`, folds constant arithmetic relations,
 canonicalizes lower-bound atoms to equivalent upper-bound atoms for sharing,
 reuses repeated arithmetic atoms and equality/disequality definitions, and
 expands n-ary arithmetic `distinct` into pairwise disequality constraints.
+Repeated Boolean compound definitions in the LRA parser path are also shared by
+default; use `--no-lra-bool-cache` to disable that sharing for ablation.
 
 Arithmetic equality is encoded as a SAT-level definition over two elementary
 bounds:
@@ -70,6 +72,9 @@ s != t  means  (s - t < 0) or (s - t > 0)
 
 `(distinct s t)` and explicit `(not (= s t))` use that same strict-inequality
 disjunction. N-ary arithmetic `distinct` expands to all pairwise disequalities.
+Simple one-variable equalities such as `x = 1` and `x = 2` produce SAT-level
+at-most-one clauses by default; `--no-finite-domain-amo` disables this LRA-local
+strengthening as well as the EUF finite-domain AMO pass.
 
 ## Tableau Solver
 

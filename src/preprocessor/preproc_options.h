@@ -21,6 +21,7 @@ struct PreprocOptions {
     double      prop_assign_threshold = 0.25; // skip candidate processing when (assigned/total) >= threshold; 0 = guard disabled
     int         prop_delivery_budget = 1000;  // permanently stop discovery after this many propagations delivered (0 = unlimited)
     bool        lra_print_conflict_size = false; // debug: print final minimized LRA conflict size
+    bool        lra_bool_cache = true; // reuse SAT literals for repeated QF_LRA Boolean compounds
 };
 
 } // namespace llm2smt
