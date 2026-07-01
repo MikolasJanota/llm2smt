@@ -198,6 +198,14 @@ int main(int argc, char** argv) {
                  "Debug: print the minimized LRA conflict clause size after UNSAT QF_LRA checks");
     app.add_flag("!--no-lra-bool-cache", opts.lra_bool_cache,
                  "Disable QF_LRA Boolean compound SAT-literal reuse");
+    app.add_flag("!--no-lra-bool-cache-and", opts.lra_bool_cache_and,
+                 "Disable QF_LRA Boolean AND SAT-literal reuse");
+    app.add_flag("!--no-lra-bool-cache-or", opts.lra_bool_cache_or,
+                 "Disable QF_LRA Boolean OR SAT-literal reuse");
+    app.add_flag("!--no-lra-bool-cache-eq", opts.lra_bool_cache_eq,
+                 "Disable QF_LRA Boolean equality/distinct SAT-literal reuse");
+    app.add_flag("!--no-lra-incremental-prop-scan", opts.lra_incremental_prop_scan,
+                 "Disable dirty-variable scanning for QF_LRA propagation discovery");
 
     app.add_flag("--stats", g_print_stats, "Print solver statistics to stderr after solving");
 
@@ -237,13 +245,14 @@ int main(int argc, char** argv) {
         EufSolver      euf(nm, stats);
         lra::LraSolver lra(&stats);
         CombinedPropagator theory(euf, lra);
-        CaDiCaLSolver  sat;
+        CaDiCaLSolver  sat(&stats);
         sat.connect_propagator(theory);
 
         if (!opts.theory_propagation) {
             euf.set_propagation(false);
             lra.set_propagation(false);
         }
+        lra.set_incremental_prop_scan(opts.lra_incremental_prop_scan);
         euf.set_prop_interval(opts.prop_interval);
         euf.set_prop_assign_threshold(opts.prop_assign_threshold);
         euf.set_prop_delivery_budget(opts.prop_delivery_budget);

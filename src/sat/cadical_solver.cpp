@@ -52,8 +52,8 @@ struct CaDiCaLSolver::Adapter : public CaDiCaL::ExternalPropagator {
 // CaDiCaLSolver
 // ============================================================================
 
-CaDiCaLSolver::CaDiCaLSolver()
-    : solver_(std::make_unique<CaDiCaL::Solver>()) {}
+CaDiCaLSolver::CaDiCaLSolver(Stats* stats)
+    : solver_(std::make_unique<CaDiCaL::Solver>()), stats_(stats) {}
 
 CaDiCaLSolver::~CaDiCaLSolver() {
     if (adapter_)
@@ -69,6 +69,7 @@ const char* CaDiCaLSolver::signature() {
 }
 
 int CaDiCaLSolver::new_var() {
+    if (stats_) ++stats_->sat_vars;
     return ++next_var_;
 }
 
@@ -83,6 +84,10 @@ void CaDiCaLSolver::add_clause(std::span<const int> lits) {
     }
     for (int lit : lits) solver_->add(lit);
     solver_->add(0);  // terminate clause
+    if (stats_) {
+        ++stats_->sat_clauses;
+        stats_->sat_clause_lits += lits.size();
+    }
 
     if (recording_)
         recorded_clauses_.emplace_back(lits.begin(), lits.end());

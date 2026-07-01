@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sat/ipasir_up.h"
+#include "core/stats.h"
 
 #include <memory>
 #include <vector>
@@ -20,7 +21,7 @@ namespace llm2smt {
 // needs to know about CaDiCaL internals.
 class CaDiCaLSolver : public SatSolver {
 public:
-    CaDiCaLSolver();
+    explicit CaDiCaLSolver(Stats* stats = nullptr);
     ~CaDiCaLSolver() override;
 
     // SatSolver interface
@@ -51,6 +52,7 @@ private:
 
     bool                          recording_        = false;
     std::vector<std::vector<int>> recorded_clauses_;
+    Stats*                        stats_            = nullptr;
 };
 
 } // namespace llm2smt

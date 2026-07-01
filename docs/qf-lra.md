@@ -54,7 +54,9 @@ canonicalizes lower-bound atoms to equivalent upper-bound atoms for sharing,
 reuses repeated arithmetic atoms and equality/disequality definitions, and
 expands n-ary arithmetic `distinct` into pairwise disequality constraints.
 Repeated Boolean compound definitions in the LRA parser path are also shared by
-default; use `--no-lra-bool-cache` to disable that sharing for ablation.
+default. Use `--no-lra-bool-cache` to disable all of that sharing for ablation,
+or `--no-lra-bool-cache-and`, `--no-lra-bool-cache-or`, and
+`--no-lra-bool-cache-eq` to isolate one Boolean connective class.
 
 Arithmetic equality is encoded as a SAT-level definition over two elementary
 bounds:
@@ -82,7 +84,12 @@ The native checker follows Dutertre and de Moura's Chapter 3 incremental
 simplex architecture:
 
 - fixed rows `x_i = c + Σ a_ij x_j` are kept in a tableau;
-- original Real variables start non-basic, term variables start basic;
+- a variable is **basic** when it owns one tableau row and its value is computed
+  from that row; a variable is **non-basic** when it is assigned directly and can
+  be moved to satisfy bounds;
+- original Real variables start non-basic, while auxiliary term variables start
+  basic because each auxiliary is introduced precisely to own the row for one
+  linear expression;
 - `notify_assignment` updates a bound stack for elementary atoms;
 - Figure 3.1-style `update` / `pivotAndUpdate` repairs assignments;
 - Figure 3.2 `Check` uses a deterministic Bland-style smallest-variable choice;
@@ -122,9 +129,18 @@ positive rational for the symbolic `δ` used by strict bounds.
 
 The checker is exact for the encoded linear constraints and maintains the
 tableau incrementally across SAT callbacks. Current theory propagation is cheap:
-it starts with unate bound implications. Row-bound refinement is a likely next
-step, but it needs benchmarking because extra propagation traffic can also slow
-the SAT search.
+it starts with unate bound implications. Propagation discovery normally scans
+only arithmetic variables whose active bounds changed since the previous scan;
+after a backtrack, currently bounded variables are marked for conservative
+rediscovery. Use `--no-lra-incremental-prop-scan` to restore the older full-atom
+scan for benchmarking.
+
+`--stats` prints LRA counters for assignments, simplex checks, pivots,
+conflicts, conflict-clause literals, delivered propagations, propagation
+candidates considered, registered elementary atoms, tableau term variables, Real
+variables, and LRA-local cache hits. It also prints SAT encoding size counters.
+Row-bound refinement is a likely next step, but it needs benchmarking because
+extra propagation traffic can also slow the SAT search.
 
 ### SLURM QF_LRA Comparison, 2026-06-30
 

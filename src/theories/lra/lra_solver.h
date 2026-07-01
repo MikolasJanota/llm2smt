@@ -35,11 +35,15 @@ class LraSolver : public ExternalPropagator {
 public:
     explicit LraSolver(Stats* stats = nullptr) : stats_(stats) {}
 
-    int new_var() { return next_var_++; }
+    int new_var() {
+        if (stats_) ++stats_->sat_vars;
+        return next_var_++;
+    }
 
     int register_atom(const Atom& atom);
     void declare_real(const std::string& name);
     void set_propagation(bool v) { propagation_enabled_ = v; }
+    void set_incremental_prop_scan(bool v) { incremental_prop_scan_ = v; }
 
     void notify_assignment(int lit, bool is_fixed) override;
     void notify_new_decision_level() override;
@@ -89,6 +93,7 @@ private:
     std::unordered_map<int, Atom> atoms_;
     std::map<std::string, int> atom_keys_;
     std::unordered_map<int, ElementaryAtom> elementary_atoms_;
+    std::vector<std::vector<int>> atoms_by_var_;
 
     std::vector<int> trail_;
     std::vector<size_t> level_counts_{0};
@@ -104,6 +109,7 @@ private:
     std::unordered_map<std::string, bool> real_decl_seen_;
     std::map<std::string, Rational> last_model_;
     bool propagation_enabled_ = true;
+    bool incremental_prop_scan_ = true;
     size_t conflict_minimize_limit_ = 64;
     Stats* stats_ = nullptr;
     bool tableau_dirty_ = false;
@@ -125,6 +131,8 @@ private:
     size_t prop_head_ = 0;
     std::unordered_set<int> prop_enqueued_;
     std::unordered_map<int, std::vector<int>> reason_clauses_;
+    std::vector<int> prop_dirty_vars_;
+    std::vector<bool> prop_var_dirty_;
     int reason_serving_lit_ = 0;
     size_t reason_serving_idx_ = 0;
 
@@ -146,6 +154,7 @@ private:
     void rebuild_model();
     Rational choose_delta() const;
     void discover_bound_propagations();
+    void mark_all_bound_vars_for_propagation();
     bool feasible_for_literals(const std::vector<int>& lits,
                                std::map<std::string, Rational>* model) const;
     std::vector<int> minimize_conflict(std::vector<int> active) const;

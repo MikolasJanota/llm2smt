@@ -22,6 +22,10 @@ struct PreprocOptions {
     int         prop_delivery_budget = 1000;  // permanently stop discovery after this many propagations delivered (0 = unlimited)
     bool        lra_print_conflict_size = false; // debug: print final minimized LRA conflict size
     bool        lra_bool_cache = true; // reuse SAT literals for repeated QF_LRA Boolean compounds
+    bool        lra_bool_cache_and = true; // reuse repeated QF_LRA Boolean and compounds
+    bool        lra_bool_cache_or = true;  // reuse repeated QF_LRA Boolean or compounds
+    bool        lra_bool_cache_eq = true;  // reuse repeated QF_LRA Boolean equality/distinct compounds
+    bool        lra_incremental_prop_scan = true; // scan only LRA vars whose bounds changed during propagation discovery
 };
 
 } // namespace llm2smt
