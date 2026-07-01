@@ -164,16 +164,18 @@ the same 137-file pure `QF_LRA` set:
 - `sandbox/non-incremental/QF_LRA/spider_benchmarks`;
 - `sandbox/non-incremental/QF_LRA/tta_startup`.
 
-PAR2 counts each timeout as twice the timeout budget. At 60 seconds, one
-timeout contributes 120 seconds; at 20 seconds, one timeout contributes 40
-seconds. The progress table records the timeout with each row so 20-second and
-60-second runs are not compared as raw PAR2 equivalents.
+The table reports average PAR2 per instance: solved files contribute their
+runtime, each timeout or error contributes twice the timeout budget, and the sum
+is divided by the 137 files in the benchmark set. At 60 seconds, one timeout
+contributes 120 seconds to the sum; at 20 seconds, one timeout contributes 40
+seconds to the sum. The progress table records the timeout with each row so
+20-second and 60-second runs are not compared as raw PAR2 equivalents.
 
 Append new rows after each completed campaign with: date, solver/configuration,
-timeout, solved files, `tta_startup` solved files, timeouts, errors, PAR2,
+timeout, solved files, `tta_startup` solved files, timeouts, errors, average PAR2,
 artifact stem, and the decision made from the run.
 
-| Date | Solver / configuration | Timeout | Solved | `tta_startup` solved | Timeouts | Errors | PAR2 | Artifact | Decision |
+| Date | Solver / configuration | Timeout | Solved | `tta_startup` solved | Timeouts | Errors | Avg PAR2 | Artifact | Decision |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
 | 2026-06-30 | native after let-bound equality fix | 60 s | 77 / 137 | 12 / 72 | 60 | 0 | 55.416 s | `lra-eval-106840` | Baseline native run after parser/runtime errors were removed. |
 | 2026-06-30 | Z3 4.16.0 reference | 60 s | 128 / 137 | 63 / 72 | 9 | 0 | 8.869 s | `z3-lra-eval-106853` | Reference target; the native gap is concentrated in `tta_startup`. |
