@@ -50,11 +50,26 @@ is parser/SAT encoding work, not theory solving:
 `QF_LRA` does not use the EUF-oriented `NodeId` preprocessor. Instead, the
 parse-tree encoder performs a small LRA-local preprocessing pass while lowering:
 it expands `let` and 0-arity `define-fun`, folds constant arithmetic relations,
+folds constant Boolean connectives before Tseitin encoding, simplifies
+arithmetic `ite` terms with constant conditions or equal normalized branches,
 canonicalizes lower-bound atoms to equivalent upper-bound atoms for sharing,
 uses unconditional top-level arithmetic equalities to eliminate variables before
 later atom registration, reuses repeated arithmetic atoms and
 equality/disequality definitions, and expands n-ary arithmetic `distinct` into
 pairwise disequality constraints.
+Use `--no-lra-const-simplify` to disable the local constant/connective
+simplifier for ablation.
+Finite-domain choices such as `x = 0`, `x = 1`, ... are linked to simple bound
+atoms on the same variable by default, so a bound assignment can remove
+incompatible choices and a chosen value can imply trivial bounds. Use
+`--no-lra-finite-domain-bounds` to disable those links. Variable-equality
+definitions over matching finite-domain choices are available with
+`--lra-finite-domain-eqdefs`, but remain off by default because they reduce some
+search counters while hurting the current quick SAT target under parallel eval.
+Finite-domain choice literals can also be offered as SAT branch hints with
+`--lra-finite-domain-branch`; this is off by default because the Z3 model for
+the remaining SAT timeout shows concentrated value choices, but naive positive
+choice branching increases native LRA checks on that target.
 Repeated Boolean compound definitions in the LRA parser path are also shared by
 default. Use `--no-lra-bool-cache` to disable all of that sharing for ablation,
 or `--no-lra-bool-cache-and`, `--no-lra-bool-cache-or`, and
@@ -130,19 +145,23 @@ propagations as well as EUF propagations.
 ## Current Limits
 
 The LRA-local preprocessing is intentionally conservative. It folds constant
-relations, eliminates only unconditional top-level equalities, reuses repeated
-atoms and equality definitions, shares repeated Boolean compounds, and caches
-normalized arithmetic terms by parse-tree node.
+relations and local constant Boolean structure, simplifies trivial arithmetic
+`ite` terms, eliminates only unconditional top-level equalities, reuses repeated
+atoms and equality definitions, links finite-domain choices to simple bounds,
+shares repeated Boolean compounds, and caches normalized arithmetic terms by
+parse-tree node.
 It still does not build a global, algebraic theory DAG for all linear terms and
 bounds before SAT encoding. Consequently, these theory-side optimizations are
 still incomplete in the native path:
 
 - global sharing and simplification across equivalent normalized linear
   expressions that arise from different parse-tree nodes;
-- simplification of large Boolean/`let` structures before they are Tseitin
-  encoded in the LRA parser path;
+- propagation of let-bound constants and aliases through the whole assertion
+  before LRA encoding;
 - row-bound tightening before SAT search starts;
-- a full preprocessing statistics breakdown for LRA formulas.
+- default-on symmetry breaking for finite-domain LRA variables; this needs a
+  proof that variable/value permutations preserve the formula before adding
+  ordering constraints.
 
 ## Models
 
@@ -159,24 +178,22 @@ after a backtrack, currently bounded variables are marked for conservative
 rediscovery. Use `--no-lra-incremental-prop-scan` to restore the older full-atom
 scan for benchmarking.
 
-Row-bound propagation is implemented but disabled by default because current
-benchmarks show mixed effects: it helps some induction cases and slows some base
-cases. `--lra-row-bound-prop` enables it for ablation,
-`--lra-row-bound-prop-budget N` limits the number of row-bound atom candidates
-inspected per discovery call (`0` means unlimited), and
-`--lra-row-bound-dirty-scan` enables an experimental cheaper scan that only
-visits rows touching recently changed bounds. The dirty-row scan can miss useful
-propagations after pivots, so it is a benchmarking knob rather than the default
-path.
+Row-bound propagation is enabled by default with the dirty-row scan: it visits
+only rows touching recently changed bounds and propagates matching elementary
+arithmetic atoms implied by those row-derived bounds. `--no-lra-row-bound-prop`
+disables this mode for ablation, `--lra-row-bound-prop-budget N` limits the
+number of row-bound atom candidates inspected per discovery call (`0` means
+unlimited), and `--lra-row-bound-dirty-scan` is accepted explicitly for scripts.
 
 `--stats` prints LRA counters for assignments, simplex checks, pivots,
 conflicts, conflict-clause literals, delivered propagations, propagation
 candidates considered, registered elementary atoms, tableau term variables, Real
 variables, row-bound candidates, row-bound propagations, equality-elimination
-rows/variables/contradictions, and LRA-local cache hits. It also prints SAT
-encoding size counters. Extra propagation traffic can speed up hard bound-heavy
-cases but can also slow the SAT search, so PAR2 is tracked alongside solved
-counts when comparing these options.
+rows/variables/contradictions, local constant folds, arithmetic `ite`
+simplifications, finite-domain bound/equality-definition clauses, and LRA-local
+cache hits. It also prints SAT encoding size counters. Extra propagation traffic can speed up hard bound-heavy cases but can
+also slow the SAT search, so PAR2 is tracked alongside solved counts when
+comparing these options.
 
 ### SLURM QF_LRA Progress Log
 
@@ -208,9 +225,13 @@ artifact stem, and the decision made from the run.
 | 2026-07-01 | row-bound propagation enabled immediately | 20 s | 83 / 137 | 18 / 72 | 54 | 0 | 17.195 s | `llm2smt-lra-row20-107585` | Rejected as the default; it helps a few induction cases but loses more base cases. |
 | 2026-07-01 | row-bound propagation disabled, current default | 20 s | 87 / 137 | 22 / 72 | 50 | 0 | 16.515 s | `llm2smt-lra-norow20-107586` | Accepted as the default; one more solved file than `lra-eval-107582`. |
 | 2026-07-01 | adaptive row-bound threshold 500 | 20 s | 84 / 137 | 19 / 72 | 53 | 0 | 16.972 s | `llm2smt-lra-adapt20-107598` | Rejected and reverted; worse than the current default. |
+| 2026-07-02 | equality elimination default on | 20 s | 91 / 137 | 27 / 72 | 46 | 0 | 15.201 s | `llm2smt-lra-eqelim20-107611` | Improves over the previous native 20 s row, but the paired ablation below shows equality elimination itself is neutral on this run. |
+| 2026-07-02 | `--no-lra-eq-elim` ablation | 20 s | 91 / 137 | 27 / 72 | 46 | 0 | 15.189 s | `llm2smt-lra-noeq20-107616` | Same solved count and marginally lower PAR2 than equality elimination; treat equality elimination as not yet a demonstrated aggregate performance win. |
 
-All native rows in this log solve `check`, `keymaera`, and `spider_benchmarks`
-completely; the moving metric is `tta_startup`. Where compared, no answer
+Most native rows in this log solve `check`, `keymaera`, and
+`spider_benchmarks` completely; the moving metric is usually `tta_startup`.
+The 2026-07-02 20-second rows leave one `spider_benchmarks` instance timed out
+while solving more `tta_startup` base cases. Where compared, no answer
 disagreements with Z3 were observed on commonly solved files. Row-bound
 propagation remains available by CLI option because it uniquely solves some
 induction instances, but it is not the default because the current PAR2 and

@@ -80,6 +80,12 @@ add_smt2_test(lra_eq_elim_triangular  lra15_eq_elim_triangular.smt2  unsat)
 add_smt2_test(lra_eq_elim_inconsistent lra16_eq_elim_inconsistent.smt2 unsat)
 add_smt2_test(lra_eq_elim_rational    lra17_eq_elim_rational.smt2    sat)
 add_smt2_test(lra_eq_elim_guarded     lra18_eq_elim_guarded.smt2     sat)
+add_smt2_test(lra_const_simplify_bool  lra21_const_simplify_bool.smt2  sat)
+add_smt2_test(lra_arith_ite_const_cond lra22_arith_ite_const_cond.smt2 sat)
+add_smt2_test(lra_arith_ite_equal_branches lra23_arith_ite_equal_branches.smt2 sat)
+add_smt2_test(lra_bool_ite_const_branches lra24_bool_ite_const_branches.smt2 unsat)
+add_smt2_test(lra_finite_domain_eqdefs lra25_finite_domain_eqdefs.smt2 sat)
+add_smt2_test(lra_finite_domain_bounds lra26_finite_domain_bounds.smt2 sat)
 add_test(
     NAME "smt2/lra_eq_elim_model"
     COMMAND bash -c
@@ -143,6 +149,60 @@ add_test(
          grep -q '^sat' /tmp/lra14.out && \
          grep -Eq 'lra\\.eq_cache_hits[[:space:]]+1$' /tmp/lra14.err && \
          grep -Eq 'lra\\.atoms[[:space:]]+2$' /tmp/lra14.err"
+)
+add_test(
+    NAME "smt2/lra_const_simplify_stats"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats --no-lra-eq-elim \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra21_const_simplify_bool.smt2 \
+         >/tmp/lra21.out 2>/tmp/lra21.err && \
+         grep -q '^sat' /tmp/lra21.out && \
+         grep -Eq 'lra\\.const_bool_folds[[:space:]]+[1-9][0-9]*$' /tmp/lra21.err && \
+         grep -Eq 'lra\\.const_arith_folds[[:space:]]+[1-9][0-9]*$' /tmp/lra21.err"
+)
+add_test(
+    NAME "smt2/lra_const_simplify_ite_cli_gate"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats --no-lra-eq-elim \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra22_arith_ite_const_cond.smt2 \
+         >/tmp/lra22_on.out 2>/tmp/lra22_on.err && \
+         grep -q '^sat' /tmp/lra22_on.out && \
+         grep -Eq 'lra\\.ite_terms[[:space:]]+0$' /tmp/lra22_on.err && \
+         grep -Eq 'lra\\.ite_terms_simplified[[:space:]]+1$' /tmp/lra22_on.err && \
+         $<TARGET_FILE:llm2smt> --quiet --stats --no-lra-eq-elim --no-lra-const-simplify \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra22_arith_ite_const_cond.smt2 \
+         >/tmp/lra22_off.out 2>/tmp/lra22_off.err && \
+         grep -q '^sat' /tmp/lra22_off.out && \
+         grep -Eq 'lra\\.ite_terms[[:space:]]+1$' /tmp/lra22_off.err && \
+         grep -Eq 'lra\\.ite_terms_simplified[[:space:]]+0$' /tmp/lra22_off.err"
+)
+add_test(
+    NAME "smt2/lra_finite_domain_eqdefs_stats"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats --no-lra-eq-elim --lra-finite-domain-eqdefs \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra25_finite_domain_eqdefs.smt2 \
+         >/tmp/lra25_on.out 2>/tmp/lra25_on.err && \
+         grep -q '^sat' /tmp/lra25_on.out && \
+         grep -Eq 'preproc\\.finite_domain_eq_defs[[:space:]]+6$' /tmp/lra25_on.err && \
+         $<TARGET_FILE:llm2smt> --quiet --stats --no-lra-eq-elim \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra25_finite_domain_eqdefs.smt2 \
+         >/tmp/lra25_off.out 2>/tmp/lra25_off.err && \
+         grep -q '^sat' /tmp/lra25_off.out && \
+         grep -Eq 'preproc\\.finite_domain_eq_defs[[:space:]]+0$' /tmp/lra25_off.err"
+)
+add_test(
+    NAME "smt2/lra_finite_domain_bounds_stats"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats --no-lra-eq-elim \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra26_finite_domain_bounds.smt2 \
+         >/tmp/lra26_on.out 2>/tmp/lra26_on.err && \
+         grep -q '^sat' /tmp/lra26_on.out && \
+         grep -Eq 'preproc\\.finite_domain_bounds[[:space:]]+[1-9][0-9]*$' /tmp/lra26_on.err && \
+         $<TARGET_FILE:llm2smt> --quiet --stats --no-lra-eq-elim --no-lra-finite-domain-bounds \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra26_finite_domain_bounds.smt2 \
+         >/tmp/lra26_off.out 2>/tmp/lra26_off.err && \
+         grep -q '^sat' /tmp/lra26_off.out && \
+         grep -Eq 'preproc\\.finite_domain_bounds[[:space:]]+0$' /tmp/lra26_off.err"
 )
 add_test(
     NAME "smt2/lra_model_gt"

@@ -198,16 +198,17 @@ bool LraSolver::apply_bound(int var, BoundKind kind, const DeltaRational& value,
 }
 
 void LraSolver::notify_assignment(int lit, bool) {
-    auto it = elementary_atoms_.find(std::abs(lit));
-    if (it == elementary_atoms_.end()) return;
     int sat_var = std::abs(lit);
     if (static_cast<int>(atom_assignment_.size()) <= sat_var)
         atom_assignment_.resize(sat_var + 1, 0);
     atom_assignment_[sat_var] = lit > 0 ? 1 : -1;
-    if (stats_) ++stats_->lra_assignments;
-    tableau_dirty_ = true;
     trail_.push_back(lit);
     level_counts_.back()++;
+
+    auto it = elementary_atoms_.find(sat_var);
+    if (it == elementary_atoms_.end()) return;
+    if (stats_) ++stats_->lra_assignments;
+    tableau_dirty_ = true;
 
     const ElementaryAtom& ea = it->second;
     bool positive = lit > 0;
@@ -722,6 +723,30 @@ int LraSolver::cb_propagate() {
     }
     prop_queue_.clear();
     prop_head_ = 0;
+    return 0;
+}
+
+void LraSolver::add_branch_hint(int lit) {
+    if (lit == 0) return;
+    int sat_var = std::abs(lit);
+    if (static_cast<int>(atom_assignment_.size()) <= sat_var)
+        atom_assignment_.resize(sat_var + 1, 0);
+    if (branch_hints_seen_.insert(lit).second) {
+        branch_hints_.push_back(lit);
+        observed_vars_.push_back(sat_var);
+    }
+}
+
+int LraSolver::cb_decide() {
+    while (branch_hint_head_ < branch_hints_.size()) {
+        int lit = branch_hints_[branch_hint_head_];
+        int value = current_lit_value(lit);
+        if (value == 0) {
+            if (stats_) ++stats_->lra_branch_decisions;
+            return lit;
+        }
+        ++branch_hint_head_;
+    }
     return 0;
 }
 

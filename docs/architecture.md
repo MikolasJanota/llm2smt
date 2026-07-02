@@ -125,6 +125,11 @@ Preprocessing and encoding options:
 - `--no-lra-bool-cache-and`
 - `--no-lra-bool-cache-or`
 - `--no-lra-bool-cache-eq`
+- `--no-lra-term-cache`
+- `--no-lra-const-simplify`
+- `--no-lra-finite-domain-bounds`
+- `--lra-finite-domain-eqdefs`
+- `--lra-finite-domain-branch`
 
 Theory propagation options:
 

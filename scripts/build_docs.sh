@@ -11,6 +11,7 @@ cd "$REPO_ROOT"
 
 if [[ ! -x "$VENV/bin/python" ]]; then
     python3 -m venv "$VENV"
+    "$VENV/bin/python" -m pip install --upgrade pip
 fi
 
 "$VENV/bin/python" -m pip install -r docs/requirements.txt

@@ -5,6 +5,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <unordered_map>
 #include <unordered_set>
@@ -131,6 +132,20 @@ private:
         std::vector<NodeId> values;
         std::vector<int>    choice_lits;
     };
+    struct LraVarEqLit {
+        std::string other;
+        int lit = 0;
+    };
+    struct LraBoundLit {
+        lra::Rational value{0};
+        lra::Relation rel = lra::Relation::Le;
+        int lit = 0;
+    };
+    struct LraChoiceLit {
+        std::string value_key;
+        lra::Rational value{0};
+        int lit = 0;
+    };
     std::unordered_set<uint64_t> top_level_diseq_pairs_;
     std::unordered_set<uint64_t> finite_domain_amo_seen_;
     std::unordered_set<int> finite_domain_eq_lits_seen_;
@@ -194,7 +209,26 @@ private:
     lra::LinearExpr lra_canonical_zero_test(lra::LinearExpr e) const;
     std::optional<std::pair<std::string, lra::Rational>>
         lra_simple_equality(const lra::LinearExpr& e) const;
+    std::optional<std::tuple<std::string, lra::Relation, lra::Rational>>
+        lra_simple_bound(const lra::LinearExpr& e, lra::Relation rel) const;
+    std::optional<std::pair<std::string, std::string>>
+        lra_var_var_equality(const lra::LinearExpr& e) const;
+    bool lra_bound_holds(const lra::Rational& choice, lra::Relation rel, const lra::Rational& bound) const;
+    void lra_encode_finite_domain_bound_defs_for_var(const std::string& var);
+    void lra_remember_bound_lit(
+        const std::string& var,
+        lra::Relation rel,
+        const lra::Rational& value,
+        int lit);
+    void lra_encode_finite_domain_eq_defs_for_pair(
+        const std::string& a,
+        const std::string& b,
+        int eq_lit);
+    void lra_remember_var_eq_lit(const std::string& a, const std::string& b, int lit);
     std::optional<bool> lra_const_relation(const lra::LinearExpr& e, lra::Relation rel) const;
+    std::optional<bool> lra_lit_const(int lit) const;
+    bool lra_simplify_clause_lits(std::vector<int>& lits);
+    bool lra_simplify_conj_lits(std::vector<int>& lits);
     lra::Rational lra_number(smt2parser::SMTLIBv2Parser::TermContext*) const;
     std::optional<lra::Rational> lra_const_value(smt2parser::SMTLIBv2Parser::TermContext*) const;
     bool is_lra_number_term(smt2parser::SMTLIBv2Parser::TermContext*) const;
@@ -210,8 +244,15 @@ private:
     std::unordered_map<std::string, int> lra_simple_eq_lit_cache_;
     std::unordered_map<smt2parser::SMTLIBv2Parser::TermContext*, lra::LinearExpr>
         lra_term_cache_;
-    std::unordered_map<std::string, std::vector<std::pair<std::string, int>>>
+    std::unordered_map<std::string, std::vector<LraChoiceLit>>
         lra_simple_eqs_by_var_;
+    std::unordered_map<std::string, std::vector<LraVarEqLit>>
+        lra_var_eq_lits_by_var_;
+    std::unordered_map<std::string, std::vector<LraBoundLit>>
+        lra_bound_lits_by_var_;
+    std::unordered_set<std::string> lra_bound_lits_seen_;
+    std::unordered_set<std::string> lra_finite_domain_bound_defs_seen_;
+    std::unordered_set<std::string> lra_finite_domain_eq_defs_seen_;
     std::vector<smt2parser::SMTLIBv2Parser::TermContext*> pending_lra_asserts_;
     std::unordered_map<std::string, lra::LinearExpr> lra_eq_elim_subst_;
     mutable std::unordered_map<std::string, lra::Rational> lra_model_value_cache_;

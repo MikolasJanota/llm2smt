@@ -47,6 +47,7 @@ public:
     void set_row_bound_propagation(bool v) { row_bound_propagation_ = v; }
     void set_row_bound_dirty_scan(bool v) { row_bound_dirty_scan_ = v; }
     void set_row_bound_propagation_budget(size_t v) { row_bound_propagation_budget_ = v; }
+    void add_branch_hint(int lit);
 
     void notify_assignment(int lit, bool is_fixed) override;
     void notify_new_decision_level() override;
@@ -56,6 +57,7 @@ public:
     bool cb_has_external_clause(bool& is_forgettable) override;
     int cb_add_external_clause_lit() override;
     int cb_propagate() override;
+    int cb_decide() override;
     int cb_add_reason_clause_lit(int propagated_lit) override;
 
     std::optional<Rational> value_of(const std::string& name) const;
@@ -140,6 +142,9 @@ private:
     std::unordered_map<int, std::vector<int>> reason_clauses_;
     std::vector<int> prop_dirty_vars_;
     std::vector<bool> prop_var_dirty_;
+    std::vector<int> branch_hints_;
+    std::unordered_set<int> branch_hints_seen_;
+    size_t branch_hint_head_ = 0;
     int reason_serving_lit_ = 0;
     size_t reason_serving_idx_ = 0;
 

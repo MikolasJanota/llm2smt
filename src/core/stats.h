@@ -23,6 +23,7 @@ struct Stats {
     uint64_t preproc_flush_ms        = 0; // wall-clock ms for flush_pending_fmls() (NNF+simp+encode)
     uint64_t preproc_finite_domain_amo_clauses = 0; // SAT AMO clauses from distinct endpoints
     uint64_t preproc_finite_domain_eq_def_clauses = 0; // SAT definitions for equalities between finite-domain terms
+    uint64_t preproc_finite_domain_bound_clauses = 0; // SAT links between finite-domain choices and simple bounds
     uint64_t lra_bool_cache_hits     = 0; // QF_LRA Boolean compound cache hits
     uint64_t lra_bool_cache_hits_and = 0; // QF_LRA Boolean and cache hits
     uint64_t lra_bool_cache_hits_or  = 0; // QF_LRA Boolean or cache hits
@@ -35,6 +36,9 @@ struct Stats {
     uint64_t lra_eq_elim_rows        = 0; // top-level equality rows processed by QF_LRA elimination
     uint64_t lra_eq_elim_vars        = 0; // variables eliminated by QF_LRA equality elimination
     uint64_t lra_eq_elim_contradictions = 0; // inconsistent equality rows detected before SAT search
+    uint64_t lra_const_bool_folds    = 0; // QF_LRA Boolean constants/connectives folded before Tseitin encoding
+    uint64_t lra_const_arith_folds   = 0; // QF_LRA arithmetic atoms folded to constants before LRA registration
+    uint64_t lra_ite_terms_simplified = 0; // QF_LRA arithmetic ite auxiliaries avoided by local simplification
 
     // ── SAT encoding ───────────────────────────────────────────────────────
     uint64_t sat_vars                = 0; // SAT variables allocated through the wrapper
@@ -60,6 +64,7 @@ struct Stats {
     uint64_t lra_prop_candidates_considered = 0; // elementary atoms inspected by propagation discovery
     uint64_t lra_row_prop_candidates_considered = 0; // row-bound atoms inspected by propagation discovery
     uint64_t lra_row_bound_propagations = 0; // literals enqueued from derived row bounds
+    uint64_t lra_branch_decisions     = 0; // finite-domain branch hints returned to SAT
     uint64_t lra_atoms               = 0; // unique elementary LRA atoms registered
     uint64_t lra_term_vars           = 0; // unique tableau term variables introduced
     uint64_t lra_real_vars           = 0; // unique user/internal Real variables declared
@@ -88,6 +93,7 @@ struct Stats {
         row("preproc.bridge_skipped",   preproc_bridge_skipped);
         row("preproc.finite_domain_amo", preproc_finite_domain_amo_clauses);
         row("preproc.finite_domain_eq_defs", preproc_finite_domain_eq_def_clauses);
+        row("preproc.finite_domain_bounds", preproc_finite_domain_bound_clauses);
         row("lra.bool_cache_hits",      lra_bool_cache_hits);
         row("lra.bool_cache_hits.and",  lra_bool_cache_hits_and);
         row("lra.bool_cache_hits.or",   lra_bool_cache_hits_or);
@@ -100,6 +106,9 @@ struct Stats {
         row("lra.eq_elim_rows",         lra_eq_elim_rows);
         row("lra.eq_elim_vars",         lra_eq_elim_vars);
         row("lra.eq_elim_contradictions", lra_eq_elim_contradictions);
+        row("lra.const_bool_folds",     lra_const_bool_folds);
+        row("lra.const_arith_folds",    lra_const_arith_folds);
+        row("lra.ite_terms_simplified", lra_ite_terms_simplified);
         out << "  -- sat encoding --\n";
         row("sat.vars",                 sat_vars);
         row("sat.clauses",              sat_clauses);
@@ -122,6 +131,7 @@ struct Stats {
         row("lra.prop_candidates_considered", lra_prop_candidates_considered);
         row("lra.row_prop_candidates_considered", lra_row_prop_candidates_considered);
         row("lra.row_bound_propagations", lra_row_bound_propagations);
+        row("lra.branch_decisions",       lra_branch_decisions);
         row("lra.atoms",                lra_atoms);
         row("lra.term_vars",            lra_term_vars);
         row("lra.real_vars",            lra_real_vars);

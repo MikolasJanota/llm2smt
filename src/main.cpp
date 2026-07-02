@@ -109,6 +109,11 @@ public:
         reason_serving_ = Serving::None;
         return 0;
     }
+    int cb_decide() override {
+        int lit = lra_.cb_decide();
+        if (lit != 0) return lit;
+        return euf_.cb_decide();
+    }
     int cb_add_reason_clause_lit(int lit) override {
         if (reason_serving_ == Serving::Lra) return lra_.cb_add_reason_clause_lit(lit);
         if (reason_serving_ == Serving::Euf) return euf_.cb_add_reason_clause_lit(lit);
@@ -211,12 +216,20 @@ int main(int argc, char** argv) {
     app.add_option("--lra-eq-elim-limit", opts.lra_eq_elim_limit,
                    "Maximum top-level QF_LRA equality rows processed for elimination")
        ->check(CLI::NonNegativeNumber);
+    app.add_flag("!--no-lra-const-simplify", opts.lra_const_simplify,
+                 "Disable QF_LRA constant/connective simplification before SAT/LRA encoding");
+    app.add_flag("!--no-lra-finite-domain-bounds", opts.lra_finite_domain_bounds,
+                 "Disable QF_LRA SAT links between finite-domain choices and simple bounds");
+    app.add_flag("--lra-finite-domain-eqdefs", opts.lra_finite_domain_eq_defs,
+                 "Enable experimental QF_LRA SAT definitions for variable equalities over finite-domain choices");
+    app.add_flag("--lra-finite-domain-branch", opts.lra_finite_domain_branch,
+                 "Enable experimental QF_LRA finite-domain choice literals as SAT decision hints");
     app.add_flag("!--no-lra-incremental-prop-scan", opts.lra_incremental_prop_scan,
                  "Disable dirty-variable scanning for QF_LRA propagation discovery");
     app.add_flag("--lra-row-bound-prop", opts.lra_row_bound_prop,
                  "Enable QF_LRA propagation from tableau row-derived bounds");
     app.add_flag("!--no-lra-row-bound-prop", opts.lra_row_bound_prop,
-                 "Disable QF_LRA row-bound propagation (accepted for benchmark scripts)");
+                 "Disable QF_LRA row-bound propagation");
     app.add_flag("--lra-row-bound-dirty-scan", opts.lra_row_bound_dirty_scan,
                  "Restrict QF_LRA row-bound propagation to rows touching recently changed bounds");
     app.add_option("--lra-row-bound-prop-budget", opts.lra_row_bound_prop_budget,

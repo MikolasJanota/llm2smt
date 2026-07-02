@@ -1,0 +1,5 @@
+(set-logic QF_LRA)
+(declare-fun b () Bool)
+(declare-fun x () Real)
+(assert (= (ite b (+ x 1) (+ 1 x)) (+ x 1)))
+(check-sat)

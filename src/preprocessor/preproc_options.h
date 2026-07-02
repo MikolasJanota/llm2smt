@@ -28,9 +28,13 @@ struct PreprocOptions {
     bool        lra_term_cache = true; // reuse normalized QF_LRA arithmetic terms
     bool        lra_eq_elim = true; // eliminate variables using unconditional top-level QF_LRA equalities
     size_t      lra_eq_elim_limit = 10000; // maximum top-level equality rows processed by QF_LRA elimination
+    bool        lra_const_simplify = true; // fold constant QF_LRA Boolean/arithmetic subexpressions before encoding
+    bool        lra_finite_domain_bounds = true; // link QF_LRA finite-domain choices to simple bound atoms
+    bool        lra_finite_domain_eq_defs = false; // experimental: define QF_LRA variable equalities through finite-domain choices
+    bool        lra_finite_domain_branch = false; // experimental: prefer QF_LRA finite-domain choice literals as SAT decisions
     bool        lra_incremental_prop_scan = true; // scan only LRA vars whose bounds changed during propagation discovery
-    bool        lra_row_bound_prop = false; // propagate elementary atoms implied by tableau row bounds
-    bool        lra_row_bound_dirty_scan = false; // experimental: restrict row-bound propagation to rows touching dirty bounds
+    bool        lra_row_bound_prop = true; // propagate elementary atoms implied by tableau row bounds
+    bool        lra_row_bound_dirty_scan = true; // restrict row-bound propagation to rows touching dirty bounds
     size_t      lra_row_bound_prop_budget = 0; // max row-bound atom candidates per discovery; 0 means unlimited
 };
 
