@@ -29,6 +29,19 @@ QUICK_FILES = [
     "sandbox/non-incremental/QF_LRA/tta_startup/simple_startup_14nodes.abstract.base.smt2",
 ]
 
+HARD_FILES = [
+    "sandbox/non-incremental/QF_LRA/spider_benchmarks/op_seen_less2.base.smt2",
+    "sandbox/non-incremental/QF_LRA/tta_startup/simple_startup_3nodes.bug.induct.smt2",
+    "sandbox/non-incremental/QF_LRA/tta_startup/simple_startup_4nodes.missing.induct.smt2",
+    "sandbox/non-incremental/QF_LRA/tta_startup/simple_startup_5nodes.bug.induct.smt2",
+    "sandbox/non-incremental/QF_LRA/tta_startup/simple_startup_5nodes.missing.induct.smt2",
+    "sandbox/non-incremental/QF_LRA/tta_startup/simple_startup_10nodes.missing.induct.smt2",
+    "sandbox/non-incremental/QF_LRA/tta_startup/simple_startup_12nodes.abstract.base.smt2",
+    "sandbox/non-incremental/QF_LRA/tta_startup/simple_startup_12nodes.abstract.induct.smt2",
+    "sandbox/non-incremental/QF_LRA/tta_startup/simple_startup_14nodes.abstract.base.smt2",
+    "sandbox/non-incremental/QF_LRA/tta_startup/simple_startup_14nodes.abstract.induct.smt2",
+]
+
 
 def rel(path: Path, root: Path) -> str:
     return path.relative_to(root).as_posix()
@@ -136,7 +149,7 @@ def main() -> int:
     parser.add_argument("--jobs", type=int, default=max(1, os.cpu_count() or 1))
     parser.add_argument("--out-dir", default="eval_results", type=Path)
     parser.add_argument("--stem", required=True)
-    parser.add_argument("--suite", choices=["full", "quick"], default="full")
+    parser.add_argument("--suite", choices=["full", "quick", "hard"], default="full")
     parser.add_argument("--file", action="append", default=[])
     parser.add_argument("--from-tsv", type=Path)
     parser.add_argument("--tsv-status", action="append", default=["timeout", "error"])
@@ -155,6 +168,8 @@ def main() -> int:
         files = files_from_tsv(args.from_tsv, set(args.tsv_status), args.tsv_min_seconds)
     elif args.suite == "quick":
         files = QUICK_FILES
+    elif args.suite == "hard":
+        files = HARD_FILES
     else:
         files = files_from_dirs(root, FULL_DIRS)
 

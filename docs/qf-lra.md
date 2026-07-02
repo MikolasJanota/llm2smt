@@ -230,6 +230,13 @@ Append new rows after each completed campaign with: date, solver/configuration,
 timeout, solved files, `tta_startup` solved files, timeouts, errors, average PAR2,
 artifact stem, and the decision made from the run.
 
+For local iteration, `scripts/qf_lra_eval.py` provides three fixed suites:
+`--suite quick` runs five fast feedback cases, `--suite hard` runs ten
+representative fast-Z3/slow-native cases from the current QF_LRA gap, and
+`--suite full` runs the 137-file set.  Use `--from-tsv PREVIOUS.tsv` to create
+an ad hoc suite from files that timed out or exceeded `--tsv-min-seconds` in an
+earlier run.
+
 | Date | Solver / configuration | Timeout | Solved | `tta_startup` solved | Timeouts | Errors | Avg PAR2 | Artifact | Decision |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
 | 2026-06-30 | native after let-bound equality fix | 60 s | 77 / 137 | 12 / 72 | 60 | 0 | 55.416 s | `lra-eval-106840` | Baseline native run after parser/runtime errors were removed. |
