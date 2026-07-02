@@ -129,6 +129,7 @@ Preprocessing and encoding options:
 - `--no-lra-const-simplify`
 - `--no-lra-finite-domain-bounds`
 - `--lra-finite-domain-eqdefs`
+- `--no-lra-finite-domain-eqdefs`
 - `--lra-finite-domain-branch`
 - `--no-lra-finite-domain-branch`
 - `--lra-direct-eq-atoms`

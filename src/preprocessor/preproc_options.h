@@ -30,7 +30,7 @@ struct PreprocOptions {
     size_t      lra_eq_elim_limit = 10000; // maximum top-level equality rows processed by QF_LRA elimination
     bool        lra_const_simplify = true; // fold constant QF_LRA Boolean/arithmetic subexpressions before encoding
     bool        lra_finite_domain_bounds = true; // link QF_LRA finite-domain choices to simple bound atoms
-    bool        lra_finite_domain_eq_defs = false; // experimental: define QF_LRA variable equalities through finite-domain choices
+    bool        lra_finite_domain_eq_defs = true; // propagate QF_LRA variable equalities through finite-domain choices
     bool        lra_finite_domain_branch = false; // experimental: prefer selected QF_LRA finite-domain choice literals as SAT decisions
     bool        lra_direct_eq_atoms = false; // experimental: assert positive top-level QF_LRA equalities as direct LRA Eq atoms
     bool        lra_incremental_prop_scan = true; // scan only LRA vars whose bounds changed during propagation discovery

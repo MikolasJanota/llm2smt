@@ -183,12 +183,12 @@ add_test(
 add_test(
     NAME "smt2/lra_finite_domain_eqdefs_stats"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --quiet --stats --no-lra-eq-elim --lra-finite-domain-eqdefs \
+        "$<TARGET_FILE:llm2smt> --quiet --stats --no-lra-eq-elim \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra25_finite_domain_eqdefs.smt2 \
          >/tmp/lra25_on.out 2>/tmp/lra25_on.err && \
          grep -q '^sat' /tmp/lra25_on.out && \
-         grep -Eq 'preproc\\.finite_domain_eq_defs[[:space:]]+6$' /tmp/lra25_on.err && \
-         $<TARGET_FILE:llm2smt> --quiet --stats --no-lra-eq-elim \
+         grep -Eq 'preproc\\.finite_domain_eq_defs[[:space:]]+4$' /tmp/lra25_on.err && \
+         $<TARGET_FILE:llm2smt> --quiet --stats --no-lra-eq-elim --no-lra-finite-domain-eqdefs \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra25_finite_domain_eqdefs.smt2 \
          >/tmp/lra25_off.out 2>/tmp/lra25_off.err && \
          grep -q '^sat' /tmp/lra25_off.out && \

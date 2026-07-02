@@ -62,10 +62,11 @@ simplifier for ablation.
 Finite-domain choices such as `x = 0`, `x = 1`, ... are linked to simple bound
 atoms on the same variable by default, so a bound assignment can remove
 incompatible choices and a chosen value can imply trivial bounds. Use
-`--no-lra-finite-domain-bounds` to disable those links. Variable-equality
-definitions over matching finite-domain choices are available with
-`--lra-finite-domain-eqdefs`, but remain off by default because they reduce some
-search counters while hurting the current quick SAT target under parallel eval.
+`--no-lra-finite-domain-bounds` to disable those links. When a variable equality
+is asserted over two finite-domain Real variables, matching choice literals are
+linked by default in the equality-implies-choice direction. This avoids the
+old full equality definition that made equality true from matching choices and
+hurt SAT search. Use `--no-lra-finite-domain-eqdefs` to disable these links.
 Finite-domain choice literals can also be offered as SAT branch hints with
 `--lra-finite-domain-branch`; the current implementation only hints value `2`
 choices. This is off by default because one quick run solved

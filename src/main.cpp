@@ -221,7 +221,9 @@ int main(int argc, char** argv) {
     app.add_flag("!--no-lra-finite-domain-bounds", opts.lra_finite_domain_bounds,
                  "Disable QF_LRA SAT links between finite-domain choices and simple bounds");
     app.add_flag("--lra-finite-domain-eqdefs", opts.lra_finite_domain_eq_defs,
-                 "Enable experimental QF_LRA SAT definitions for variable equalities over finite-domain choices");
+                 "Enable QF_LRA SAT propagation for variable equalities over finite-domain choices");
+    app.add_flag("!--no-lra-finite-domain-eqdefs", opts.lra_finite_domain_eq_defs,
+                 "Disable QF_LRA SAT propagation for variable equalities over finite-domain choices");
     app.add_flag("--lra-finite-domain-branch", opts.lra_finite_domain_branch,
                  "Enable experimental QF_LRA value-2 finite-domain choice literals as SAT decision hints");
     app.add_flag("!--no-lra-finite-domain-branch", opts.lra_finite_domain_branch,

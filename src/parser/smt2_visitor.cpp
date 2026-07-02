@@ -409,9 +409,7 @@ void Smt2Visitor::lra_encode_finite_domain_eq_defs_for_pair(
               ctx_.sat.add_clause(std::span<const int>(cl)); }
             { std::array<int,3> cl = {-eq_lit, -bc.lit, ac.lit};
               ctx_.sat.add_clause(std::span<const int>(cl)); }
-            { std::array<int,3> cl = {-ac.lit, -bc.lit, eq_lit};
-              ctx_.sat.add_clause(std::span<const int>(cl)); }
-            stats_.preproc_finite_domain_eq_def_clauses += 3;
+            stats_.preproc_finite_domain_eq_def_clauses += 2;
         }
     }
 }
