@@ -223,7 +223,9 @@ int main(int argc, char** argv) {
     app.add_flag("--lra-finite-domain-eqdefs", opts.lra_finite_domain_eq_defs,
                  "Enable experimental QF_LRA SAT definitions for variable equalities over finite-domain choices");
     app.add_flag("--lra-finite-domain-branch", opts.lra_finite_domain_branch,
-                 "Enable experimental QF_LRA finite-domain choice literals as SAT decision hints");
+                 "Enable experimental QF_LRA value-2 finite-domain choice literals as SAT decision hints");
+    app.add_flag("!--no-lra-finite-domain-branch", opts.lra_finite_domain_branch,
+                 "Disable QF_LRA finite-domain choice literals as SAT decision hints");
     app.add_flag("--lra-direct-eq-atoms", opts.lra_direct_eq_atoms,
                  "Enable experimental direct LRA Eq atoms for positive top-level QF_LRA equalities");
     app.add_flag("!--no-lra-incremental-prop-scan", opts.lra_incremental_prop_scan,
@@ -236,7 +238,6 @@ int main(int argc, char** argv) {
                  "Restrict QF_LRA row-bound propagation to rows touching recently changed bounds");
     app.add_option("--lra-row-bound-prop-budget", opts.lra_row_bound_prop_budget,
                    "Maximum QF_LRA row-bound propagation candidates per discovery (0 = unlimited)");
-
     app.add_flag("--stats", g_print_stats, "Print solver statistics to stderr after solving");
 
     CLI11_PARSE(app, argc, argv);

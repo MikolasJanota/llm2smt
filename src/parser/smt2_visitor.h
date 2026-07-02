@@ -207,6 +207,7 @@ private:
     void lra_collect_clause_lits(smt2parser::SMTLIBv2Parser::TermContext*, std::vector<int>&);
     std::string lra_expr_key(const lra::LinearExpr& e) const;
     std::string lra_atom_key(const lra::LinearExpr& e, lra::Relation rel) const;
+    std::string lra_bool_lit_key(const std::string& op, std::span<const int> lits) const;
     lra::LinearExpr lra_canonical_zero_test(lra::LinearExpr e) const;
     std::optional<std::pair<std::string, lra::Rational>>
         lra_simple_equality(const lra::LinearExpr& e) const;
@@ -244,6 +245,7 @@ private:
     std::unordered_map<std::string, int> lra_direct_eq_lit_cache_;
     std::unordered_map<std::string, int> lra_diseq_lit_cache_;
     std::unordered_map<std::string, int> lra_simple_eq_lit_cache_;
+    std::unordered_map<std::string, int> lra_bool_lit_cache_;
     std::unordered_map<smt2parser::SMTLIBv2Parser::TermContext*, lra::LinearExpr>
         lra_term_cache_;
     std::unordered_map<std::string, std::vector<LraChoiceLit>>

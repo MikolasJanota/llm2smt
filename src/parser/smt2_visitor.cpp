@@ -258,6 +258,17 @@ std::string Smt2Visitor::lra_atom_key(const lra::LinearExpr& e, lra::Relation re
     return std::to_string(static_cast<int>(rel)) + ":" + lra_expr_key(e);
 }
 
+std::string Smt2Visitor::lra_bool_lit_key(const std::string& op, std::span<const int> lits) const
+{
+    std::vector<int> canonical(lits.begin(), lits.end());
+    if (op == "and" || op == "or" || op == "=" || op == "xor")
+        std::ranges::sort(canonical);
+    std::ostringstream os;
+    os << op << ":";
+    for (int lit : canonical) os << lit << ",";
+    return os.str();
+}
+
 lra::LinearExpr Smt2Visitor::lra_canonical_zero_test(lra::LinearExpr e) const
 {
     if (e.coeffs.empty()) return e;
@@ -594,7 +605,8 @@ int Smt2Visitor::lra_register_equality(lra::LinearExpr e)
     if (simple) {
         const std::string value_key = simple->second.str();
         lra_simple_eq_lit_cache_[std::move(simple_key)] = y;
-        if (opts_.lra_finite_domain_branch) ctx_.lra->add_branch_hint(y);
+        if (opts_.lra_finite_domain_branch && simple->second == lra::Rational(2))
+            ctx_.lra->add_branch_hint(y);
         if (!opts_.finite_domain_amo) return y;
 
         auto& previous = lra_simple_eqs_by_var_[simple->first];
@@ -993,8 +1005,19 @@ int Smt2Visitor::lra_eval_lit(
             if (sub.empty()) return get_true_lit();
             if (sub.size() == 1) return sub.front();
         }
+        std::string structural_key;
+        if (use_bool_cache) {
+            structural_key = lra_bool_lit_key(op, std::span<const int>(sub));
+            auto sit = lra_bool_lit_cache_.find(structural_key);
+            if (sit != lra_bool_lit_cache_.end()) {
+                ++stats_.lra_bool_cache_hits;
+                ++stats_.lra_bool_cache_hits_and;
+                return sit->second;
+            }
+        }
         int y = fresh_bool_var();
         if (use_bool_cache) tseitin_cache_[t] = y;
+        if (use_bool_cache) lra_bool_lit_cache_[std::move(structural_key)] = y;
         for (int l : sub) { std::array<int,2> cl = {-y, l}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         std::vector<int> back{y};
         for (int l : sub) back.push_back(-l);
@@ -1009,8 +1032,19 @@ int Smt2Visitor::lra_eval_lit(
             if (sub.empty()) return -get_true_lit();
             if (sub.size() == 1) return sub.front();
         }
+        std::string structural_key;
+        if (use_bool_cache) {
+            structural_key = lra_bool_lit_key(op, std::span<const int>(sub));
+            auto sit = lra_bool_lit_cache_.find(structural_key);
+            if (sit != lra_bool_lit_cache_.end()) {
+                ++stats_.lra_bool_cache_hits;
+                ++stats_.lra_bool_cache_hits_or;
+                return sit->second;
+            }
+        }
         int y = fresh_bool_var();
         if (use_bool_cache) tseitin_cache_[t] = y;
+        if (use_bool_cache) lra_bool_lit_cache_[std::move(structural_key)] = y;
         std::vector<int> fwd{-y};
         for (int l : sub) fwd.push_back(l);
         ctx_.sat.add_clause(std::span<const int>(fwd));
@@ -1028,8 +1062,18 @@ int Smt2Visitor::lra_eval_lit(
                 if (ds.empty()) return -get_true_lit();
                 if (ds.size() == 1) return ds.front();
             }
+            std::string structural_key;
+            if (use_bool_cache) {
+                structural_key = lra_bool_lit_key(op, std::span<const int>(ds));
+                auto sit = lra_bool_lit_cache_.find(structural_key);
+                if (sit != lra_bool_lit_cache_.end()) {
+                    ++stats_.lra_bool_cache_hits;
+                    return sit->second;
+                }
+            }
             int y = fresh_bool_var();
             if (use_bool_cache) tseitin_cache_[t] = y;
+            if (use_bool_cache) lra_bool_lit_cache_[std::move(structural_key)] = y;
             ds.insert(ds.begin(), -y);
             ctx_.sat.add_clause(std::span<const int>(ds));
             for (size_t i = 1; i < ds.size(); ++i) {
@@ -1074,8 +1118,20 @@ int Smt2Visitor::lra_eval_lit(
                     }
                 }
             }
+            std::array<int,3> key_lits = {c, a, b};
+            std::string structural_key;
+            if (use_bool_cache) {
+                structural_key = lra_bool_lit_key(op, std::span<const int>(key_lits));
+                auto sit = lra_bool_lit_cache_.find(structural_key);
+                if (sit != lra_bool_lit_cache_.end()) {
+                    ++stats_.lra_bool_cache_hits;
+                    ++stats_.lra_bool_cache_hits_ite;
+                    return sit->second;
+                }
+            }
             int y = fresh_bool_var();
             if (use_bool_cache) tseitin_cache_[t] = y;
+            if (use_bool_cache) lra_bool_lit_cache_[std::move(structural_key)] = y;
             { std::array<int,3> cl = {-c, -a,  y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
             { std::array<int,3> cl = {-c,  a, -y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
             { std::array<int,3> cl = { c, -b,  y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
@@ -1096,8 +1152,18 @@ int Smt2Visitor::lra_eval_lit(
                 return get_true_lit();
             }
         }
+        std::string structural_key;
+        if (use_bool_cache) {
+            structural_key = lra_bool_lit_key(op, std::span<const int>(xs));
+            auto sit = lra_bool_lit_cache_.find(structural_key);
+            if (sit != lra_bool_lit_cache_.end()) {
+                ++stats_.lra_bool_cache_hits;
+                return sit->second;
+            }
+        }
         int y = fresh_bool_var();
         if (use_bool_cache) tseitin_cache_[t] = y;
+        if (use_bool_cache) lra_bool_lit_cache_[std::move(structural_key)] = y;
         int acc = xs[0];
         for (size_t i = 1; i < xs.size(); ++i) {
             int a = acc, b = xs[i];
@@ -1132,8 +1198,20 @@ int Smt2Visitor::lra_eval_lit(
                 return *qv ? p : -p;
             }
         }
+        std::array<int,2> key_lits = {p, q};
+        std::string structural_key;
+        if (use_bool_cache) {
+            structural_key = lra_bool_lit_key(op, std::span<const int>(key_lits));
+            auto sit = lra_bool_lit_cache_.find(structural_key);
+            if (sit != lra_bool_lit_cache_.end()) {
+                ++stats_.lra_bool_cache_hits;
+                ++stats_.lra_bool_cache_hits_eq;
+                return sit->second;
+            }
+        }
         int y = fresh_bool_var();
         if (use_bool_cache) tseitin_cache_[t] = y;
+        if (use_bool_cache) lra_bool_lit_cache_[std::move(structural_key)] = y;
         { std::array<int,3> cl = {-y, -p,  q}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         { std::array<int,3> cl = {-y,  p, -q}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         { std::array<int,3> cl = {-p, -q,  y}; ctx_.sat.add_clause(std::span<const int>(cl)); }

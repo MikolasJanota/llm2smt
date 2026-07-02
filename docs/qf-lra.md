@@ -67,9 +67,12 @@ definitions over matching finite-domain choices are available with
 `--lra-finite-domain-eqdefs`, but remain off by default because they reduce some
 search counters while hurting the current quick SAT target under parallel eval.
 Finite-domain choice literals can also be offered as SAT branch hints with
-`--lra-finite-domain-branch`; this is off by default because the Z3 model for
-the remaining SAT timeout shows concentrated value choices, but naive positive
-choice branching increases native LRA checks on that target.
+`--lra-finite-domain-branch`; the current implementation only hints value `2`
+choices. This is off by default because one quick run solved
+`simple_startup_10nodes.missing.induct.smt2` and improved the 5-file quick PAR2
+to 6.389, but a repeat run timed out on the same file and regressed PAR2 to
+10.269. Use `--no-lra-finite-domain-branch` for explicit ablation when the flag
+is enabled by a script.
 Positive arithmetic equalities asserted directly at top level can be registered
 as direct LRA equality atoms with `--lra-direct-eq-atoms`. This is experimental:
 guarded or negated equality still uses the existing strict-bound disjunction

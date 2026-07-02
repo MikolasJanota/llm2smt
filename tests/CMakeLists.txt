@@ -88,6 +88,7 @@ add_smt2_test(lra_finite_domain_eqdefs lra25_finite_domain_eqdefs.smt2 sat)
 add_smt2_test(lra_finite_domain_bounds lra26_finite_domain_bounds.smt2 sat)
 add_smt2_test(lra_direct_eq_atom lra27_direct_eq_atom.smt2 sat)
 add_smt2_test(lra_direct_eq_guarded_negation lra28_direct_eq_guarded_negation.smt2 sat)
+add_smt2_test(lra_structural_bool_cache lra30_structural_bool_cache.smt2 sat)
 add_test(
     NAME "smt2/lra_eq_elim_model"
     COMMAND bash -c
@@ -228,6 +229,15 @@ add_test(
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra28_direct_eq_guarded_negation.smt2 \
          >/tmp/lra28.out 2>/tmp/lra28.err && \
          grep -q '^sat' /tmp/lra28.out"
+)
+add_test(
+    NAME "smt2/lra_structural_bool_cache_stats"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats --no-lra-eq-elim \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra30_structural_bool_cache.smt2 \
+         >/tmp/lra30.out 2>/tmp/lra30.err && \
+         grep -q '^sat' /tmp/lra30.out && \
+         grep -Eq 'lra\\.bool_cache_hits\\.or[[:space:]]+1$' /tmp/lra30.err"
 )
 add_test(
     NAME "smt2/lra_model_gt"
