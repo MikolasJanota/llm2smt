@@ -754,6 +754,110 @@ lra::LinearExpr Smt2Visitor::lra_term(
         return remember(e);
     }
     if (op == "ite" && t->term().size() == 3) {
+        struct IteBranch {
+            int cond = 0;
+            smt2parser::SMTLIBv2Parser::TermContext* term = nullptr;
+        };
+        std::vector<IteBranch> branches;
+        smt2parser::SMTLIBv2Parser::TermContext* tail = t;
+        bool reduced_by_const_cond = false;
+        while (true) {
+            while (tail->GRW_Exclamation()) tail = tail->term()[0];
+            if (tail->GRW_Let() || tail->qual_identifier() == nullptr) break;
+            std::string tail_op = identifier_name(tail->qual_identifier()->identifier());
+            if (tail_op != "ite" || tail->term().size() != 3) break;
+
+            int cond = lra_eval_lit(tail->term()[0]);
+            if (opts_.lra_const_simplify) {
+                if (auto c = lra_lit_const(cond)) {
+                    ++stats_.lra_const_bool_folds;
+                    ++stats_.lra_ite_terms_simplified;
+                    reduced_by_const_cond = true;
+                    tail = tail->term()[*c ? 1 : 2];
+                    if (*c) break;
+                    continue;
+                }
+            }
+            branches.push_back({cond, tail->term()[1]});
+            tail = tail->term()[2];
+        }
+
+        if (opts_.lra_const_simplify && reduced_by_const_cond && branches.empty())
+            return remember(lra_term(tail));
+
+        if (opts_.lra_const_simplify &&
+            (branches.size() >= 2 || (reduced_by_const_cond && !branches.empty()))) {
+            std::vector<lra::LinearExpr> branch_exprs;
+            branch_exprs.reserve(branches.size());
+            for (const auto& branch : branches)
+                branch_exprs.push_back(lra_term(branch.term));
+            auto default_e = lra_term(tail);
+            bool all_constant_branches = default_e.coeffs.empty();
+            for (const auto& e : branch_exprs)
+                all_constant_branches = all_constant_branches && e.coeffs.empty();
+
+            bool all_same = true;
+            const std::string default_key = lra_expr_key(lra_rewrite_expr(default_e));
+            for (const auto& e : branch_exprs) {
+                if (lra_expr_key(lra_rewrite_expr(e)) != default_key) {
+                    all_same = false;
+                    break;
+                }
+            }
+            if (opts_.lra_const_simplify && all_same) {
+                ++stats_.lra_ite_terms_simplified;
+                return remember(default_e);
+            }
+            if (!all_constant_branches) {
+                int cond = lra_eval_lit(t->term()[0]);
+                auto then_e = lra_term(t->term()[1]);
+                auto else_e = lra_term(t->term()[2]);
+                std::string aux = "__lra_ite_" + std::to_string(ite_counter_++);
+                ++stats_.lra_ite_terms;
+                ctx_.lra->declare_real(aux);
+                lra::LinearExpr aux_e;
+                aux_e.add_var(aux, lra::Rational(1));
+                auto eq_then = aux_e;
+                eq_then.add(then_e, lra::Rational(-1));
+                auto eq_else = aux_e;
+                eq_else.add(else_e, lra::Rational(-1));
+                int l_then = lra_register_equality(eq_then);
+                int l_else = lra_register_equality(eq_else);
+                { std::array<int,2> cl = {-cond, l_then}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+                { std::array<int,2> cl = { cond, l_else}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+                return remember(aux_e);
+            }
+
+            std::string aux = "__lra_ite_" + std::to_string(ite_counter_++);
+            ++stats_.lra_ite_terms;
+            ctx_.lra->declare_real(aux);
+            lra::LinearExpr aux_e;
+            aux_e.add_var(aux, lra::Rational(1));
+
+            std::vector<int> previous_conds;
+            previous_conds.reserve(branches.size());
+            for (size_t i = 0; i < branches.size(); ++i) {
+                auto eq = aux_e;
+                eq.add(branch_exprs[i], lra::Rational(-1));
+                int lit = lra_register_equality(eq);
+                std::vector<int> clause = previous_conds;
+                clause.push_back(-branches[i].cond);
+                clause.push_back(lit);
+                if (!lra_simplify_clause_lits(clause))
+                    ctx_.sat.add_clause(std::span<const int>(clause));
+                previous_conds.push_back(branches[i].cond);
+            }
+
+            auto eq_default = aux_e;
+            eq_default.add(default_e, lra::Rational(-1));
+            int default_lit = lra_register_equality(eq_default);
+            std::vector<int> default_clause = previous_conds;
+            default_clause.push_back(default_lit);
+            if (!lra_simplify_clause_lits(default_clause))
+                ctx_.sat.add_clause(std::span<const int>(default_clause));
+            return remember(aux_e);
+        }
+
         int cond = lra_eval_lit(t->term()[0]);
         if (opts_.lra_const_simplify) {
             if (auto c = lra_lit_const(cond)) {

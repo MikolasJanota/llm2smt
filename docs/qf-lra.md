@@ -157,8 +157,9 @@ The LRA-local preprocessing is intentionally conservative. It folds constant
 relations and local constant Boolean structure, simplifies trivial arithmetic
 `ite` terms, eliminates only unconditional top-level equalities, reuses repeated
 atoms and equality definitions, links finite-domain choices to simple bounds,
-shares repeated Boolean compounds, and caches normalized arithmetic terms by
-parse-tree node.
+shares repeated Boolean compounds, flattens right-nested constant-valued
+arithmetic `ite` chains into one auxiliary, and caches normalized arithmetic
+terms by parse-tree node.
 It still does not build a global, algebraic theory DAG for all linear terms and
 bounds before SAT encoding. Consequently, these theory-side optimizations are
 still incomplete in the native path:
