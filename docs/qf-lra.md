@@ -70,6 +70,12 @@ Finite-domain choice literals can also be offered as SAT branch hints with
 `--lra-finite-domain-branch`; this is off by default because the Z3 model for
 the remaining SAT timeout shows concentrated value choices, but naive positive
 choice branching increases native LRA checks on that target.
+Positive arithmetic equalities asserted directly at top level can be registered
+as direct LRA equality atoms with `--lra-direct-eq-atoms`. This is experimental:
+guarded or negated equality still uses the existing strict-bound disjunction
+encoding because `e != 0` is not a single linear bound. The option is kept for
+diagnostics, not as a default, because the current quick `tta_startup` eval
+regresses from 4/5 solved, PAR2 10.943, to 3/5 solved, PAR2 17.954.
 Repeated Boolean compound definitions in the LRA parser path are also shared by
 default. Use `--no-lra-bool-cache` to disable all of that sharing for ablation,
 or `--no-lra-bool-cache-and`, `--no-lra-bool-cache-or`, and
@@ -194,6 +200,11 @@ simplifications, finite-domain bound/equality-definition clauses, and LRA-local
 cache hits. It also prints SAT encoding size counters. Extra propagation traffic can speed up hard bound-heavy cases but can
 also slow the SAT search, so PAR2 is tracked alongside solved counts when
 comparing these options.
+The stats output also includes a `z3-shaped` section with native approximations
+of common Z3 `-st` counters such as `mk-bool-var`, `mk-clause-binary`,
+`arith-fixed-eqs`, `arith-offset-eqs`, and `arith-max-columns`. Use
+`scripts/compare_z3_stats.py` to run native `--stats` and Z3 `-st` on the same
+file and print those counters side by side.
 
 ### SLURM QF_LRA Progress Log
 

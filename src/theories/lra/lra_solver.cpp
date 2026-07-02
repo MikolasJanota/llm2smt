@@ -70,6 +70,8 @@ int LraSolver::new_tableau_var(bool basic) {
     is_basic_[v] = basic;
     if (basic) basic_vars_.push_back(v);
     else nonbasic_vars_.push_back(v);
+    if (stats_) stats_->lra_max_columns = std::max<uint64_t>(
+        stats_->lra_max_columns, static_cast<uint64_t>(next_lra_var_));
     return v;
 }
 
@@ -103,6 +105,8 @@ int LraSolver::ensure_term_var(const LinearExpr& expr) {
     beta_[s] = row.constant;
     row_of_basic_[s] = static_cast<int>(rows_.size());
     rows_.push_back(std::move(row));
+    if (stats_) stats_->lra_max_rows = std::max<uint64_t>(
+        stats_->lra_max_rows, static_cast<uint64_t>(rows_.size()));
     term_var_keys_[std::move(key)] = s;
     return s;
 }
@@ -123,6 +127,14 @@ int LraSolver::register_atom(const Atom& atom) {
     if (static_cast<int>(atom_assignment_.size()) <= sat_var)
         atom_assignment_.resize(sat_var + 1, 0);
     if (stats_) ++stats_->lra_atoms;
+    if (stats_ && atom.rel == Relation::Eq && atom.lhs_minus_rhs.coeffs.size() == 2) {
+        auto itc = atom.lhs_minus_rhs.coeffs.begin();
+        const Rational& a = itc++->second;
+        const Rational& b = itc->second;
+        if ((a == Rational(1) && b == Rational(-1)) ||
+            (a == Rational(-1) && b == Rational(1)))
+            ++stats_->lra_offset_equalities;
+    }
     atoms_[sat_var] = atom;
     atom_keys_[std::move(key)] = sat_var;
     observed_vars_.push_back(sat_var);
@@ -184,6 +196,10 @@ bool LraSolver::apply_bound(int var, BoundKind kind, const DeltaRational& value,
     bound_trail_.push_back(BoundTrailEntry{var, kind, b});
     bound_level_counts_.back()++;
     b = Bound{true, value, source_lit};
+    if (stats_) {
+        if (kind == BoundKind::Lower) ++stats_->lra_lower_bound_applications;
+        else ++stats_->lra_upper_bound_applications;
+    }
     if (static_cast<int>(prop_var_dirty_.size()) <= var) prop_var_dirty_.resize(var + 1);
     if (!prop_var_dirty_[var]) {
         prop_var_dirty_[var] = true;
@@ -201,7 +217,9 @@ void LraSolver::notify_assignment(int lit, bool) {
     int sat_var = std::abs(lit);
     if (static_cast<int>(atom_assignment_.size()) <= sat_var)
         atom_assignment_.resize(sat_var + 1, 0);
-    atom_assignment_[sat_var] = lit > 0 ? 1 : -1;
+    int new_value = lit > 0 ? 1 : -1;
+    if (atom_assignment_[sat_var] == new_value) return;
+    atom_assignment_[sat_var] = new_value;
     trail_.push_back(lit);
     level_counts_.back()++;
 
@@ -215,6 +233,7 @@ void LraSolver::notify_assignment(int lit, bool) {
     if (ea.equality) {
         if (!positive)
             throw std::runtime_error("negative LRA equality atom must be encoded as strict-bound disjunction");
+        if (stats_) ++stats_->lra_fixed_equalities;
         bool ok = apply_bound(ea.var, BoundKind::Lower, DeltaRational(Rational(0)), lit);
         if (ok) apply_bound(ea.var, BoundKind::Upper, DeltaRational(Rational(0)), lit);
         return;
@@ -678,6 +697,7 @@ void LraSolver::discover_bound_propagations() {
 }
 
 bool LraSolver::cb_check_found_model(const std::vector<int>&) {
+    if (stats_) ++stats_->lra_final_checks;
     if (has_conflict_) return false;
     if (tableau_dirty_) {
         if (!check()) return false;

@@ -224,6 +224,8 @@ int main(int argc, char** argv) {
                  "Enable experimental QF_LRA SAT definitions for variable equalities over finite-domain choices");
     app.add_flag("--lra-finite-domain-branch", opts.lra_finite_domain_branch,
                  "Enable experimental QF_LRA finite-domain choice literals as SAT decision hints");
+    app.add_flag("--lra-direct-eq-atoms", opts.lra_direct_eq_atoms,
+                 "Enable experimental direct LRA Eq atoms for positive top-level QF_LRA equalities");
     app.add_flag("!--no-lra-incremental-prop-scan", opts.lra_incremental_prop_scan,
                  "Disable dirty-variable scanning for QF_LRA propagation discovery");
     app.add_flag("--lra-row-bound-prop", opts.lra_row_bound_prop,

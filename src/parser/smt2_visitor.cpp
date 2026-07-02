@@ -534,6 +534,28 @@ int Smt2Visitor::lra_register_atom(lra::LinearExpr e, lra::Relation rel)
     return lit;
 }
 
+int Smt2Visitor::lra_register_direct_asserted_equality(lra::LinearExpr e)
+{
+    if (!opts_.lra_direct_eq_atoms) return lra_register_equality(std::move(e));
+    e = lra_rewrite_expr(e);
+    e = lra_canonical_zero_test(std::move(e));
+    if (auto v = lra_const_relation(e, lra::Relation::Eq)) {
+        if (opts_.lra_const_simplify) ++stats_.lra_const_arith_folds;
+        return *v ? get_true_lit() : -get_true_lit();
+    }
+
+    std::string key = lra_expr_key(e);
+    auto it = lra_direct_eq_lit_cache_.find(key);
+    if (it != lra_direct_eq_lit_cache_.end()) {
+        ++stats_.lra_eq_cache_hits;
+        return it->second;
+    }
+
+    int lit = ctx_.lra->register_atom({e, lra::Relation::Eq});
+    lra_direct_eq_lit_cache_[std::move(key)] = lit;
+    return lit;
+}
+
 int Smt2Visitor::lra_register_equality(lra::LinearExpr e)
 {
     e = lra_rewrite_expr(e);
@@ -1232,6 +1254,26 @@ void Smt2Visitor::lra_assert_formula(
         if (op == "and") {
             for (auto* sub : t->term()) lra_assert_formula(sub);
             return;
+        }
+        if (op == "=" && opts_.lra_direct_eq_atoms && t->term().size() >= 2 &&
+            is_lra_term_syntax(t->term()[0])) {
+            auto terms = t->term();
+            std::vector<int> units;
+            units.reserve(terms.size() - 1);
+            auto first = lra_term(terms[0]);
+            for (size_t i = 1; i < terms.size(); ++i) {
+                if (!is_lra_term_syntax(terms[i])) break;
+                auto e = first;
+                e.add(lra_term(terms[i]), lra::Rational(-1));
+                units.push_back(lra_register_direct_asserted_equality(e));
+            }
+            if (units.size() == terms.size() - 1) {
+                for (int lit : units) {
+                    std::array<int,1> cl = {lit};
+                    ctx_.sat.add_clause(std::span<const int>(cl));
+                }
+                return;
+            }
         }
         if (op == "or") {
             std::vector<int> lits;

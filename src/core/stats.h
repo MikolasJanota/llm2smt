@@ -44,6 +44,8 @@ struct Stats {
     uint64_t sat_vars                = 0; // SAT variables allocated through the wrapper
     uint64_t sat_clauses             = 0; // clauses added through the wrapper
     uint64_t sat_clause_lits         = 0; // total literals across input clauses
+    uint64_t sat_binary_clauses      = 0; // binary clauses added through the wrapper
+    uint64_t sat_unit_clauses        = 0; // unit clauses added through the wrapper
 
     // ── EUF theory ─────────────────────────────────────────────────────────
     uint64_t euf_assignments         = 0; // notify_assignment callbacks
@@ -57,6 +59,7 @@ struct Stats {
     // ── LRA theory ─────────────────────────────────────────────────────────
     uint64_t lra_assignments         = 0; // notify_assignment callbacks on arithmetic atoms
     uint64_t lra_check_calls         = 0; // simplex consistency checks
+    uint64_t lra_final_checks        = 0; // complete SAT models accepted by the LRA final check
     uint64_t lra_pivots              = 0; // successful tableau pivots
     uint64_t lra_conflicts           = 0; // theory conflict clauses generated
     uint64_t lra_conflict_lits_total = 0; // total literals across all LRA conflicts
@@ -68,6 +71,12 @@ struct Stats {
     uint64_t lra_atoms               = 0; // unique elementary LRA atoms registered
     uint64_t lra_term_vars           = 0; // unique tableau term variables introduced
     uint64_t lra_real_vars           = 0; // unique user/internal Real variables declared
+    uint64_t lra_lower_bound_applications = 0; // stronger lower bounds applied to tableau variables
+    uint64_t lra_upper_bound_applications = 0; // stronger upper bounds applied to tableau variables
+    uint64_t lra_fixed_equalities    = 0; // positive equality atoms applied as lower+upper bounds
+    uint64_t lra_offset_equalities   = 0; // equality atoms of the form x - y + c = 0
+    uint64_t lra_max_rows            = 0; // maximum tableau row count
+    uint64_t lra_max_columns         = 0; // maximum tableau variable count
 
     // ── Overall timing ──────────────────────────────────────────────────────
     uint64_t total_ms                = 0; // wall-clock ms for the full solve (set in main)
@@ -113,6 +122,8 @@ struct Stats {
         row("sat.vars",                 sat_vars);
         row("sat.clauses",              sat_clauses);
         row("sat.clause_lits",          sat_clause_lits);
+        row("sat.binary_clauses",       sat_binary_clauses);
+        row("sat.unit_clauses",         sat_unit_clauses);
         out << "  -- euf theory --\n";
         row("euf.assignments",          euf_assignments);
         row("euf.eq_assignments",       euf_eq_assignments);
@@ -124,6 +135,7 @@ struct Stats {
         out << "  -- lra theory --\n";
         row("lra.assignments",          lra_assignments);
         row("lra.check_calls",          lra_check_calls);
+        row("lra.final_checks",         lra_final_checks);
         row("lra.pivots",               lra_pivots);
         row("lra.conflicts",            lra_conflicts);
         row("lra.conflict_lits_total",  lra_conflict_lits_total);
@@ -135,6 +147,28 @@ struct Stats {
         row("lra.atoms",                lra_atoms);
         row("lra.term_vars",            lra_term_vars);
         row("lra.real_vars",            lra_real_vars);
+        row("lra.lower_bound_applications", lra_lower_bound_applications);
+        row("lra.upper_bound_applications", lra_upper_bound_applications);
+        row("lra.fixed_equalities",     lra_fixed_equalities);
+        row("lra.offset_equalities",    lra_offset_equalities);
+        row("lra.max_rows",             lra_max_rows);
+        row("lra.max_columns",          lra_max_columns);
+        out << "  -- z3-shaped --\n";
+        row("mk-bool-var",              sat_vars);
+        row("mk-clause",                sat_clauses);
+        row("mk-clause-binary",         sat_binary_clauses);
+        row("units",                    sat_unit_clauses);
+        row("num-checks",               lra_check_calls);
+        row("final-checks",             lra_final_checks);
+        row("arith-conflicts",          lra_conflicts);
+        row("arith-bound-propagations-lp", lra_propagations);
+        row("arith-lower",              lra_lower_bound_applications);
+        row("arith-upper",              lra_upper_bound_applications);
+        row("arith-fixed-eqs",          lra_fixed_equalities);
+        row("arith-offset-eqs",         lra_offset_equalities);
+        row("arith-make-feasible",      lra_pivots);
+        row("arith-max-rows",           lra_max_rows);
+        row("arith-max-columns",        lra_max_columns);
     }
 };
 

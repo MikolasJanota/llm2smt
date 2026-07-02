@@ -87,6 +87,8 @@ void CaDiCaLSolver::add_clause(std::span<const int> lits) {
     if (stats_) {
         ++stats_->sat_clauses;
         stats_->sat_clause_lits += lits.size();
+        if (lits.size() == 1) ++stats_->sat_unit_clauses;
+        if (lits.size() == 2) ++stats_->sat_binary_clauses;
     }
 
     if (recording_)

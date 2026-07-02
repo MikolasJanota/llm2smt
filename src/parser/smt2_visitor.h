@@ -194,6 +194,7 @@ private:
     lra::LinearExpr lra_term(smt2parser::SMTLIBv2Parser::TermContext*);
     lra::LinearExpr lra_rewrite_expr(const lra::LinearExpr& e) const;
     int lra_register_atom(lra::LinearExpr e, lra::Relation rel);
+    int lra_register_direct_asserted_equality(lra::LinearExpr e);
     int lra_register_equality(lra::LinearExpr e);
     int lra_register_disequality(lra::LinearExpr e);
     int lra_eval_lit(smt2parser::SMTLIBv2Parser::TermContext*);
@@ -240,6 +241,7 @@ private:
     // and QF_LRA bypasses it, so repeated arithmetic definitions are shared here.
     std::unordered_map<std::string, int> lra_atom_lit_cache_;
     std::unordered_map<std::string, int> lra_eq_lit_cache_;
+    std::unordered_map<std::string, int> lra_direct_eq_lit_cache_;
     std::unordered_map<std::string, int> lra_diseq_lit_cache_;
     std::unordered_map<std::string, int> lra_simple_eq_lit_cache_;
     std::unordered_map<smt2parser::SMTLIBv2Parser::TermContext*, lra::LinearExpr>
