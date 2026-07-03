@@ -144,6 +144,34 @@ Strict inequalities use the Section 3.3 symbolic infinitesimal representation
 `c + kδ`. The final printed model chooses a positive rational value for `δ` and
 substitutes it into declared Real constants.
 
+### Exact Rational Arithmetic
+
+All arithmetic in the LRA solver uses canonical exact rationals. A `Rational`
+value is expected to satisfy these invariants after every public operation:
+zero is represented as `0/1`, denominators are positive, and numerator and
+denominator are reduced by their gcd unless the denominator is already `1`.
+`DeltaRational` preserves the same invariant independently for both the real
+part and the infinitesimal `δ` coefficient.
+
+The simplex hot path creates many short-lived rationals while pivoting rows,
+updating non-basic assignments, comparing bounds, and discovering row-bound
+propagations. Profiles on `tta_startup` showed that avoidable normalization and
+cross-multiplication can dominate these cases. The rational implementation
+therefore includes fast paths for operations that provably preserve the
+canonical form without a gcd call:
+
+- adding, multiplying, or dividing by zero, one, and minus one;
+- integer-only addition and multiplication;
+- unary sign flips and subtraction from already-canonical operands;
+- comparisons with matching denominators or operands of different signs.
+
+These fast paths must not change the mathematical value or leave a
+non-canonical representation behind. When extending them, add unit coverage in
+`tests/test_lra_solver.cpp` that checks both equality and the stored denominator
+for representative non-integer rationals, then rerun the QF_LRA eval because
+small arithmetic-cost changes can move several `tta_startup` instances across a
+20s timeout boundary.
+
 The IPASIR-UP propagation callback also serves LRA implications. It performs
 unate bound propagation for stronger active bounds and row-bound propagation
 from the current tableau: when the active bounds on the variables in a row imply
