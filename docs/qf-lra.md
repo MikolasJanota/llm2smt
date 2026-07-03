@@ -174,6 +174,25 @@ still incomplete in the native path:
   proof that variable/value permutations preserve the formula before adding
   ordering constraints.
 
+## Evaluation Notes
+
+The current full QF_LRA evaluation artifacts from 2026-07-03 are:
+
+- native: `eval_results/full-current-20260703-093619.tsv`;
+- Z3 reference: `eval_results/full-z3-20260703-093850.tsv`.
+
+Both runs use the 137-file suite from `scripts/qf_lra_eval.py` with a 20s
+per-file timeout. Native solves 99/137 with 38 timeouts, no errors,
+34 `tta_startup` solves, and average PAR2 11.758. Z3 solves 127/137 with
+10 timeouts, no errors, 62 `tta_startup` solves, and average PAR2 3.402.
+There are no answer disagreements on the 99 files solved by both solvers.
+
+All native timeouts are in `QF_LRA/tta_startup`. Compared with the earlier
+20s full artifact `eval_results/llm2smt-lra-eqelim20-107611.tsv`, the current
+solver improves from 91 to 99 solved files with no newly timed-out files in the
+shared comparison. The newly solved files include `op_seen_less2.base.smt2` and
+seven `tta_startup` inductive instances.
+
 ## Models
 
 For `sat`, `get-model` prints declared Real constants. The initial model

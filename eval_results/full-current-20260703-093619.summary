@@ -1,0 +1,9 @@
+total=137
+ok=99
+timeout=38
+error=0
+tta_startup_ok=34
+timeout_s=20
+par2=11.758
+opts=build-workspace-rel/bin/llm2smt --quiet
+finished=2026-07-03T09:38:13+02:00

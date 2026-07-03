@@ -1,0 +1,9 @@
+total=137
+ok=127
+timeout=10
+error=0
+tta_startup_ok=62
+timeout_s=20
+par2=3.402
+opts=.venv-z3/bin/z3
+finished=2026-07-03T09:39:35+02:00
