@@ -227,6 +227,8 @@ int main(int argc, char** argv) {
        ->check(CLI::NonNegativeNumber);
     lra_group->add_flag("!--no-lra-const-simplify", opts.lra_const_simplify,
                         "Disable QF_LRA constant/connective simplification before SAT/LRA encoding");
+    lra_group->add_flag("--lra-ite-eq-direct", opts.lra_ite_eq_direct,
+                        "Enable experimental direct Boolean encoding of QF_LRA equalities against arithmetic ite terms");
     lra_group->add_flag("!--no-lra-finite-domain-bounds", opts.lra_finite_domain_bounds,
                         "Disable QF_LRA SAT links between finite-domain choices and simple bounds");
     lra_group->add_flag("--lra-finite-domain-eqdefs", opts.lra_finite_domain_eq_defs,
@@ -247,6 +249,8 @@ int main(int argc, char** argv) {
                         "Disable QF_LRA row-bound propagation");
     lra_group->add_flag("--lra-row-bound-dirty-scan", opts.lra_row_bound_dirty_scan,
                         "Restrict QF_LRA row-bound propagation to rows touching recently changed bounds");
+    lra_group->add_flag("--lra-row-bound-indexed-dirty-scan", opts.lra_row_bound_indexed_dirty_scan,
+                        "Enable experimental QF_LRA reverse row index for dirty row-bound propagation scans");
     lra_group->add_option("--lra-row-bound-prop-budget", opts.lra_row_bound_prop_budget,
                           "Maximum QF_LRA row-bound propagation candidates per discovery (0 = unlimited)");
 
@@ -299,6 +303,7 @@ int main(int argc, char** argv) {
         lra.set_incremental_prop_scan(opts.lra_incremental_prop_scan);
         lra.set_row_bound_propagation(opts.lra_row_bound_prop);
         lra.set_row_bound_dirty_scan(opts.lra_row_bound_dirty_scan);
+        lra.set_row_bound_indexed_dirty_scan(opts.lra_row_bound_indexed_dirty_scan);
         lra.set_row_bound_propagation_budget(opts.lra_row_bound_prop_budget);
         euf.set_prop_interval(opts.prop_interval);
         euf.set_prop_assign_threshold(opts.prop_assign_threshold);

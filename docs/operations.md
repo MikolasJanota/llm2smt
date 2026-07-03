@@ -238,4 +238,6 @@ When adding a new optimization:
 1. record the exact benchmark, flags, timeout, and build type;
 2. add a focused regression test when the change fixes a bug;
 3. keep ablation flags for risky heuristics where practical;
-4. compare both default behavior and the intended tuned flag set.
+4. keep promising but workload-sensitive optimizations behind an option until
+   aggregate evaluation justifies making them default;
+5. compare both default behavior and the intended tuned flag set.

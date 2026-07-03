@@ -46,6 +46,7 @@ public:
     void set_incremental_prop_scan(bool v) { incremental_prop_scan_ = v; }
     void set_row_bound_propagation(bool v) { row_bound_propagation_ = v; }
     void set_row_bound_dirty_scan(bool v) { row_bound_dirty_scan_ = v; }
+    void set_row_bound_indexed_dirty_scan(bool v) { row_bound_indexed_dirty_scan_ = v; }
     void set_row_bound_propagation_budget(size_t v) { row_bound_propagation_budget_ = v; }
     void add_branch_hint(int lit);
 
@@ -118,6 +119,7 @@ private:
     bool incremental_prop_scan_ = true;
     bool row_bound_propagation_ = false;
     bool row_bound_dirty_scan_ = false;
+    bool row_bound_indexed_dirty_scan_ = false;
     size_t row_bound_propagation_budget_ = 0;
     size_t conflict_minimize_limit_ = 64;
     Stats* stats_ = nullptr;
@@ -130,7 +132,9 @@ private:
     std::vector<int> basic_vars_;
     std::vector<int> nonbasic_vars_;
     std::vector<TableauRow> rows_;
+    std::vector<int> row_basic_;
     std::vector<int> row_of_basic_;
+    std::vector<std::vector<int>> rows_by_var_;
     std::vector<DeltaRational> beta_;
     std::vector<Bound> lower_;
     std::vector<Bound> upper_;
@@ -154,6 +158,8 @@ private:
     int new_tableau_var(bool basic);
     static DeltaRational strict_value(const Rational& q, BoundKind kind, bool strict);
     static Relation negate_rel(Relation r);
+    void register_row_coeffs(int row_idx);
+    void unregister_row_coeffs(int row_idx);
     bool apply_bound(int var, BoundKind kind, const DeltaRational& value, int source_lit);
     void set_conflict(std::vector<int> clause);
     bool check();

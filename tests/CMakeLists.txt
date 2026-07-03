@@ -247,7 +247,13 @@ add_test(
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra31_flatten_ite_chain.smt2 \
          >/tmp/lra31.out 2>/tmp/lra31.err && \
          grep -q '^sat' /tmp/lra31.out && \
-         grep -Eq 'lra\\.ite_terms[[:space:]]+1$' /tmp/lra31.err"
+         grep -Eq 'lra\\.ite_terms[[:space:]]+1$' /tmp/lra31.err && \
+         $<TARGET_FILE:llm2smt> --quiet --stats --lra-ite-eq-direct \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra31_flatten_ite_chain.smt2 \
+         >/tmp/lra31_direct.out 2>/tmp/lra31_direct.err && \
+         grep -q '^sat' /tmp/lra31_direct.out && \
+         grep -Eq 'lra\\.ite_terms[[:space:]]+0$' /tmp/lra31_direct.err && \
+         grep -Eq 'lra\\.ite_terms_simplified[[:space:]]+2$' /tmp/lra31_direct.err"
 )
 add_test(
     NAME "smt2/lra_model_gt"

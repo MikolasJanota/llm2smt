@@ -223,6 +223,21 @@ bool Smt2Visitor::is_lra_term_syntax(
     return arith_ops.contains(op);
 }
 
+bool Smt2Visitor::is_lra_ite_term(
+    smt2parser::SMTLIBv2Parser::TermContext* t) const
+{
+    while (t->GRW_Exclamation()) t = t->term()[0];
+    if (t->GRW_Let()) return false;
+    if (t->qual_identifier() == nullptr) return false;
+    std::string op = identifier_name(t->qual_identifier()->identifier());
+    if (t->term().empty()) {
+        if (auto* binding = find_let_binding(op))
+            return is_lra_ite_term(binding->term);
+        return false;
+    }
+    return op == "ite" && t->term().size() == 3 && is_lra_term_syntax(t);
+}
+
 bool Smt2Visitor::is_lra_bool_syntax(
     smt2parser::SMTLIBv2Parser::TermContext* t) const
 {
@@ -661,6 +676,9 @@ lra::LinearExpr Smt2Visitor::lra_term(
             return it->second;
         }
     }
+    auto rewritten_expr_key = [&](const lra::LinearExpr& e) {
+        return lra_expr_key(lra_rewrite_expr(e));
+    };
 
     if (t->GRW_Let()) {
         auto* original = t;
@@ -871,6 +889,8 @@ lra::LinearExpr Smt2Visitor::lra_term(
             ++stats_.lra_ite_terms_simplified;
             return remember(then_e);
         }
+        const std::string key = "ite:" + std::to_string(cond) + ":" +
+            rewritten_expr_key(then_e) + ":" + rewritten_expr_key(else_e);
         std::string aux = "__lra_ite_" + std::to_string(ite_counter_++);
         ++stats_.lra_ite_terms;
         ctx_.lra->declare_real(aux);
@@ -1033,6 +1053,81 @@ void Smt2Visitor::lra_collect_clause_lits(
         }
     }
     lits.push_back(lra_eval_lit(t));
+}
+
+int Smt2Visitor::lra_encode_bool_ite_lit(int cond, int then_lit, int else_lit)
+{
+    if (opts_.lra_const_simplify) {
+        if (auto c = lra_lit_const(cond)) {
+            ++stats_.lra_const_bool_folds;
+            return *c ? then_lit : else_lit;
+        }
+        if (then_lit == else_lit) {
+            ++stats_.lra_const_bool_folds;
+            return then_lit;
+        }
+        if (auto tv = lra_lit_const(then_lit)) {
+            ++stats_.lra_const_bool_folds;
+            if (auto ev = lra_lit_const(else_lit)) {
+                if (*tv == *ev) return *tv ? get_true_lit() : -get_true_lit();
+                return *tv ? cond : -cond;
+            }
+        }
+    }
+
+    const std::array<int,3> key_lits = {cond, then_lit, else_lit};
+    std::string structural_key;
+    if (opts_.lra_bool_cache) {
+        structural_key = lra_bool_lit_key("ite", std::span<const int>(key_lits));
+        auto sit = lra_bool_lit_cache_.find(structural_key);
+        if (sit != lra_bool_lit_cache_.end()) {
+            ++stats_.lra_bool_cache_hits;
+            ++stats_.lra_bool_cache_hits_ite;
+            return sit->second;
+        }
+    }
+
+    int y = fresh_bool_var();
+    if (opts_.lra_bool_cache) lra_bool_lit_cache_[std::move(structural_key)] = y;
+    { std::array<int,3> cl = {-cond, -then_lit,  y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+    { std::array<int,3> cl = {-cond,  then_lit, -y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+    { std::array<int,3> cl = { cond, -else_lit,  y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+    { std::array<int,3> cl = { cond,  else_lit, -y}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+    return y;
+}
+
+int Smt2Visitor::lra_eval_ite_equality(
+    smt2parser::SMTLIBv2Parser::TermContext* other,
+    smt2parser::SMTLIBv2Parser::TermContext* ite)
+{
+    while (ite->GRW_Exclamation()) ite = ite->term()[0];
+    if (ite->qual_identifier() != nullptr && ite->term().empty()) {
+        std::string op = identifier_name(ite->qual_identifier()->identifier());
+        if (auto* binding = find_let_binding(op))
+            return lra_eval_ite_equality(other, binding->term);
+    }
+    if (ite->qual_identifier() == nullptr)
+        throw std::runtime_error("expected QF_LRA arithmetic ite term");
+    std::string op = identifier_name(ite->qual_identifier()->identifier());
+    if (op != "ite" || ite->term().size() != 3)
+        throw std::runtime_error("expected QF_LRA arithmetic ite term");
+
+    int cond = lra_eval_lit(ite->term()[0]);
+    auto other_e = lra_term(other);
+    auto then_e = other_e;
+    then_e.add(lra_term(ite->term()[1]), lra::Rational(-1));
+    int then_lit = lra_register_equality(std::move(then_e));
+
+    int else_lit = 0;
+    if (is_lra_ite_term(ite->term()[2])) {
+        else_lit = lra_eval_ite_equality(other, ite->term()[2]);
+    } else {
+        auto else_e = other_e;
+        else_e.add(lra_term(ite->term()[2]), lra::Rational(-1));
+        else_lit = lra_register_equality(std::move(else_e));
+    }
+    ++stats_.lra_ite_terms_simplified;
+    return lra_encode_bool_ite_lit(cond, then_lit, else_lit);
 }
 
 int Smt2Visitor::lra_eval_lit(
@@ -1323,6 +1418,13 @@ int Smt2Visitor::lra_eval_lit(
 
     if (op == "=" && t->term().size() >= 2 && is_lra_term_syntax(t->term()[0])) {
         auto terms = t->term();
+        if (opts_.lra_ite_eq_direct && terms.size() == 2) {
+            const bool lhs_ite = is_lra_ite_term(terms[0]);
+            const bool rhs_ite = is_lra_ite_term(terms[1]);
+            if (lhs_ite != rhs_ite)
+                return lhs_ite ? lra_eval_ite_equality(terms[1], terms[0])
+                               : lra_eval_ite_equality(terms[0], terms[1]);
+        }
         std::vector<int> eq_lits;
         eq_lits.reserve(terms.size() - 1);
         auto first = lra_term(terms[0]);

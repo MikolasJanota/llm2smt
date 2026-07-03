@@ -198,6 +198,10 @@ private:
     int lra_register_equality(lra::LinearExpr e);
     int lra_register_disequality(lra::LinearExpr e);
     int lra_eval_lit(smt2parser::SMTLIBv2Parser::TermContext*);
+    int lra_eval_ite_equality(
+        smt2parser::SMTLIBv2Parser::TermContext* other,
+        smt2parser::SMTLIBv2Parser::TermContext* ite);
+    int lra_encode_bool_ite_lit(int cond, int then_lit, int else_lit);
     void lra_assert_formula(smt2parser::SMTLIBv2Parser::TermContext*);
     void lra_flush_assertions();
     void lra_collect_unconditional_equalities(smt2parser::SMTLIBv2Parser::TermContext*);
@@ -233,6 +237,7 @@ private:
     bool lra_simplify_conj_lits(std::vector<int>& lits);
     lra::Rational lra_number(smt2parser::SMTLIBv2Parser::TermContext*) const;
     std::optional<lra::Rational> lra_const_value(smt2parser::SMTLIBv2Parser::TermContext*) const;
+    bool is_lra_ite_term(smt2parser::SMTLIBv2Parser::TermContext*) const;
     bool is_lra_number_term(smt2parser::SMTLIBv2Parser::TermContext*) const;
     bool is_lra_term_syntax(smt2parser::SMTLIBv2Parser::TermContext*) const;
     bool is_lra_bool_syntax(smt2parser::SMTLIBv2Parser::TermContext*) const;

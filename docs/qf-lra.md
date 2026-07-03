@@ -58,7 +58,10 @@ later atom registration, reuses repeated arithmetic atoms and
 equality/disequality definitions, and expands n-ary arithmetic `distinct` into
 pairwise disequality constraints.
 Use `--no-lra-const-simplify` to disable the local constant/connective
-simplifier for ablation.
+simplifier for ablation. `--lra-ite-eq-direct` enables an experimental
+direct Boolean encoding for equalities against arithmetic `ite` terms; it
+reduces LRA auxiliaries on some TTA-startup instances but is default-off because
+it added SAT clauses and regressed the quick PAR2 sample in July 2026.
 Finite-domain choices such as `x = 0`, `x = 1`, ... are linked to simple bound
 atoms on the same variable by default, so a bound assignment can remove
 incompatible choices and a chosen value can imply trivial bounds. Use
@@ -297,6 +300,10 @@ arithmetic atoms implied by those row-derived bounds. `--no-lra-row-bound-prop`
 disables this mode for ablation, `--lra-row-bound-prop-budget N` limits the
 number of row-bound atom candidates inspected per discovery call (`0` means
 unlimited), and `--lra-row-bound-dirty-scan` is accepted explicitly for scripts.
+`--lra-row-bound-indexed-dirty-scan` enables an experimental reverse row index
+for this dirty scan. The indexed mode is default-off because it improves some
+long-tail induction instances but regressed quick and hard PAR2 samples in the
+July 2026 evaluation.
 
 `--stats` prints LRA counters for assignments, simplex checks, pivots,
 conflicts, conflict-clause literals, delivered propagations, propagation

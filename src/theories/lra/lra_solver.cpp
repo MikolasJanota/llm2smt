@@ -66,6 +66,7 @@ int LraSolver::new_tableau_var(bool basic) {
         var_to_real_.resize(v + 1);
         atoms_by_var_.resize(v + 1);
         prop_var_dirty_.resize(v + 1);
+        if (row_bound_indexed_dirty_scan_) rows_by_var_.resize(v + 1);
     }
     is_basic_[v] = basic;
     if (basic) basic_vars_.push_back(v);
@@ -73,6 +74,30 @@ int LraSolver::new_tableau_var(bool basic) {
     if (stats_) stats_->lra_max_columns = std::max<uint64_t>(
         stats_->lra_max_columns, static_cast<uint64_t>(next_lra_var_));
     return v;
+}
+
+void LraSolver::register_row_coeffs(int row_idx) {
+    if (!row_bound_indexed_dirty_scan_) return;
+    if (row_idx < 0 || static_cast<size_t>(row_idx) >= rows_.size()) return;
+    for (const auto& [v, _] : rows_[row_idx].coeffs) {
+        if (v < 0) continue;
+        if (static_cast<size_t>(v) >= rows_by_var_.size()) rows_by_var_.resize(v + 1);
+        rows_by_var_[v].push_back(row_idx);
+    }
+}
+
+void LraSolver::unregister_row_coeffs(int row_idx) {
+    if (!row_bound_indexed_dirty_scan_) return;
+    if (row_idx < 0 || static_cast<size_t>(row_idx) >= rows_.size()) return;
+    for (const auto& [v, _] : rows_[row_idx].coeffs) {
+        if (v < 0 || static_cast<size_t>(v) >= rows_by_var_.size()) continue;
+        auto& rs = rows_by_var_[v];
+        auto it = std::find(rs.begin(), rs.end(), row_idx);
+        if (it != rs.end()) {
+            *it = rs.back();
+            rs.pop_back();
+        }
+    }
 }
 
 int LraSolver::ensure_real_var(const std::string& name) {
@@ -104,7 +129,9 @@ int LraSolver::ensure_term_var(const LinearExpr& expr) {
     }
     beta_[s] = row.constant;
     row_of_basic_[s] = static_cast<int>(rows_.size());
+    if (row_bound_indexed_dirty_scan_) row_basic_.push_back(s);
     rows_.push_back(std::move(row));
+    register_row_coeffs(row_of_basic_[s]);
     if (stats_) stats_->lra_max_rows = std::max<uint64_t>(
         stats_->lra_max_rows, static_cast<uint64_t>(rows_.size()));
     term_var_keys_[std::move(key)] = s;
@@ -320,6 +347,7 @@ bool LraSolver::pivot(int basic, int nonbasic) {
         auto it = rows_[rb].coeffs.find(nonbasic);
         if (it == rows_[rb].coeffs.end() || it->second.is_zero()) continue;
         Rational factor = it->second;
+        unregister_row_coeffs(rb);
         rows_[rb].coeffs.erase(it);
         rows_[rb].constant += solved.constant * factor;
         for (const auto& [v, c] : solved.coeffs) rows_[rb].coeffs[v] += c * factor;
@@ -327,9 +355,13 @@ bool LraSolver::pivot(int basic, int nonbasic) {
             if (cit->second.is_zero()) cit = rows_[rb].coeffs.erase(cit);
             else ++cit;
         }
+        register_row_coeffs(rb);
     }
 
+    unregister_row_coeffs(r);
     rows_[r] = std::move(solved);
+    register_row_coeffs(r);
+    if (row_bound_indexed_dirty_scan_) row_basic_[r] = nonbasic;
     row_of_basic_[nonbasic] = r;
     row_of_basic_[basic] = -1;
     is_basic_[basic] = false;
@@ -569,28 +601,16 @@ void LraSolver::discover_row_bound_propagations() {
         }
     };
 
-    auto row_is_dirty = [&](int basic, const TableauRow& row) {
-        if (!row_bound_dirty_scan_ || !incremental_prop_scan_) return true;
-        if (basic >= 0 && static_cast<size_t>(basic) < prop_var_dirty_.size() &&
-            prop_var_dirty_[basic])
-            return true;
-        for (const auto& [x, _] : row.coeffs) {
-            if (x >= 0 && static_cast<size_t>(x) < prop_var_dirty_.size() &&
-                prop_var_dirty_[x])
-                return true;
-        }
-        return false;
-    };
-
-    for (int basic : basic_vars_) {
+    auto inspect_row = [&](int basic) {
         if (has_conflict_) return;
         if (row_bound_propagation_budget_ > 0 &&
             candidates_this_discovery >= row_bound_propagation_budget_)
             return;
         if (static_cast<size_t>(basic) >= atoms_by_var_.size() || atoms_by_var_[basic].empty())
-            continue;
-        const TableauRow& row = rows_[row_of_basic_[basic]];
-        if (!row_is_dirty(basic, row)) continue;
+            return;
+        int row_idx = row_of_basic_[basic];
+        if (row_idx < 0) return;
+        const TableauRow& row = rows_[row_idx];
 
         std::optional<DeltaRational> row_lower = row.constant;
         std::optional<DeltaRational> row_upper = row.constant;
@@ -628,12 +648,64 @@ void LraSolver::discover_row_bound_propagations() {
             if (!row_lower && !row_upper) break;
         }
 
-        if (!row_lower && !row_upper) continue;
+        if (!row_lower && !row_upper) return;
         for (int sat_var : atoms_by_var_[basic]) {
             auto it = elementary_atoms_.find(sat_var);
             if (it == elementary_atoms_.end()) continue;
             inspect_atom(sat_var, it->second, row_lower, lower_sources, row_upper, upper_sources);
         }
+    };
+
+    auto row_is_dirty = [&](int basic, const TableauRow& row) {
+        if (!row_bound_dirty_scan_ || !incremental_prop_scan_) return true;
+        if (basic >= 0 && static_cast<size_t>(basic) < prop_var_dirty_.size() &&
+            prop_var_dirty_[basic])
+            return true;
+        for (const auto& [x, _] : row.coeffs) {
+            if (x >= 0 && static_cast<size_t>(x) < prop_var_dirty_.size() &&
+                prop_var_dirty_[x])
+                return true;
+        }
+        return false;
+    };
+
+    if (!row_bound_indexed_dirty_scan_ || !row_bound_dirty_scan_ || !incremental_prop_scan_) {
+        for (int basic : basic_vars_) {
+            int row_idx = row_of_basic_[basic];
+            if (row_idx < 0) continue;
+            if (!row_is_dirty(basic, rows_[row_idx])) continue;
+            inspect_row(basic);
+        }
+        return;
+    }
+
+    if (rows_by_var_.empty()) {
+        for (int basic : basic_vars_) inspect_row(basic);
+        return;
+    }
+
+    std::vector<char> row_seen(rows_.size(), 0);
+    std::vector<int> dirty_rows;
+    auto mark_row = [&](int row_idx) {
+        if (row_idx < 0 || static_cast<size_t>(row_idx) >= rows_.size()) return;
+        if (row_seen[row_idx]) return;
+        row_seen[row_idx] = 1;
+        dirty_rows.push_back(row_idx);
+    };
+
+    for (int var : prop_dirty_vars_) {
+        if (var < 0) continue;
+        if (static_cast<size_t>(var) < is_basic_.size() && is_basic_[var])
+            mark_row(row_of_basic_[var]);
+        if (static_cast<size_t>(var) >= rows_by_var_.size()) continue;
+        for (int row_idx : rows_by_var_[var]) mark_row(row_idx);
+    }
+
+    for (int row_idx : dirty_rows) {
+        if (has_conflict_) return;
+        if (static_cast<size_t>(row_idx) >= row_basic_.size()) continue;
+        int basic = row_basic_[row_idx];
+        inspect_row(basic);
     }
 }
 
