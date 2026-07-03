@@ -141,7 +141,7 @@ int main(int argc, char** argv) {
     using namespace llm2smt;
     using namespace smt2parser;
 
-    CLI::App app{"llm2smt — QF_EUF SMT solver"};
+    CLI::App app{"llm2smt — SMT solver"};
     app.set_version_flag("--version", []() -> std::string {
         std::string v;
         v += "llm2smt " LLM2SMT_VERSION " (" LLM2SMT_GIT_DESCRIBE ")\n";
@@ -165,82 +165,93 @@ int main(int argc, char** argv) {
     app.add_flag("-q,--quiet", quiet, "Suppress version/provenance diagnostics");
 
     PreprocOptions opts;
-    app.add_option("--preprocess-passes", opts.passes,
-                   "Number of simplifier passes (0 = disabled)")
+    auto* preproc_group = app.add_option_group("Preprocessing");
+    preproc_group->add_option("--preprocess-passes", opts.passes,
+                              "Number of simplifier passes (0 = disabled)")
        ->check(CLI::NonNegativeNumber);
-    app.add_flag("!--no-nary", opts.nary,
-                 "Build left-nested binary AND/OR nodes instead of n-ary");
-    app.add_flag("!--no-flatten", opts.flatten,
-                 "Disable And/Or flattening in the simplifier");
-    auto* nnf_flag = app.add_flag("--nnf", opts.nnf,
-                 "Convert to Negation Normal Form before encoding");
-    app.add_flag("--nnf-memo", opts.nnf_memo,
-                 "Memoize NNF traversal (helps on DAG-heavy inputs)")
+    preproc_group->add_flag("!--no-nary", opts.nary,
+                            "Build left-nested binary AND/OR nodes instead of n-ary");
+    preproc_group->add_flag("!--no-flatten", opts.flatten,
+                            "Disable And/Or flattening in the simplifier");
+    auto* nnf_flag = preproc_group->add_flag("--nnf", opts.nnf,
+                                            "Convert to Negation Normal Form before encoding");
+    preproc_group->add_flag("--nnf-memo", opts.nnf_memo,
+                            "Memoize NNF traversal (helps on DAG-heavy inputs)")
        ->needs(nnf_flag);
-    auto* proof_flag = app.add_option("--proof", opts.proof_file,
-                   "Write Lean 4 UNSAT proof to this file (QF_UF only)");
-    app.add_flag("--proof-minimize", opts.proof_minimize,
-                 "Remove unnecessary theory lemmas via UNSAT-core extraction (requires --proof)")
+
+    auto* proof_group = app.add_option_group("Proofs");
+    auto* proof_flag = proof_group->add_option("--proof", opts.proof_file,
+                                              "Write Lean 4 UNSAT proof to this file (QF_UF only)");
+    proof_group->add_flag("--proof-minimize", opts.proof_minimize,
+                          "Remove unnecessary theory lemmas via UNSAT-core extraction (requires --proof)")
        ->needs(proof_flag);
-    app.add_flag("--eq-bridge", opts.eq_bridge,
-                 "Add common EUF consequences of disjunction branches (eliminates diamond-like exponential blowup)");
-    app.add_flag("!--no-finite-domain-amo", opts.finite_domain_amo,
-                 "Disable SAT at-most-one clauses inferred from top-level distinct endpoints");
-    app.add_flag("!--no-finite-domain-eqdefs", opts.finite_domain_eq_defs,
-                 "Disable SAT definitions for equalities between finite-domain terms");
-    app.add_flag("!--no-theory-prop", opts.theory_propagation,
-                 "Disable EUF/LRA theory propagation (ablation: conflict detection is preserved)");
-    app.add_option("--prop-interval", opts.prop_interval,
-                   "Process EUF propagation candidates every N discovery calls; adaptive doubling up to 1024 (default 32)")
+
+    auto* euf_group = app.add_option_group("QF_UF/EUF");
+    euf_group->add_flag("--eq-bridge", opts.eq_bridge,
+                        "Add common EUF consequences of disjunction branches (eliminates diamond-like exponential blowup)");
+    euf_group->add_flag("!--no-finite-domain-amo", opts.finite_domain_amo,
+                        "Disable SAT at-most-one clauses inferred from top-level distinct endpoints");
+    euf_group->add_flag("!--no-finite-domain-eqdefs", opts.finite_domain_eq_defs,
+                        "Disable SAT definitions for equalities between finite-domain terms");
+
+    auto* prop_group = app.add_option_group("Theory propagation");
+    prop_group->add_flag("!--no-theory-prop", opts.theory_propagation,
+                         "Disable EUF/LRA theory propagation (ablation: conflict detection is preserved)");
+    prop_group->add_option("--prop-interval", opts.prop_interval,
+                           "Process EUF propagation candidates every N discovery calls; adaptive doubling up to 1024 (default 32)")
        ->check(CLI::PositiveNumber);
-    app.add_option("--prop-assign-threshold", opts.prop_assign_threshold,
-                   "Skip EUF propagation candidate processing when (assigned vars)/(total vars) >= THRESHOLD; 0=guard disabled, 1=skip only when all vars assigned (default 0.25)")
+    prop_group->add_option("--prop-assign-threshold", opts.prop_assign_threshold,
+                           "Skip EUF propagation candidate processing when (assigned vars)/(total vars) >= THRESHOLD; 0=guard disabled, 1=skip only when all vars assigned (default 0.25)")
        ->check(CLI::Range(0.0, 1.0));
-    app.add_option("--prop-delivery-budget", opts.prop_delivery_budget,
-                   "Permanently stop EUF propagation discovery after delivering this many theory literals (default 1000; 0=unlimited)")
+    prop_group->add_option("--prop-delivery-budget", opts.prop_delivery_budget,
+                           "Permanently stop EUF propagation discovery after delivering this many theory literals (default 1000; 0=unlimited)")
        ->check(CLI::NonNegativeNumber);
-    app.add_flag("--lra-print-conflict-size", opts.lra_print_conflict_size,
-                 "Debug: print the minimized LRA conflict clause size after UNSAT QF_LRA checks");
-    app.add_flag("!--no-lra-bool-cache", opts.lra_bool_cache,
-                 "Disable QF_LRA Boolean compound SAT-literal reuse");
-    app.add_flag("!--no-lra-bool-cache-and", opts.lra_bool_cache_and,
-                 "Disable QF_LRA Boolean AND SAT-literal reuse");
-    app.add_flag("!--no-lra-bool-cache-or", opts.lra_bool_cache_or,
-                 "Disable QF_LRA Boolean OR SAT-literal reuse");
-    app.add_flag("!--no-lra-bool-cache-eq", opts.lra_bool_cache_eq,
-                 "Disable QF_LRA Boolean equality/distinct SAT-literal reuse");
-    app.add_flag("!--no-lra-term-cache", opts.lra_term_cache,
-                 "Disable QF_LRA arithmetic term normalization reuse");
-    app.add_flag("!--no-lra-eq-elim", opts.lra_eq_elim,
-                 "Disable QF_LRA top-level linear equality elimination");
-    app.add_option("--lra-eq-elim-limit", opts.lra_eq_elim_limit,
-                   "Maximum top-level QF_LRA equality rows processed for elimination")
+
+    auto* lra_group = app.add_option_group("QF_LRA");
+    lra_group->add_flag("--lra-print-conflict-size", opts.lra_print_conflict_size,
+                        "Debug: print the minimized LRA conflict clause size after UNSAT QF_LRA checks");
+    lra_group->add_flag("!--no-lra-bool-cache", opts.lra_bool_cache,
+                        "Disable QF_LRA Boolean compound SAT-literal reuse");
+    lra_group->add_flag("!--no-lra-bool-cache-and", opts.lra_bool_cache_and,
+                        "Disable QF_LRA Boolean AND SAT-literal reuse");
+    lra_group->add_flag("!--no-lra-bool-cache-or", opts.lra_bool_cache_or,
+                        "Disable QF_LRA Boolean OR SAT-literal reuse");
+    lra_group->add_flag("!--no-lra-bool-cache-eq", opts.lra_bool_cache_eq,
+                        "Disable QF_LRA Boolean equality/distinct SAT-literal reuse");
+    lra_group->add_flag("!--no-lra-term-cache", opts.lra_term_cache,
+                        "Disable QF_LRA arithmetic term normalization reuse");
+    lra_group->add_flag("!--no-lra-eq-elim", opts.lra_eq_elim,
+                        "Disable QF_LRA top-level linear equality elimination");
+    lra_group->add_option("--lra-eq-elim-limit", opts.lra_eq_elim_limit,
+                          "Maximum top-level QF_LRA equality rows processed for elimination")
        ->check(CLI::NonNegativeNumber);
-    app.add_flag("!--no-lra-const-simplify", opts.lra_const_simplify,
-                 "Disable QF_LRA constant/connective simplification before SAT/LRA encoding");
-    app.add_flag("!--no-lra-finite-domain-bounds", opts.lra_finite_domain_bounds,
-                 "Disable QF_LRA SAT links between finite-domain choices and simple bounds");
-    app.add_flag("--lra-finite-domain-eqdefs", opts.lra_finite_domain_eq_defs,
-                 "Enable QF_LRA SAT propagation for variable equalities over finite-domain choices");
-    app.add_flag("!--no-lra-finite-domain-eqdefs", opts.lra_finite_domain_eq_defs,
-                 "Disable QF_LRA SAT propagation for variable equalities over finite-domain choices");
-    app.add_flag("--lra-finite-domain-branch", opts.lra_finite_domain_branch,
-                 "Enable experimental QF_LRA value-2 finite-domain choice literals as SAT decision hints");
-    app.add_flag("!--no-lra-finite-domain-branch", opts.lra_finite_domain_branch,
-                 "Disable QF_LRA finite-domain choice literals as SAT decision hints");
-    app.add_flag("--lra-direct-eq-atoms", opts.lra_direct_eq_atoms,
-                 "Enable experimental direct LRA Eq atoms for positive top-level QF_LRA equalities");
-    app.add_flag("!--no-lra-incremental-prop-scan", opts.lra_incremental_prop_scan,
-                 "Disable dirty-variable scanning for QF_LRA propagation discovery");
-    app.add_flag("--lra-row-bound-prop", opts.lra_row_bound_prop,
-                 "Enable QF_LRA propagation from tableau row-derived bounds");
-    app.add_flag("!--no-lra-row-bound-prop", opts.lra_row_bound_prop,
-                 "Disable QF_LRA row-bound propagation");
-    app.add_flag("--lra-row-bound-dirty-scan", opts.lra_row_bound_dirty_scan,
-                 "Restrict QF_LRA row-bound propagation to rows touching recently changed bounds");
-    app.add_option("--lra-row-bound-prop-budget", opts.lra_row_bound_prop_budget,
-                   "Maximum QF_LRA row-bound propagation candidates per discovery (0 = unlimited)");
-    app.add_flag("--stats", g_print_stats, "Print solver statistics to stderr after solving");
+    lra_group->add_flag("!--no-lra-const-simplify", opts.lra_const_simplify,
+                        "Disable QF_LRA constant/connective simplification before SAT/LRA encoding");
+    lra_group->add_flag("!--no-lra-finite-domain-bounds", opts.lra_finite_domain_bounds,
+                        "Disable QF_LRA SAT links between finite-domain choices and simple bounds");
+    lra_group->add_flag("--lra-finite-domain-eqdefs", opts.lra_finite_domain_eq_defs,
+                        "Enable QF_LRA SAT propagation for variable equalities over finite-domain choices");
+    lra_group->add_flag("!--no-lra-finite-domain-eqdefs", opts.lra_finite_domain_eq_defs,
+                        "Disable QF_LRA SAT propagation for variable equalities over finite-domain choices");
+    lra_group->add_flag("--lra-finite-domain-branch", opts.lra_finite_domain_branch,
+                        "Enable experimental QF_LRA value-2 finite-domain choice literals as SAT decision hints");
+    lra_group->add_flag("!--no-lra-finite-domain-branch", opts.lra_finite_domain_branch,
+                        "Disable QF_LRA finite-domain choice literals as SAT decision hints");
+    lra_group->add_flag("--lra-direct-eq-atoms", opts.lra_direct_eq_atoms,
+                        "Enable experimental direct LRA Eq atoms for positive top-level QF_LRA equalities");
+    lra_group->add_flag("!--no-lra-incremental-prop-scan", opts.lra_incremental_prop_scan,
+                        "Disable dirty-variable scanning for QF_LRA propagation discovery");
+    lra_group->add_flag("--lra-row-bound-prop", opts.lra_row_bound_prop,
+                        "Enable QF_LRA propagation from tableau row-derived bounds");
+    lra_group->add_flag("!--no-lra-row-bound-prop", opts.lra_row_bound_prop,
+                        "Disable QF_LRA row-bound propagation");
+    lra_group->add_flag("--lra-row-bound-dirty-scan", opts.lra_row_bound_dirty_scan,
+                        "Restrict QF_LRA row-bound propagation to rows touching recently changed bounds");
+    lra_group->add_option("--lra-row-bound-prop-budget", opts.lra_row_bound_prop_budget,
+                          "Maximum QF_LRA row-bound propagation candidates per discovery (0 = unlimited)");
+
+    auto* diagnostics_group = app.add_option_group("Diagnostics");
+    diagnostics_group->add_flag("--stats", g_print_stats, "Print solver statistics to stderr after solving");
 
     CLI11_PARSE(app, argc, argv);
 

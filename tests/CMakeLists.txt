@@ -628,6 +628,15 @@ add_test(
         "out=$($<TARGET_FILE:llm2smt> --quiet ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t01_unsat_direct.smt2 2>&1) && \
          test \"$out\" = unsat"
 )
+add_test(
+    NAME "cli/help_groups_solver_options"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --help > ${CMAKE_BINARY_DIR}/llm2smt_help.out && \
+         grep -q '\\[Option Group: QF_LRA\\]' ${CMAKE_BINARY_DIR}/llm2smt_help.out && \
+         grep -q '\\[Option Group: QF_UF/EUF\\]' ${CMAKE_BINARY_DIR}/llm2smt_help.out && \
+         grep -q '\\[Option Group: Theory propagation\\]' ${CMAKE_BINARY_DIR}/llm2smt_help.out && \
+         grep -A80 '\\[Option Group: QF_LRA\\]' ${CMAKE_BINARY_DIR}/llm2smt_help.out | grep -q -- '--no-lra-eq-elim'"
+)
 
 # ── Unit test binaries ────────────────────────────────────────────────────────
 add_executable(test_node_manager test_node_manager.cpp)
