@@ -21,10 +21,15 @@ static BigInt gcd_big(BigInt a, BigInt b) {
 
 void Rational::normalize() {
     if (den == 0) throw std::runtime_error("zero denominator in rational");
+    if (num == 0) {
+        den = 1;
+        return;
+    }
     if (den < 0) {
         num = -num;
         den = -den;
     }
+    if (den == 1) return;
     BigInt g = gcd_big(num, den);
     num /= g;
     den /= g;

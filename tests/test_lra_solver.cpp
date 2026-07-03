@@ -14,6 +14,33 @@ TEST(DeltaRational, OrdersPositiveInfinitesimal) {
     EXPECT_EQ((five_plus_delta - five), DeltaRational(Rational(0), Rational(1)));
 }
 
+TEST(Rational, FastPathsPreserveCanonicalForm) {
+    Rational zero(0);
+    zero += Rational(BigInt(2), BigInt(4));
+    EXPECT_EQ(zero, Rational(BigInt(1), BigInt(2)));
+    EXPECT_EQ(zero.den, BigInt(2));
+
+    Rational ints(3);
+    ints += Rational(4);
+    EXPECT_EQ(ints, Rational(7));
+    EXPECT_EQ(ints.den, BigInt(1));
+
+    Rational product(BigInt(2), BigInt(3));
+    product *= Rational(0);
+    EXPECT_EQ(product, Rational(0));
+    EXPECT_EQ(product.den, BigInt(1));
+
+    Rational neg(BigInt(3), BigInt(5));
+    neg *= Rational(-1);
+    EXPECT_EQ(neg, Rational(BigInt(-3), BigInt(5)));
+    EXPECT_EQ(neg.den, BigInt(5));
+
+    Rational quotient(BigInt(6), BigInt(7));
+    quotient /= Rational(-1);
+    EXPECT_EQ(quotient, Rational(BigInt(-6), BigInt(7)));
+    EXPECT_EQ(quotient.den, BigInt(7));
+}
+
 TEST(LraSolver, StrictBoundModelUsesConcreteRational) {
     LraSolver solver;
     solver.declare_real("x");

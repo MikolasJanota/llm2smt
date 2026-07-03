@@ -37,6 +37,16 @@ public:
     Rational operator-() const { return Rational(-num, den); }
 
     Rational& operator+=(const Rational& o) {
+        if (o.num == 0) return *this;
+        if (num == 0) {
+            num = o.num;
+            den = o.den;
+            return *this;
+        }
+        if (den == 1 && o.den == 1) {
+            num += o.num;
+            return *this;
+        }
         num = num * o.den + o.num * den;
         den *= o.den;
         normalize();
@@ -44,6 +54,30 @@ public:
     }
     Rational& operator-=(const Rational& o) { return *this += -o; }
     Rational& operator*=(const Rational& o) {
+        if (num == 0 || o.num == 0) {
+            num = 0;
+            den = 1;
+            return *this;
+        }
+        if (o.num == o.den) return *this;
+        if (num == den) {
+            num = o.num;
+            den = o.den;
+            return *this;
+        }
+        if (o.num == -o.den) {
+            num = -num;
+            return *this;
+        }
+        if (num == -den) {
+            num = -o.num;
+            den = o.den;
+            return *this;
+        }
+        if (den == 1 && o.den == 1) {
+            num *= o.num;
+            return *this;
+        }
         num *= o.num;
         den *= o.den;
         normalize();
@@ -51,6 +85,15 @@ public:
     }
     Rational& operator/=(const Rational& o) {
         if (o.num == 0) throw std::runtime_error("division by zero in rational constant");
+        if (num == 0) {
+            den = 1;
+            return *this;
+        }
+        if (o.num == o.den) return *this;
+        if (o.num == -o.den) {
+            num = -num;
+            return *this;
+        }
         num *= o.den;
         den *= o.num;
         normalize();

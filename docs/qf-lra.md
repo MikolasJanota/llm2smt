@@ -178,20 +178,20 @@ still incomplete in the native path:
 
 The current full QF_LRA evaluation artifacts from 2026-07-03 are:
 
-- native: `eval_results/full-no-recompute-pivot-20260703.tsv`;
+- native: `eval_results/full-rational-fastpaths-20260703.tsv`;
 - Z3 reference: `eval_results/full-z3-20260703-093850.tsv`.
 
 Both runs use the 137-file suite from `scripts/qf_lra_eval.py` with a 20s
-per-file timeout. Native solves 107/137 with 30 timeouts, no errors,
-42 `tta_startup` solves, and average PAR2 9.602. Z3 solves 127/137 with
+per-file timeout. Native solves 110/137 with 27 timeouts, no errors,
+45 `tta_startup` solves, and average PAR2 8.731. Z3 solves 127/137 with
 10 timeouts, no errors, 62 `tta_startup` solves, and average PAR2 3.402.
 There are no answer disagreements on the files solved by both solvers.
 
 All native timeouts are in `QF_LRA/tta_startup`. Compared with the previous
-20s full artifact `eval_results/full-current-20260703-093619.tsv`, the current
-solver improves from 99 to 107 solved files with no lost solves and no answer
-changes. The eight newly solved files are all `tta_startup` inductive
-instances, including the profiled `7nodes.missing` and `7nodes.synchro` cases.
+20s full artifact `eval_results/full-no-recompute-pivot-20260703.tsv`, the
+current solver improves from 107 to 110 solved files with no lost solves and no
+answer changes. The three newly solved files are all `tta_startup` inductive
+instances: `10nodes.missing`, `4nodes.abstract`, and `8nodes.missing`.
 
 Major QF_LRA solver changes should also be followed by a bounded YinYang
 fuzzing pass against a reference solver before treating the change as accepted.
@@ -227,6 +227,14 @@ with logs synced under `slurm_logs/qflra-pivot-*`. The `check` and `keymaera`
 seed directories completed with 0 bug triggers. The `spider_benchmarks` and
 `tta_startup` runs hit the 300s fuzzing budget before completing all seeds, but
 produced no bug artifacts in `yinyang_bugs`.
+
+A follow-up profile of `simple_startup_9nodes.missing.induct.smt2` after the
+pivot fix still showed `Rational::normalize()` and multiprecision arithmetic
+as the main hotspots, this time mostly inside row rewriting in `pivot()` and
+incremental `update()`. The accepted rational fast paths avoid gcd/modulus work
+for already-canonical zero, integer, one, and minus-one arithmetic.
+This change was followed by SLURM YinYang job `107627` on the QF_LRA `check`
+seeds; it processed 2 valid seeds and found 0 bug triggers.
 
 ## Models
 
@@ -306,22 +314,23 @@ earlier run.
 | 2026-07-02 | `--no-lra-eq-elim` ablation | 20 s | 91 / 137 | 27 / 72 | 46 | 0 | 15.189 s | `llm2smt-lra-noeq20-107616` | Same solved count and marginally lower PAR2 than equality elimination; treat equality elimination as not yet a demonstrated aggregate performance win. |
 | 2026-07-03 | native after finite-domain equality propagation | 20 s | 99 / 137 | 34 / 72 | 38 | 0 | 11.758 s | `full-current-20260703-093619` | Accepted baseline before profiling; all remaining timeouts are in `tta_startup`. |
 | 2026-07-03 | no full post-pivot beta recomputation | 20 s | 107 / 137 | 42 / 72 | 30 | 0 | 9.602 s | `full-no-recompute-pivot-20260703` | Accepted; profile-driven simplex change gains 8 `tta_startup` inductive files, loses none, and has no Z3 answer disagreements. |
+| 2026-07-03 | rational zero/integer/unit fast paths | 20 s | 110 / 137 | 45 / 72 | 27 | 0 | 8.731 s | `full-rational-fastpaths-20260703` | Accepted; exact arithmetic fast paths gain 3 more `tta_startup` inductive files, lose none, and have no Z3 answer disagreements. |
 
 Most native rows in this log solve `check`, `keymaera`, and
 `spider_benchmarks` completely; the moving metric is usually `tta_startup`.
 The 2026-07-03 20-second rows solve `spider_benchmarks` completely while
 continuing to improve `tta_startup` inductive cases. Where compared, no answer
 disagreements with Z3 were observed on commonly solved files. Row-bound
-propagation remains available by CLI option because it uniquely solves some
-induction instances, but it is not the default because the current PAR2 and
-solved-count results are worse.
+propagation is kept as the default in its dirty-row form because it contributes
+useful theory literals on the current aggregate run, while the older immediate
+full-row scan remains rejected by the 2026-07-01 ablation row.
 
 The next optimization targets should be chosen from fast-Z3/slow-native
 `tta_startup` files, for example:
 
-- `simple_startup_8nodes.missing.induct.smt2`;
 - `simple_startup_9nodes.missing.induct.smt2`;
 - `simple_startup_10nodes.synchro.induct.smt2`.
+- `simple_startup_11nodes.missing.induct.smt2`.
 
 Raw artifacts for the rows above are kept in the workspace as matching
 `eval_results/*.tsv` and `eval_results/*.summary` files.
