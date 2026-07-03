@@ -193,6 +193,17 @@ solver improves from 91 to 99 solved files with no newly timed-out files in the
 shared comparison. The newly solved files include `op_seen_less2.base.smt2` and
 seven `tta_startup` inductive instances.
 
+Major QF_LRA solver changes should also be followed by a bounded YinYang
+fuzzing pass against a reference solver before treating the change as accepted.
+Use `scripts/yinyang_fuzz.sh` locally for quick smoke fuzzing, or submit the
+same wrapper through SLURM for longer seed-directory runs. At minimum, fuzz the
+QF_LRA `check` seeds after parser/theory changes; when the change affects
+preprocessing, equality handling, finite-domain encodings, or theory
+propagation, also fuzz `keymaera`, `spider_benchmarks`, and representative
+`tta_startup` seeds. Preserve the SLURM logs and any `yinyang_bugs` artifacts
+with the evaluation notes so performance changes are paired with differential
+correctness evidence.
+
 ## Models
 
 For `sat`, `get-model` prints declared Real constants. The initial model
