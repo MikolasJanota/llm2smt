@@ -204,6 +204,16 @@ propagation, also fuzz `keymaera`, `spider_benchmarks`, and representative
 with the evaluation notes so performance changes are paired with differential
 correctness evidence.
 
+When a target instance or benchmark run takes long enough to drive an
+optimization, collect old-fashioned profiler evidence before committing to a
+hypothesis. Run the native solver under a sampling profiler such as `perf`,
+`gprof`, or Callgrind on the slow SMT-LIB file, keep the command and top hot
+functions with the evaluation notes, and use the profile to decide whether the
+next change belongs in SAT encoding, arithmetic preprocessing, CaDiCaL search,
+simplex checking, propagation, or model construction. Native `--stats` counters
+are useful context, but they are not a substitute for a CPU profile when the
+wall time is dominated by an unknown hotspot.
+
 ## Models
 
 For `sat`, `get-model` prints declared Real constants. The initial model
