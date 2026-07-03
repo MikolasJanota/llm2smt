@@ -178,20 +178,21 @@ still incomplete in the native path:
 
 The current full QF_LRA evaluation artifacts from 2026-07-03 are:
 
-- native: `eval_results/full-rational-fastpaths-20260703.tsv`;
+- native: `eval_results/full-rational-sign-fastpaths-20260703.tsv`;
 - Z3 reference: `eval_results/full-z3-20260703-093850.tsv`.
 
 Both runs use the 137-file suite from `scripts/qf_lra_eval.py` with a 20s
-per-file timeout. Native solves 110/137 with 27 timeouts, no errors,
-45 `tta_startup` solves, and average PAR2 8.731. Z3 solves 127/137 with
+per-file timeout. Native solves 116/137 with 21 timeouts, no errors,
+51 `tta_startup` solves, and average PAR2 7.290. Z3 solves 127/137 with
 10 timeouts, no errors, 62 `tta_startup` solves, and average PAR2 3.402.
 There are no answer disagreements on the files solved by both solvers.
 
 All native timeouts are in `QF_LRA/tta_startup`. Compared with the previous
-20s full artifact `eval_results/full-no-recompute-pivot-20260703.tsv`, the
-current solver improves from 107 to 110 solved files with no lost solves and no
-answer changes. The three newly solved files are all `tta_startup` inductive
-instances: `10nodes.missing`, `4nodes.abstract`, and `8nodes.missing`.
+20s full artifact `eval_results/full-rational-fastpaths-20260703.tsv`, the
+current solver improves from 110 to 116 solved files with no lost solves and no
+answer changes. The six newly solved files are all `tta_startup` inductive
+instances: `6nodes.bug`, `9nodes.missing`, `10nodes.synchro`, `11nodes.bug`,
+`11nodes.missing`, and `12nodes.missing`.
 
 Major QF_LRA solver changes should also be followed by a bounded YinYang
 fuzzing pass against a reference solver before treating the change as accepted.
@@ -234,6 +235,17 @@ as the main hotspots, this time mostly inside row rewriting in `pivot()` and
 incremental `update()`. The accepted rational fast paths avoid gcd/modulus work
 for already-canonical zero, integer, one, and minus-one arithmetic.
 This change was followed by SLURM YinYang job `107627` on the QF_LRA `check`
+seeds; it processed 2 valid seeds and found 0 bug triggers.
+
+A second bounded profile of the same target after the first rational fast paths
+still spent most sampled time under `LraSolver::check()`, with
+`Rational::normalize()`, multiprecision multiplication, and `std::map` row
+lookups inside `pivot()` and `update()` as the dominant leaf costs. The next
+accepted arithmetic fast path avoids constructing normalized temporaries for
+sign flips and subtraction, and short-circuits same-denominator and opposite
+sign comparisons. This makes `simple_startup_9nodes.missing.induct.smt2` solve
+inside the 20s cutoff and improves the full 137-file PAR2 from 8.731 to 7.290.
+This change was followed by SLURM YinYang job `107629` on the QF_LRA `check`
 seeds; it processed 2 valid seeds and found 0 bug triggers.
 
 ## Models
@@ -315,6 +327,7 @@ earlier run.
 | 2026-07-03 | native after finite-domain equality propagation | 20 s | 99 / 137 | 34 / 72 | 38 | 0 | 11.758 s | `full-current-20260703-093619` | Accepted baseline before profiling; all remaining timeouts are in `tta_startup`. |
 | 2026-07-03 | no full post-pivot beta recomputation | 20 s | 107 / 137 | 42 / 72 | 30 | 0 | 9.602 s | `full-no-recompute-pivot-20260703` | Accepted; profile-driven simplex change gains 8 `tta_startup` inductive files, loses none, and has no Z3 answer disagreements. |
 | 2026-07-03 | rational zero/integer/unit fast paths | 20 s | 110 / 137 | 45 / 72 | 27 | 0 | 8.731 s | `full-rational-fastpaths-20260703` | Accepted; exact arithmetic fast paths gain 3 more `tta_startup` inductive files, lose none, and have no Z3 answer disagreements. |
+| 2026-07-03 | rational sign/subtraction/comparison fast paths | 20 s | 116 / 137 | 51 / 72 | 21 | 0 | 7.290 s | `full-rational-sign-fastpaths-20260703` | Accepted; profile-driven exact arithmetic fast paths gain 6 more `tta_startup` inductive files, lose none, and have no Z3 answer disagreements. |
 
 Most native rows in this log solve `check`, `keymaera`, and
 `spider_benchmarks` completely; the moving metric is usually `tta_startup`.
@@ -329,8 +342,9 @@ The next optimization targets should be chosen from fast-Z3/slow-native
 `tta_startup` files, for example:
 
 - `simple_startup_9nodes.missing.induct.smt2`;
-- `simple_startup_10nodes.synchro.induct.smt2`.
-- `simple_startup_11nodes.missing.induct.smt2`.
+- `simple_startup_9nodes.bug.induct.smt2`;
+- `simple_startup_11nodes.synchro.induct.smt2`;
+- `simple_startup_12nodes.bug.induct.smt2`.
 
 Raw artifacts for the rows above are kept in the workspace as matching
 `eval_results/*.tsv` and `eval_results/*.summary` files.

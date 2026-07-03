@@ -39,6 +39,18 @@ TEST(Rational, FastPathsPreserveCanonicalForm) {
     quotient /= Rational(-1);
     EXPECT_EQ(quotient, Rational(BigInt(-6), BigInt(7)));
     EXPECT_EQ(quotient.den, BigInt(7));
+
+    Rational half(BigInt(1), BigInt(2));
+    Rational neg_half = -half;
+    EXPECT_EQ(neg_half, Rational(BigInt(-1), BigInt(2)));
+    EXPECT_EQ(neg_half.den, BigInt(2));
+
+    Rational subtract(BigInt(7), BigInt(5));
+    subtract -= Rational(BigInt(2), BigInt(5));
+    EXPECT_EQ(subtract, Rational(1));
+    EXPECT_EQ(subtract.den, BigInt(1));
+
+    EXPECT_LT(Rational(BigInt(1), BigInt(3)), Rational(BigInt(2), BigInt(3)));
 }
 
 TEST(LraSolver, StrictBoundModelUsesConcreteRational) {

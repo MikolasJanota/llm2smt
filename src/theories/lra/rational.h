@@ -34,7 +34,11 @@ public:
     bool is_zero() const { return num == 0; }
     std::string str() const;
 
-    Rational operator-() const { return Rational(-num, den); }
+    Rational operator-() const {
+        Rational r = *this;
+        r.num = -r.num;
+        return r;
+    }
 
     Rational& operator+=(const Rational& o) {
         if (o.num == 0) return *this;
@@ -52,7 +56,22 @@ public:
         normalize();
         return *this;
     }
-    Rational& operator-=(const Rational& o) { return *this += -o; }
+    Rational& operator-=(const Rational& o) {
+        if (o.num == 0) return *this;
+        if (num == 0) {
+            num = -o.num;
+            den = o.den;
+            return *this;
+        }
+        if (den == 1 && o.den == 1) {
+            num -= o.num;
+            return *this;
+        }
+        num = num * o.den - o.num * den;
+        den *= o.den;
+        normalize();
+        return *this;
+    }
     Rational& operator*=(const Rational& o) {
         if (num == 0 || o.num == 0) {
             num = 0;
@@ -109,6 +128,13 @@ public:
         return a.num == b.num && a.den == b.den;
     }
     friend std::strong_ordering operator<=>(const Rational& a, const Rational& b) {
+        if (a.den == b.den) {
+            if (a.num < b.num) return std::strong_ordering::less;
+            if (a.num > b.num) return std::strong_ordering::greater;
+            return std::strong_ordering::equal;
+        }
+        if (a.num < 0 && b.num >= 0) return std::strong_ordering::less;
+        if (a.num >= 0 && b.num < 0) return std::strong_ordering::greater;
         BigInt lhs = a.num * b.den;
         BigInt rhs = b.num * a.den;
         if (lhs < rhs) return std::strong_ordering::less;
@@ -140,7 +166,11 @@ struct DeltaRational {
         delta += o.delta;
         return *this;
     }
-    DeltaRational& operator-=(const DeltaRational& o) { return *this += -o; }
+    DeltaRational& operator-=(const DeltaRational& o) {
+        real -= o.real;
+        delta -= o.delta;
+        return *this;
+    }
     DeltaRational& operator*=(const Rational& q) {
         real *= q;
         delta *= q;
