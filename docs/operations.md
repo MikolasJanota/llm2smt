@@ -229,6 +229,11 @@ python3 scripts/smac_llm2smt.py summarize \
 
 ## Performance Investigation Notes
 
+Use [](performance-loop.md) for the standard candidate loop: hypothesis,
+verification, default/candidate quick and hard evals, report generation, and
+decision rules. The notes below are the lightweight checklist for individual
+changes.
+
 The persistent investigation notes live in `CLAUDE.md`. They include measured
 behavior for NEQ, PEQ, firewire-tree, finite-domain preprocessing, equality
 bridging, and theory propagation schedules.

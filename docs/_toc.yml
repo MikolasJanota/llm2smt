@@ -6,5 +6,6 @@ chapters:
   - file: sat-euf
   - file: qf-lra
   - file: preprocessing
+  - file: performance-loop
   - file: proofs-models
   - file: operations
