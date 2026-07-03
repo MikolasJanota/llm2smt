@@ -345,22 +345,15 @@ bool LraSolver::pivot(int basic, int nonbasic) {
     return true;
 }
 
-void LraSolver::recompute_basic_values() {
-    for (int b : basic_vars_) {
-        int r = row_of_basic_[b];
-        DeltaRational value = rows_[r].constant;
-        for (const auto& [x, a] : rows_[r].coeffs) value += beta_[x] * a;
-        beta_[b] = value;
-    }
-}
-
 bool LraSolver::pivot_and_update(int basic, int nonbasic, const DeltaRational& value) {
     // Dutertre/de Moura Figure 3.1 PivotAndUpdate.
     if (!pivot(basic, nonbasic)) return false;
-    recompute_basic_values();
     int r = row_of_basic_[nonbasic];
     auto it = rows_[r].coeffs.find(basic);
     if (it == rows_[r].coeffs.end() || it->second.is_zero()) return false;
+
+    // Pivoting rewrites the tableau algebraically, so the current beta values
+    // still satisfy every row. Only the old basic, now nonbasic, needs to move.
     DeltaRational rest = rows_[r].constant;
     for (const auto& [x, a] : rows_[r].coeffs) {
         if (x == basic) continue;

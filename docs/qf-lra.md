@@ -178,20 +178,20 @@ still incomplete in the native path:
 
 The current full QF_LRA evaluation artifacts from 2026-07-03 are:
 
-- native: `eval_results/full-current-20260703-093619.tsv`;
+- native: `eval_results/full-no-recompute-pivot-20260703.tsv`;
 - Z3 reference: `eval_results/full-z3-20260703-093850.tsv`.
 
 Both runs use the 137-file suite from `scripts/qf_lra_eval.py` with a 20s
-per-file timeout. Native solves 99/137 with 38 timeouts, no errors,
-34 `tta_startup` solves, and average PAR2 11.758. Z3 solves 127/137 with
+per-file timeout. Native solves 107/137 with 30 timeouts, no errors,
+42 `tta_startup` solves, and average PAR2 9.602. Z3 solves 127/137 with
 10 timeouts, no errors, 62 `tta_startup` solves, and average PAR2 3.402.
-There are no answer disagreements on the 99 files solved by both solvers.
+There are no answer disagreements on the files solved by both solvers.
 
-All native timeouts are in `QF_LRA/tta_startup`. Compared with the earlier
-20s full artifact `eval_results/llm2smt-lra-eqelim20-107611.tsv`, the current
-solver improves from 91 to 99 solved files with no newly timed-out files in the
-shared comparison. The newly solved files include `op_seen_less2.base.smt2` and
-seven `tta_startup` inductive instances.
+All native timeouts are in `QF_LRA/tta_startup`. Compared with the previous
+20s full artifact `eval_results/full-current-20260703-093619.tsv`, the current
+solver improves from 99 to 107 solved files with no lost solves and no answer
+changes. The eight newly solved files are all `tta_startup` inductive
+instances, including the profiled `7nodes.missing` and `7nodes.synchro` cases.
 
 Major QF_LRA solver changes should also be followed by a bounded YinYang
 fuzzing pass against a reference solver before treating the change as accepted.
@@ -213,6 +213,20 @@ next change belongs in SAT encoding, arithmetic preprocessing, CaDiCaL search,
 simplex checking, propagation, or model construction. Native `--stats` counters
 are useful context, but they are not a substitute for a CPU profile when the
 wall time is dominated by an unknown hotspot.
+
+The 2026-07-03 CPU profiles in `profile_results/qflra-20260703` showed that
+the slow `tta_startup` cases were dominated by exact rational arithmetic during
+simplex pivoting, especially `Rational::normalize()` called through
+`LraSolver::recompute_basic_values()`. The accepted fix removes that full
+post-pivot recomputation: an algebraic pivot preserves the current assignment,
+so `pivot_and_update` only moves the old basic variable after it becomes
+nonbasic.
+
+The same change was followed by SLURM YinYang jobs `107621` through `107626`,
+with logs synced under `slurm_logs/qflra-pivot-*`. The `check` and `keymaera`
+seed directories completed with 0 bug triggers. The `spider_benchmarks` and
+`tta_startup` runs hit the 300s fuzzing budget before completing all seeds, but
+produced no bug artifacts in `yinyang_bugs`.
 
 ## Models
 
@@ -290,11 +304,13 @@ earlier run.
 | 2026-07-01 | adaptive row-bound threshold 500 | 20 s | 84 / 137 | 19 / 72 | 53 | 0 | 16.972 s | `llm2smt-lra-adapt20-107598` | Rejected and reverted; worse than the current default. |
 | 2026-07-02 | equality elimination default on | 20 s | 91 / 137 | 27 / 72 | 46 | 0 | 15.201 s | `llm2smt-lra-eqelim20-107611` | Improves over the previous native 20 s row, but the paired ablation below shows equality elimination itself is neutral on this run. |
 | 2026-07-02 | `--no-lra-eq-elim` ablation | 20 s | 91 / 137 | 27 / 72 | 46 | 0 | 15.189 s | `llm2smt-lra-noeq20-107616` | Same solved count and marginally lower PAR2 than equality elimination; treat equality elimination as not yet a demonstrated aggregate performance win. |
+| 2026-07-03 | native after finite-domain equality propagation | 20 s | 99 / 137 | 34 / 72 | 38 | 0 | 11.758 s | `full-current-20260703-093619` | Accepted baseline before profiling; all remaining timeouts are in `tta_startup`. |
+| 2026-07-03 | no full post-pivot beta recomputation | 20 s | 107 / 137 | 42 / 72 | 30 | 0 | 9.602 s | `full-no-recompute-pivot-20260703` | Accepted; profile-driven simplex change gains 8 `tta_startup` inductive files, loses none, and has no Z3 answer disagreements. |
 
 Most native rows in this log solve `check`, `keymaera`, and
 `spider_benchmarks` completely; the moving metric is usually `tta_startup`.
-The 2026-07-02 20-second rows leave one `spider_benchmarks` instance timed out
-while solving more `tta_startup` base cases. Where compared, no answer
+The 2026-07-03 20-second rows solve `spider_benchmarks` completely while
+continuing to improve `tta_startup` inductive cases. Where compared, no answer
 disagreements with Z3 were observed on commonly solved files. Row-bound
 propagation remains available by CLI option because it uniquely solves some
 induction instances, but it is not the default because the current PAR2 and
@@ -303,9 +319,9 @@ solved-count results are worse.
 The next optimization targets should be chosen from fast-Z3/slow-native
 `tta_startup` files, for example:
 
-- `simple_startup_10nodes.missing.induct.smt2`;
-- `simple_startup_12nodes.abstract.base.smt2`;
-- `simple_startup_14nodes.abstract.base.smt2`.
+- `simple_startup_8nodes.missing.induct.smt2`;
+- `simple_startup_9nodes.missing.induct.smt2`;
+- `simple_startup_10nodes.synchro.induct.smt2`.
 
 Raw artifacts for the rows above are kept in the workspace as matching
 `eval_results/*.tsv` and `eval_results/*.summary` files.

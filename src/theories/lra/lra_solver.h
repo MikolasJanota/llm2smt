@@ -160,7 +160,6 @@ private:
     void update(int x, const DeltaRational& v);
     bool pivot_and_update(int basic, int nonbasic, const DeltaRational& value);
     bool pivot(int basic, int nonbasic);
-    void recompute_basic_values();
     std::vector<int> explain_lower_conflict(int basic) const;
     std::vector<int> explain_upper_conflict(int basic) const;
     void rebuild_model();
