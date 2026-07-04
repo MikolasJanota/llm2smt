@@ -21,6 +21,9 @@ Every performance candidate should move through the same stages:
 5. Decide explicitly.
    Accept as default, keep behind an option, reject/revert, or send to full
    evaluation.
+6. Select the next target from reference deltas.
+   When Z3/OpenSMT TSVs are available, rank files where a reference is fast and
+   native remains slow. Use that ranked list to choose the next diagnosis target.
 
 Use the local loop helper:
 
@@ -40,9 +43,10 @@ By default this runs:
 - `scripts/qf_lra_eval.py --suite hard` for default and candidate.
 
 Reports are written under `eval_results/loop_reports/`. The report contains the
-commands, artifacts, PAR2 deltas, and a decision hint. The hint is advisory; the
-maintainer decision is still based on correctness, aggregate behavior, and code
-quality.
+commands, artifacts, PAR2 deltas, and a decision hint. If reference TSVs are
+provided, the report also includes a ranked next-target table with rough
+formula-shape counters. The hint is advisory; the maintainer decision is still
+based on correctness, aggregate behavior, and code quality.
 
 Useful variants:
 
@@ -61,6 +65,14 @@ python3 scripts/qf_lra_perf_loop.py \
   --suite quick \
   --suite hard \
   --suite full
+
+# Add reference TSVs so the report says what to inspect next.
+python3 scripts/qf_lra_perf_loop.py \
+  --candidate my-idea \
+  --opts='--my-flag' \
+  --suite full \
+  --ref-tsv Z3=eval_results/full-z3-60s-20260703.tsv \
+  --ref-tsv OpenSMT=eval_results/full-opensmt292-60s-20260703.tsv
 
 # Print commands without running them.
 python3 scripts/qf_lra_perf_loop.py \
@@ -108,7 +120,7 @@ is new ideas. Do not start from the current patch. Start from one of these
 sources:
 
 - Reference-solver delta:
-  compare native, Z3, and OpenSMT TSVs; choose a file where both references are
+  pass Z3 and OpenSMT TSVs with `--ref-tsv`; choose a file where a reference is
   fast and native is slow; classify the formula shape and native counters.
 - Stats mismatch:
   use `scripts/compare_z3_stats.py` on one target and look for missing native

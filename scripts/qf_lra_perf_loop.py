@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import csv
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
@@ -41,6 +43,31 @@ def parse_summary(path: Path) -> dict[str, str]:
             key, value = line.split("=", 1)
             data[key] = value
     return data
+
+
+def parse_tsv(path: Path) -> dict[str, dict[str, str]]:
+    with path.open(newline="") as f:
+        return {row["file"]: row for row in csv.DictReader(f, delimiter="\t")}
+
+
+def parse_ref_tsvs(specs: list[str]) -> list[tuple[str, Path, dict[str, dict[str, str]]]]:
+    refs: list[tuple[str, Path, dict[str, dict[str, str]]]] = []
+    for spec in specs:
+        if "=" in spec:
+            label, raw_path = spec.split("=", 1)
+        else:
+            raw_path = spec
+            label = Path(raw_path).stem
+        path = Path(raw_path)
+        refs.append((label, path, parse_tsv(path)))
+    return refs
+
+
+def row_seconds(row: dict[str, str]) -> float:
+    try:
+        return float(row.get("seconds", "0"))
+    except ValueError:
+        return 0.0
 
 
 def as_int(data: dict[str, str], key: str) -> int:
@@ -76,6 +103,135 @@ def eval_cmd(
     if opts:
         parts.append(f"--opts={shlex.quote(opts)}")
     return " ".join(parts)
+
+
+def shape_metrics(root: Path, file: str) -> dict[str, int]:
+    text = (root / file).read_text(errors="replace")
+    return {
+        "bytes": len(text),
+        "assert": text.count("(assert"),
+        "or": text.count("(or"),
+        "and": text.count("(and"),
+        "ite": text.count("(ite"),
+        "eq": text.count("(="),
+        "le": text.count("(<="),
+        "lt": text.count("(<"),
+        "ge": text.count("(>="),
+        "gt": text.count("(>"),
+        "distinct": text.count("(distinct"),
+        "let": text.count("(let"),
+        "numerals": len(re.findall(r"(?<![A-Za-z_./-])[-+]?[0-9]+(?:/[0-9]+|\.[0-9]+)?", text)),
+    }
+
+
+def shape_hint(metrics: dict[str, int]) -> str:
+    hints: list[str] = []
+    if metrics["ite"]:
+        hints.append("ite")
+    if metrics["or"] >= 20 and metrics["eq"] >= 50:
+        hints.append("finite-domain/disjunction")
+    if metrics["eq"] >= 100:
+        hints.append("many-equalities")
+    if metrics["le"] + metrics["lt"] + metrics["ge"] + metrics["gt"] >= 100:
+        hints.append("bound-heavy")
+    if metrics["let"]:
+        hints.append("let-sharing")
+    if not hints:
+        hints.append("inspect")
+    return ", ".join(hints)
+
+
+def target_rows(args: argparse.Namespace,
+                root: Path,
+                candidate_stems: list[str]) -> list[dict[str, object]]:
+    if not args.ref_tsv or args.dry_run:
+        return []
+
+    refs = parse_ref_tsvs(args.ref_tsv)
+    seen: set[str] = set()
+    targets: list[dict[str, object]] = []
+    for stem in candidate_stems:
+        native_path = root / "eval_results" / f"{stem}.tsv"
+        if not native_path.exists():
+            continue
+        native = parse_tsv(native_path)
+        for file, native_row in native.items():
+            if file in seen:
+                continue
+            ref_rows = [(label, rows[file]) for label, _, rows in refs if file in rows]
+            fast_refs = [
+                (label, row)
+                for label, row in ref_rows
+                if row.get("status") == "ok" and row_seconds(row) <= args.fast_ref
+            ]
+            if not fast_refs:
+                continue
+
+            native_status = native_row.get("status", "")
+            native_seconds = row_seconds(native_row)
+            fastest_ref = min(row_seconds(row) for _, row in fast_refs)
+            ratio = native_seconds / fastest_ref if fastest_ref > 0 else float("inf")
+            native_slow = (
+                native_status != "ok"
+                or native_seconds >= args.slow_seconds
+                or ratio >= args.slow_ratio
+            )
+            if not native_slow:
+                continue
+
+            native_answer = native_row.get("answer")
+            disagreement = any(
+                native_status == "ok"
+                and native_answer not in {"", None, "unknown"}
+                and row.get("answer") not in {"", None, "unknown"}
+                and native_answer != row.get("answer")
+                for _, row in fast_refs
+            )
+            if disagreement:
+                continue
+
+            metrics = shape_metrics(root, file)
+            seen.add(file)
+            targets.append({
+                "file": file,
+                "native_status": native_status,
+                "native_seconds": native_seconds,
+                "fastest_ref": fastest_ref,
+                "refs": ", ".join(f"{label}:{row_seconds(row):.3f}s" for label, row in fast_refs),
+                "ratio": ratio,
+                "metrics": metrics,
+                "hint": shape_hint(metrics),
+            })
+
+    def score(row: dict[str, object]) -> tuple[int, float, float]:
+        native_status = str(row["native_status"])
+        timeout_score = 1 if native_status != "ok" else 0
+        return timeout_score, float(row["ratio"]), float(row["native_seconds"])
+
+    targets.sort(key=score, reverse=True)
+    return targets[:args.target_top]
+
+
+def target_table(targets: list[dict[str, object]]) -> str:
+    if not targets:
+        return "No reference-fast/native-slow target was identified from the provided TSVs.\n"
+    lines = [
+        "| File | Native | Fast refs | Ratio | Shape | Likely direction |",
+        "| --- | ---: | --- | ---: | --- | --- |",
+    ]
+    for row in targets:
+        metrics = row["metrics"]
+        assert isinstance(metrics, dict)
+        shape = (
+            f"or={metrics['or']}, eq={metrics['eq']}, ite={metrics['ite']}, "
+            f"bounds={metrics['le'] + metrics['lt'] + metrics['ge'] + metrics['gt']}, "
+            f"let={metrics['let']}"
+        )
+        lines.append(
+            f"| `{row['file']}` | {row['native_status']} {float(row['native_seconds']):.3f}s | "
+            f"{row['refs']} | {float(row['ratio']):.1f}x | {shape} | {row['hint']} |"
+        )
+    return "\n".join(lines)
 
 
 def verdict_for(defaults: list[dict[str, str]], candidates: list[dict[str, str]]) -> str:
@@ -125,6 +281,7 @@ def report_table(suites: Iterable[str],
 
 
 def write_report(args: argparse.Namespace,
+                 root: Path,
                  default_stems: list[str],
                  candidate_stems: list[str],
                  defaults: list[dict[str, str]],
@@ -155,6 +312,13 @@ def write_report(args: argparse.Namespace,
         for suite, base, cand in zip(args.suites, default_stems, candidate_stems):
             f.write(f"- `{suite}` default: `eval_results/{base}.tsv`\n")
             f.write(f"- `{suite}` candidate: `eval_results/{cand}.tsv`\n")
+        if args.ref_tsv:
+            for ref in args.ref_tsv:
+                f.write(f"- reference: `{ref}`\n")
+        if args.ref_tsv:
+            f.write("\n## Next Targets\n\n")
+            f.write(target_table(target_rows(args, root, candidate_stems)))
+            f.write("\n")
         f.write("\n## Verification\n\n")
         for cmd, code in returncodes:
             marker = "PASS" if code == 0 else "FAIL"
@@ -184,6 +348,16 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=20.0)
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--suite", dest="suites", action="append", choices=["quick", "hard", "full"])
+    parser.add_argument("--ref-tsv", action="append", default=[],
+                        help="Reference TSV as LABEL=path; used to rank next targets")
+    parser.add_argument("--fast-ref", type=float, default=5.0,
+                        help="Reference seconds threshold for target selection")
+    parser.add_argument("--slow-seconds", type=float, default=10.0,
+                        help="Native seconds threshold for target selection")
+    parser.add_argument("--slow-ratio", type=float, default=10.0,
+                        help="Native/reference ratio threshold for target selection")
+    parser.add_argument("--target-top", type=int, default=10,
+                        help="Maximum next-target rows in the report")
     parser.add_argument("--skip-verify", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--report-dir", default="eval_results/loop_reports")
@@ -198,7 +372,7 @@ def main() -> int:
             code = run(cmd, root, args.dry_run)
             returncodes.append((cmd, code))
             if code != 0:
-                report = write_report(args, [], [], [], [], returncodes)
+                report = write_report(args, root, [], [], [], [], returncodes)
                 print(f"verification failed; wrote {report}", file=sys.stderr)
                 return code
 
@@ -218,7 +392,7 @@ def main() -> int:
             code = run(cmd, root, args.dry_run)
             returncodes.append((cmd, code))
             if code != 0:
-                report = write_report(args, default_stems, candidate_stems, defaults, candidates, returncodes)
+                report = write_report(args, root, default_stems, candidate_stems, defaults, candidates, returncodes)
                 print(f"evaluation failed; wrote {report}", file=sys.stderr)
                 return code
 
@@ -229,7 +403,7 @@ def main() -> int:
             defaults.append({"total": "0", "ok": "0", "error": "0", "par2": "0"})
             candidates.append({"total": "0", "ok": "0", "error": "0", "par2": "0"})
 
-    report = write_report(args, default_stems, candidate_stems, defaults, candidates, returncodes)
+    report = write_report(args, root, default_stems, candidate_stems, defaults, candidates, returncodes)
     print(f"wrote {report}")
     if not args.dry_run:
         print(report_table(args.suites, defaults, candidates))

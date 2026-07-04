@@ -363,6 +363,12 @@ earlier run.
 | 2026-07-03 | no full post-pivot beta recomputation | 20 s | 107 / 137 | 42 / 72 | 30 | 0 | 9.602 s | `full-no-recompute-pivot-20260703` | Accepted; profile-driven simplex change gains 8 `tta_startup` inductive files, loses none, and has no Z3 answer disagreements. |
 | 2026-07-03 | rational zero/integer/unit fast paths | 20 s | 110 / 137 | 45 / 72 | 27 | 0 | 8.731 s | `full-rational-fastpaths-20260703` | Accepted; exact arithmetic fast paths gain 3 more `tta_startup` inductive files, lose none, and have no Z3 answer disagreements. |
 | 2026-07-03 | rational sign/subtraction/comparison fast paths | 20 s | 116 / 137 | 51 / 72 | 21 | 0 | 7.290 s | `full-rational-sign-fastpaths-20260703` | Accepted; profile-driven exact arithmetic fast paths gain 6 more `tta_startup` inductive files, lose none, and have no Z3 answer disagreements. |
+| 2026-07-03 | local loop default, paired with `--lra-ite-eq-direct` candidate | 20 s | 114 / 137 | 49 / 72 | 23 | 0 | 7.589 s | `loop-ite-eq-direct-ref-full-full-default-20260703-223749` | Baseline leg for the reference-backed loop run. |
+| 2026-07-03 | `--lra-ite-eq-direct` candidate, reference-backed loop | 20 s | 116 / 137 | 51 / 72 | 21 | 0 | 6.937 s | `loop-ite-eq-direct-ref-full-full-candidate-20260703-223749` | Promising default candidate; no Z3/OpenSMT answer disagreements on 116 commonly solved files, and the loop ranks remaining fast-reference/native-slow targets. |
+| 2026-07-03 | local loop default, repeat 1 | 20 s | 113 / 137 | 48 / 72 | 24 | 0 | 7.842 s | `loop-ite-eq-direct-repeat-1-full-default-20260703-225957` | Repeated timing check for the direct-ITE candidate. |
+| 2026-07-03 | `--lra-ite-eq-direct` candidate, repeat 1 | 20 s | 116 / 137 | 51 / 72 | 21 | 0 | 6.919 s | `loop-ite-eq-direct-repeat-1-full-candidate-20260703-225957` | Repeats the full-suite gain; no Z3/OpenSMT disagreements on commonly solved files. |
+| 2026-07-03 | local loop default, repeat 2 | 20 s | 116 / 137 | 51 / 72 | 21 | 0 | 7.374 s | `loop-ite-eq-direct-repeat-2-full-default-20260703-230538` | Stronger default run shows solved-count noise at the 20 s cutoff. |
+| 2026-07-03 | `--lra-ite-eq-direct` candidate, repeat 2 | 20 s | 116 / 137 | 51 / 72 | 21 | 0 | 6.943 s | `loop-ite-eq-direct-repeat-2-full-candidate-20260703-230538` | Solved count ties the strongest default repeat while preserving a PAR2 win; treat `--lra-ite-eq-direct` as a strong default candidate. |
 
 Most native rows in this log solve `check`, `keymaera`, and
 `spider_benchmarks` completely; the moving metric is usually `tta_startup`.
@@ -373,13 +379,24 @@ propagation is kept as the default in its dirty-row form because it contributes
 useful theory literals on the current aggregate run, while the older immediate
 full-row scan remains rejected by the 2026-07-01 ablation row.
 
+The repeated `--lra-ite-eq-direct` loop runs show a stable PAR2 signal despite
+borderline solved-count noise. Across the three completed full runs, the
+candidate improved average PAR2 by 0.652 s, 0.923 s, and 0.431 s respectively.
+The strongest default repeat tied the candidate at 116 solved files, but still
+had higher PAR2. The largest consistent common-solved speedups were in
+`tta_startup`, including `9nodes.missing.induct`, `8nodes.missing.induct`,
+`4nodes.abstract.induct`, `7nodes.missing.induct`, and `6nodes.bug.induct`.
+No Z3/OpenSMT answer disagreements were observed on the candidate's commonly
+solved files in any completed repeat.
+
 The next optimization targets should be chosen from fast-Z3/slow-native
 `tta_startup` files, for example:
 
-- `simple_startup_9nodes.missing.induct.smt2`;
-- `simple_startup_9nodes.bug.induct.smt2`;
-- `simple_startup_11nodes.synchro.induct.smt2`;
-- `simple_startup_12nodes.bug.induct.smt2`.
+- `simple_startup_12nodes.synchro.induct.smt2`;
+- `simple_startup_12nodes.missing.induct.smt2`;
+- `simple_startup_12nodes.bug.induct.smt2`;
+- `simple_startup_15nodes.bug.induct.smt2`;
+- `simple_startup_14nodes.synchro.induct.smt2`.
 
 Raw artifacts for the rows above are kept in the workspace as matching
 `eval_results/*.tsv` and `eval_results/*.summary` files.
