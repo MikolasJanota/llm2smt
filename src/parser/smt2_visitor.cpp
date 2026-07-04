@@ -4,6 +4,7 @@
 #include <array>
 #include <chrono>
 #include <cctype>
+#include <functional>
 #include <iostream>
 #include <ranges>
 #include <sstream>
@@ -1002,6 +1003,219 @@ void Smt2Visitor::lra_collect_unconditional_equalities(
     }
 }
 
+bool Smt2Visitor::lra_try_dl_fast_path_unsat()
+{
+    if (!opts_.lra_dl_fast_path || pending_lra_asserts_.empty()) return false;
+    ++stats_.lra_dl_fast_path_attempts;
+
+    struct Edge {
+        int from = 0;
+        int to = 0;
+        lra::DeltaRational weight;
+    };
+
+    std::vector<Edge> edges;
+    std::map<std::string, int> vars;
+    size_t accepted_atoms = 0;
+    bool rejected = false;
+    bool contradiction = false;
+
+    auto var_id = [&](const std::string& name) -> int {
+        auto [it, inserted] = vars.emplace(name, static_cast<int>(vars.size()));
+        (void)inserted;
+        return it->second;
+    };
+    auto node_for = [](int id, bool negated) {
+        return 1 + 2 * id + (negated ? 1 : 0);
+    };
+    auto strict_bound = [](lra::Rational bound, bool strict) {
+        return lra::DeltaRational(std::move(bound), strict ? lra::Rational(-1) : lra::Rational(0));
+    };
+
+    auto add_le = [&](lra::LinearExpr expr, bool strict) -> bool {
+        expr = lra_rewrite_expr(expr);
+        std::vector<std::pair<std::string, lra::Rational>> coeffs;
+        coeffs.reserve(expr.coeffs.size());
+        for (const auto& [name, coeff] : expr.coeffs) {
+            if (!coeff.is_zero()) coeffs.push_back({name, coeff});
+        }
+
+        if (coeffs.empty()) {
+            const auto zero = lra::Rational(0);
+            if (strict ? !(expr.constant < zero) : !(expr.constant <= zero))
+                contradiction = true;
+            return true;
+        }
+
+        lra::Rational bound = -expr.constant;
+        if (coeffs.size() == 1) {
+            const auto& [name, coeff] = coeffs[0];
+            if (coeff.is_zero()) return false;
+            int id = var_id(name);
+            if (coeff > lra::Rational(0)) {
+                auto w = strict_bound(bound / coeff, strict);
+                edges.push_back({0, node_for(id, false), w});
+                edges.push_back({node_for(id, true), node_for(id, false), w * lra::Rational(2)});
+            } else {
+                auto w = strict_bound(bound / (-coeff), strict);
+                edges.push_back({node_for(id, false), 0, w});
+                edges.push_back({node_for(id, false), node_for(id, true), w * lra::Rational(2)});
+            }
+            return true;
+        }
+
+        if (coeffs.size() != 2) return false;
+        const auto& [name_a, coeff_a] = coeffs[0];
+        const auto& [name_b, coeff_b] = coeffs[1];
+        lra::Rational abs_a = coeff_a < lra::Rational(0) ? -coeff_a : coeff_a;
+        lra::Rational abs_b = coeff_b < lra::Rational(0) ? -coeff_b : coeff_b;
+        if (abs_a.is_zero() || !(abs_a == abs_b)) return false;
+
+        bool a_neg = coeff_a < lra::Rational(0);
+        bool b_neg = coeff_b < lra::Rational(0);
+        int id_a = var_id(name_a);
+        int id_b = var_id(name_b);
+        lra::DeltaRational w = strict_bound(bound / abs_a, strict);
+
+        if (a_neg != b_neg) {
+            int from = a_neg ? id_a : id_b;
+            int to = a_neg ? id_b : id_a;
+            edges.push_back({node_for(from, false), node_for(to, false), w});
+            return true;
+        }
+
+        // UTVPI constraints over ±x±y reduce to two DL edges over signed
+        // variables; satisfiable pure cases still fall through to simplex for models.
+        int node_a = node_for(id_a, a_neg);
+        int node_not_a = node_for(id_a, !a_neg);
+        int node_b = node_for(id_b, b_neg);
+        int node_not_b = node_for(id_b, !b_neg);
+        edges.push_back({node_not_b, node_a, w});
+        edges.push_back({node_not_a, node_b, w});
+        return true;
+    };
+
+    auto add_relation = [&](lra::LinearExpr expr, lra::Relation rel) -> bool {
+        switch (rel) {
+        case lra::Relation::Le:
+            return add_le(std::move(expr), false);
+        case lra::Relation::Lt:
+            return add_le(std::move(expr), true);
+        case lra::Relation::Ge:
+            expr.scale(lra::Rational(-1));
+            return add_le(std::move(expr), false);
+        case lra::Relation::Gt:
+            expr.scale(lra::Rational(-1));
+            return add_le(std::move(expr), true);
+        case lra::Relation::Eq: {
+            auto neg = expr;
+            neg.scale(lra::Rational(-1));
+            return add_le(std::move(expr), false) && add_le(std::move(neg), false);
+        }
+        case lra::Relation::Ne:
+            return false;
+        }
+        return false;
+    };
+
+    using Term = smt2parser::SMTLIBv2Parser::TermContext;
+    std::function<bool(Term*)> collect = [&](Term* t) -> bool {
+        while (t->GRW_Exclamation()) t = t->term()[0];
+        if (t->GRW_Let() || t->qual_identifier() == nullptr) return false;
+
+        std::string op = identifier_name(t->qual_identifier()->identifier());
+        if (op == "true") return true;
+        if (op == "false") {
+            contradiction = true;
+            return true;
+        }
+        if (op == "and") {
+            for (auto* sub : t->term()) {
+                if (!collect(sub)) return false;
+                if (contradiction) return true;
+            }
+            return true;
+        }
+
+        static const std::unordered_map<std::string, lra::Relation> rels = {
+            {"<", lra::Relation::Lt}, {"<=", lra::Relation::Le},
+            {">", lra::Relation::Gt}, {">=", lra::Relation::Ge}
+        };
+
+        if (op == "=" && t->term().size() >= 2 && is_lra_term_syntax(t->term()[0])) {
+            auto terms = t->term();
+            for (auto* term : terms) {
+                if (!is_lra_term_syntax(term) || !lra_term_is_elim_safe(term)) return false;
+            }
+            auto first = lra_term(terms[0]);
+            for (size_t i = 1; i < terms.size(); ++i) {
+                auto e = first;
+                e.add(lra_term(terms[i]), lra::Rational(-1));
+                ++accepted_atoms;
+                if (!add_relation(std::move(e), lra::Relation::Eq)) return false;
+                if (contradiction) return true;
+            }
+            return true;
+        }
+
+        auto rit = rels.find(op);
+        if (rit != rels.end() && t->term().size() == 2) {
+            if (!is_lra_term_syntax(t->term()[0]) || !is_lra_term_syntax(t->term()[1]) ||
+                !lra_term_is_elim_safe(t->term()[0]) || !lra_term_is_elim_safe(t->term()[1]))
+                return false;
+            auto e = lra_term(t->term()[0]);
+            e.add(lra_term(t->term()[1]), lra::Rational(-1));
+            ++accepted_atoms;
+            return add_relation(std::move(e), rit->second);
+        }
+
+        return false;
+    };
+
+    for (auto* t : pending_lra_asserts_) {
+        if (!collect(t)) {
+            rejected = true;
+            break;
+        }
+        if (contradiction) break;
+    }
+
+    stats_.lra_dl_fast_path_atoms += accepted_atoms;
+    if (rejected) {
+        ++stats_.lra_dl_fast_path_rejected;
+        ++stats_.lra_dl_fast_path_fallbacks;
+        return false;
+    }
+    if (!contradiction) {
+        const size_t node_count = 1 + 2 * vars.size();
+        std::vector<lra::DeltaRational> dist(node_count, lra::DeltaRational(lra::Rational(0)));
+        for (size_t iter = 0; iter < node_count; ++iter) {
+            bool changed = false;
+            for (const auto& edge : edges) {
+                lra::DeltaRational candidate = dist[edge.from] + edge.weight;
+                if (candidate < dist[edge.to]) {
+                    if (iter + 1 == node_count) {
+                        contradiction = true;
+                        break;
+                    }
+                    dist[edge.to] = candidate;
+                    changed = true;
+                }
+            }
+            if (contradiction || !changed) break;
+        }
+    }
+
+    if (!contradiction) {
+        ++stats_.lra_dl_fast_path_fallbacks;
+        return false;
+    }
+
+    ctx_.sat.add_clause(std::span<const int>{});
+    ++stats_.lra_dl_fast_path_unsats;
+    return true;
+}
+
 void Smt2Visitor::lra_flush_assertions()
 {
     if (pending_lra_asserts_.empty()) return;
@@ -1010,6 +1224,14 @@ void Smt2Visitor::lra_flush_assertions()
         for (auto* t : pending_lra_asserts_)
             lra_collect_unconditional_equalities(t);
         lra_term_cache_.clear();
+    }
+    if (lra_eq_elim_unsat_) {
+        pending_lra_asserts_.clear();
+        return;
+    }
+    if (lra_try_dl_fast_path_unsat()) {
+        pending_lra_asserts_.clear();
+        return;
     }
     for (auto* t : pending_lra_asserts_)
         lra_assert_formula(t);

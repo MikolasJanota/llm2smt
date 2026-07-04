@@ -90,6 +90,11 @@ add_smt2_test(lra_direct_eq_atom lra27_direct_eq_atom.smt2 sat)
 add_smt2_test(lra_direct_eq_guarded_negation lra28_direct_eq_guarded_negation.smt2 sat)
 add_smt2_test(lra_structural_bool_cache lra30_structural_bool_cache.smt2 sat)
 add_smt2_test(lra_flatten_ite_chain lra31_flatten_ite_chain.smt2 sat)
+add_smt2_test(lra_simple_graph_dl_unsat lra32_simple_graph_dl_unsat.smt2 unsat)
+add_smt2_test(lra_simple_graph_utvpi_unsat lra33_simple_graph_utvpi_unsat.smt2 unsat)
+add_smt2_test(lra_simple_graph_mixed_general_unsat lra34_simple_graph_mixed_general_unsat.smt2 unsat)
+add_smt2_test(lra_dl_fast_path_unary_unsat lra36_dl_fast_path_unary_unsat.smt2 unsat)
+add_smt2_test(lra_dl_fast_path_guarded_fallback lra37_dl_fast_path_guarded_fallback.smt2 sat)
 add_test(
     NAME "smt2/lra_eq_elim_model"
     COMMAND bash -c
@@ -100,6 +105,66 @@ add_test(
          grep -q '    5)' ${CMAKE_BINARY_DIR}/lra19_model.out && \
          grep -q 'define-fun y' ${CMAKE_BINARY_DIR}/lra19_model.out && \
          grep -q '    3)' ${CMAKE_BINARY_DIR}/lra19_model.out"
+)
+add_test(
+    NAME "smt2/lra_simple_graph_cli_gate"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats --lra-simple-graph-prop \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra35_simple_graph_prop_stats.smt2 \
+         >/tmp/lra35_on.out 2>/tmp/lra35_on.err && \
+         grep -q '^sat' /tmp/lra35_on.out && \
+         grep -Eq 'lra\\.simple_graph_propagations[[:space:]]+[1-9][0-9]*$' /tmp/lra35_on.err && \
+         $<TARGET_FILE:llm2smt> --quiet --stats \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra35_simple_graph_prop_stats.smt2 \
+         >/tmp/lra35_off.out 2>/tmp/lra35_off.err && \
+         grep -q '^sat' /tmp/lra35_off.out && \
+         grep -Eq 'lra\\.simple_graph_propagations[[:space:]]+0$' /tmp/lra35_off.err"
+)
+add_test(
+    NAME "smt2/lra_simple_graph_pure_dl_conflict"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats --no-lra-dl-fast-path --lra-simple-graph-prop \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra32_simple_graph_dl_unsat.smt2 \
+         >/tmp/lra32_graph.out 2>/tmp/lra32_graph.err && \
+         grep -q '^unsat' /tmp/lra32_graph.out && \
+         grep -Eq 'lra\\.simple_graph_conflicts[[:space:]]+[1-9][0-9]*$' /tmp/lra32_graph.err && \
+         grep -Eq 'lra\\.pivots[[:space:]]+0$' /tmp/lra32_graph.err"
+)
+add_test(
+    NAME "smt2/lra_simple_graph_unary_conflict"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats --no-lra-dl-fast-path --lra-simple-graph-prop \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra36_dl_fast_path_unary_unsat.smt2 \
+         >/tmp/lra36_graph.out 2>/tmp/lra36_graph.err && \
+         grep -q '^unsat' /tmp/lra36_graph.out && \
+         grep -Eq 'lra\\.simple_graph_conflicts[[:space:]]+[1-9][0-9]*$' /tmp/lra36_graph.err && \
+         grep -Eq 'lra\\.pivots[[:space:]]+0$' /tmp/lra36_graph.err"
+)
+add_test(
+    NAME "smt2/lra_dl_fast_path_cli_gate"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra36_dl_fast_path_unary_unsat.smt2 \
+         >/tmp/lra36_on.out 2>/tmp/lra36_on.err && \
+         grep -q '^unsat' /tmp/lra36_on.out && \
+         grep -Eq 'lra\\.dl_fast_path_unsats[[:space:]]+[1-9][0-9]*$' /tmp/lra36_on.err && \
+         grep -Eq 'lra\\.pivots[[:space:]]+0$' /tmp/lra36_on.err && \
+         $<TARGET_FILE:llm2smt> --quiet --stats --no-lra-dl-fast-path \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra36_dl_fast_path_unary_unsat.smt2 \
+         >/tmp/lra36_off.out 2>/tmp/lra36_off.err && \
+         grep -q '^unsat' /tmp/lra36_off.out && \
+         grep -Eq 'lra\\.dl_fast_path_unsats[[:space:]]+0$' /tmp/lra36_off.err && \
+         grep -Eq 'lra\\.pivots[[:space:]]+[1-9][0-9]*$' /tmp/lra36_off.err"
+)
+add_test(
+    NAME "smt2/lra_dl_fast_path_guarded_fallback_stats"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra37_dl_fast_path_guarded_fallback.smt2 \
+         >/tmp/lra37.out 2>/tmp/lra37.err && \
+         grep -q '^sat' /tmp/lra37.out && \
+         grep -Eq 'lra\\.dl_fast_path_unsats[[:space:]]+0$' /tmp/lra37.err && \
+         grep -Eq 'lra\\.dl_fast_path_rejected[[:space:]]+[1-9][0-9]*$' /tmp/lra37.err"
 )
 add_test(
     NAME "smt2/lra_eq_elim_cli_gate"
@@ -267,7 +332,7 @@ add_test(
 add_test(
     NAME "smt2/lra_min_conflict_size"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --quiet --lra-print-conflict-size \
+        "$<TARGET_FILE:llm2smt> --quiet --no-lra-dl-fast-path --lra-print-conflict-size \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra09_min_conflict.smt2 \
          > ${CMAKE_BINARY_DIR}/lra09.out 2> ${CMAKE_BINARY_DIR}/lra09.err && \
          grep -q '^unsat' ${CMAKE_BINARY_DIR}/lra09.out && \

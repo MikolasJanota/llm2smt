@@ -66,7 +66,7 @@ int LraSolver::new_tableau_var(bool basic) {
         var_to_real_.resize(v + 1);
         atoms_by_var_.resize(v + 1);
         prop_var_dirty_.resize(v + 1);
-        if (row_bound_indexed_dirty_scan_) rows_by_var_.resize(v + 1);
+        if (row_index_enabled()) rows_by_var_.resize(v + 1);
     }
     is_basic_[v] = basic;
     if (basic) basic_vars_.push_back(v);
@@ -77,7 +77,7 @@ int LraSolver::new_tableau_var(bool basic) {
 }
 
 void LraSolver::register_row_coeffs(int row_idx) {
-    if (!row_bound_indexed_dirty_scan_) return;
+    if (!row_index_enabled()) return;
     if (row_idx < 0 || static_cast<size_t>(row_idx) >= rows_.size()) return;
     for (const auto& [v, _] : rows_[row_idx].coeffs) {
         if (v < 0) continue;
@@ -87,7 +87,7 @@ void LraSolver::register_row_coeffs(int row_idx) {
 }
 
 void LraSolver::unregister_row_coeffs(int row_idx) {
-    if (!row_bound_indexed_dirty_scan_) return;
+    if (!row_index_enabled()) return;
     if (row_idx < 0 || static_cast<size_t>(row_idx) >= rows_.size()) return;
     for (const auto& [v, _] : rows_[row_idx].coeffs) {
         if (v < 0 || static_cast<size_t>(v) >= rows_by_var_.size()) continue;
@@ -129,7 +129,7 @@ int LraSolver::ensure_term_var(const LinearExpr& expr) {
     }
     beta_[s] = row.constant;
     row_of_basic_[s] = static_cast<int>(rows_.size());
-    if (row_bound_indexed_dirty_scan_) row_basic_.push_back(s);
+    if (row_index_enabled()) row_basic_.push_back(s);
     rows_.push_back(std::move(row));
     register_row_coeffs(row_of_basic_[s]);
     if (stats_) stats_->lra_max_rows = std::max<uint64_t>(
@@ -199,7 +199,117 @@ int LraSolver::register_atom(const Atom& atom) {
     elementary_atoms_[sat_var] = ea;
     if (static_cast<int>(atoms_by_var_.size()) <= ea.var) atoms_by_var_.resize(ea.var + 1);
     atoms_by_var_[ea.var].push_back(sat_var);
+    if (auto simple = make_simple_graph_atom(atom)) {
+        simple_graph_atoms_[sat_var] = std::move(*simple);
+        if (stats_) ++stats_->lra_simple_graph_atoms;
+    } else if (stats_) {
+        ++stats_->lra_simple_graph_skipped;
+    }
     return sat_var;
+}
+
+int LraSolver::graph_node_for_var(int var, bool negated) const {
+    return 1 + 2 * var + (negated ? 1 : 0);
+}
+
+size_t LraSolver::graph_node_count() const {
+    return 1 + 2 * static_cast<size_t>(next_lra_var_);
+}
+
+std::optional<LraSolver::SimpleGraphAtom> LraSolver::make_simple_graph_atom(const Atom& atom) {
+    auto strict_bound = [](Rational bound, bool strict) {
+        return DeltaRational(std::move(bound), strict ? Rational(-1) : Rational(0));
+    };
+
+    auto edges_for_le = [&](const LinearExpr& expr, bool strict)
+        -> std::optional<std::vector<GraphEdgeTemplate>> {
+        std::vector<std::pair<std::string, Rational>> coeffs;
+        coeffs.reserve(expr.coeffs.size());
+        for (const auto& [name, coeff] : expr.coeffs) {
+            if (!coeff.is_zero()) coeffs.push_back({name, coeff});
+        }
+        Rational bound = -expr.constant;
+        if (coeffs.empty()) return std::nullopt;
+
+        if (coeffs.size() == 1) {
+            const auto& [name, coeff] = coeffs[0];
+            if (coeff.is_zero()) return std::nullopt;
+            int var = ensure_real_var(name);
+            if (coeff > Rational(0)) {
+                DeltaRational w = strict_bound(bound / coeff, strict);
+                return std::vector<GraphEdgeTemplate>{
+                    {graph_node_for_var(var, true), graph_node_for_var(var, false), w * Rational(2)}};
+            }
+            DeltaRational w = strict_bound(bound / (-coeff), strict);
+            return std::vector<GraphEdgeTemplate>{
+                {graph_node_for_var(var, false), graph_node_for_var(var, true), w * Rational(2)}};
+        }
+
+        if (coeffs.size() != 2) return std::nullopt;
+        const auto& [name_a, coeff_a] = coeffs[0];
+        const auto& [name_b, coeff_b] = coeffs[1];
+        Rational abs_a = coeff_a < Rational(0) ? -coeff_a : coeff_a;
+        Rational abs_b = coeff_b < Rational(0) ? -coeff_b : coeff_b;
+        if (abs_a.is_zero() || !(abs_a == abs_b)) return std::nullopt;
+
+        bool a_neg = coeff_a < Rational(0);
+        bool b_neg = coeff_b < Rational(0);
+        int var_a = ensure_real_var(name_a);
+        int var_b = ensure_real_var(name_b);
+        DeltaRational w = strict_bound(bound / abs_a, strict);
+
+        if (a_neg != b_neg) {
+            int from = coeff_a < Rational(0) ? var_a : var_b;
+            int to = coeff_a < Rational(0) ? var_b : var_a;
+            return std::vector<GraphEdgeTemplate>{
+                {graph_node_for_var(from, false), graph_node_for_var(to, false), w}};
+        }
+
+        // UTVPI constraints ±x ± y <= c reduce to two difference-logic
+        // edges over signed variables; see the signed-variable graph
+        // construction used by Lahiri/Musuvathi-style UTVPI solvers. The
+        // complete mixed LRA check remains the Dutertre/de Moura simplex core.
+        int node_a = graph_node_for_var(var_a, a_neg);
+        int node_not_a = graph_node_for_var(var_a, !a_neg);
+        int node_b = graph_node_for_var(var_b, b_neg);
+        int node_not_b = graph_node_for_var(var_b, !b_neg);
+        return std::vector<GraphEdgeTemplate>{{node_not_b, node_a, w},
+                                              {node_not_a, node_b, w}};
+    };
+
+    auto scaled = [](LinearExpr e, const Rational& q) {
+        e.scale(q);
+        return e;
+    };
+    auto edges_for_relation = [&](Relation rel)
+        -> std::optional<std::vector<GraphEdgeTemplate>> {
+        switch (rel) {
+        case Relation::Le: return edges_for_le(atom.lhs_minus_rhs, false);
+        case Relation::Lt: return edges_for_le(atom.lhs_minus_rhs, true);
+        case Relation::Ge: return edges_for_le(scaled(atom.lhs_minus_rhs, Rational(-1)), false);
+        case Relation::Gt: return edges_for_le(scaled(atom.lhs_minus_rhs, Rational(-1)), true);
+        case Relation::Eq: {
+            auto le = edges_for_le(atom.lhs_minus_rhs, false);
+            auto ge = edges_for_le(scaled(atom.lhs_minus_rhs, Rational(-1)), false);
+            if (!le || !ge) return std::nullopt;
+            le->insert(le->end(), ge->begin(), ge->end());
+            return le;
+        }
+        case Relation::Ne:
+            return std::nullopt;
+        }
+        return std::nullopt;
+    };
+
+    auto pos = edges_for_relation(atom.rel);
+    if (!pos) return std::nullopt;
+    SimpleGraphAtom out;
+    out.positive_edges = std::move(*pos);
+    if (atom.rel != Relation::Eq && atom.rel != Relation::Ne) {
+        if (auto neg = edges_for_relation(negate_rel(atom.rel)))
+            out.negative_edges = std::move(*neg);
+    }
+    return out;
 }
 
 bool LraSolver::apply_bound(int var, BoundKind kind, const DeltaRational& value, int source_lit) {
@@ -263,6 +373,7 @@ void LraSolver::notify_assignment(int lit, bool) {
         if (stats_) ++stats_->lra_fixed_equalities;
         bool ok = apply_bound(ea.var, BoundKind::Lower, DeltaRational(Rational(0)), lit);
         if (ok) apply_bound(ea.var, BoundKind::Upper, DeltaRational(Rational(0)), lit);
+        if (simple_graph_atoms_.contains(sat_var)) detect_simple_graph_conflict();
         return;
     }
     BoundKind kind = ea.positive_kind;
@@ -274,6 +385,7 @@ void LraSolver::notify_assignment(int lit, bool) {
             : DeltaRational(ea.positive_value.real, ea.positive_value.delta - Rational(1));
     }
     apply_bound(ea.var, kind, value, lit);
+    if (simple_graph_atoms_.contains(sat_var)) detect_simple_graph_conflict();
 }
 
 void LraSolver::notify_new_decision_level() {
@@ -318,6 +430,18 @@ void LraSolver::update(int x, const DeltaRational& v) {
     DeltaRational delta = v - beta_[x];
     if (delta.is_zero()) return;
     beta_[x] = v;
+    if (tableau_row_index_ && x >= 0 && static_cast<size_t>(x) < rows_by_var_.size()) {
+        for (int r : rows_by_var_[x]) {
+            if (r < 0 || static_cast<size_t>(r) >= rows_.size() ||
+                static_cast<size_t>(r) >= row_basic_.size())
+                continue;
+            int b = row_basic_[r];
+            if (b < 0) continue;
+            auto it = rows_[r].coeffs.find(x);
+            if (it != rows_[r].coeffs.end()) beta_[b] += delta * it->second;
+        }
+        return;
+    }
     for (int b : basic_vars_) {
         int r = row_of_basic_[b];
         if (r < 0) continue;
@@ -341,27 +465,51 @@ bool LraSolver::pivot(int basic, int nonbasic) {
         solved.coeffs[v] = -c / a;
     }
 
-    for (int b : basic_vars_) {
-        if (b == basic) continue;
-        int rb = row_of_basic_[b];
-        auto it = rows_[rb].coeffs.find(nonbasic);
-        if (it == rows_[rb].coeffs.end() || it->second.is_zero()) continue;
-        Rational factor = it->second;
-        unregister_row_coeffs(rb);
-        rows_[rb].coeffs.erase(it);
-        rows_[rb].constant += solved.constant * factor;
-        for (const auto& [v, c] : solved.coeffs) rows_[rb].coeffs[v] += c * factor;
-        for (auto cit = rows_[rb].coeffs.begin(); cit != rows_[rb].coeffs.end();) {
-            if (cit->second.is_zero()) cit = rows_[rb].coeffs.erase(cit);
-            else ++cit;
+    std::vector<int> affected_rows;
+    if (tableau_row_index_ && nonbasic >= 0 && static_cast<size_t>(nonbasic) < rows_by_var_.size()) {
+        affected_rows = rows_by_var_[nonbasic];
+        for (int rb : affected_rows) {
+            if (rb == r || rb < 0 || static_cast<size_t>(rb) >= rows_.size() ||
+                static_cast<size_t>(rb) >= row_basic_.size())
+                continue;
+            int b = row_basic_[rb];
+            if (b < 0 || b == basic) continue;
+            auto it = rows_[rb].coeffs.find(nonbasic);
+            if (it == rows_[rb].coeffs.end() || it->second.is_zero()) continue;
+            Rational factor = it->second;
+            unregister_row_coeffs(rb);
+            rows_[rb].coeffs.erase(it);
+            rows_[rb].constant += solved.constant * factor;
+            for (const auto& [v, c] : solved.coeffs) rows_[rb].coeffs[v] += c * factor;
+            for (auto cit = rows_[rb].coeffs.begin(); cit != rows_[rb].coeffs.end();) {
+                if (cit->second.is_zero()) cit = rows_[rb].coeffs.erase(cit);
+                else ++cit;
+            }
+            register_row_coeffs(rb);
         }
-        register_row_coeffs(rb);
+    } else {
+        for (int b : basic_vars_) {
+            if (b == basic) continue;
+            int rb = row_of_basic_[b];
+            auto it = rows_[rb].coeffs.find(nonbasic);
+            if (it == rows_[rb].coeffs.end() || it->second.is_zero()) continue;
+            Rational factor = it->second;
+            unregister_row_coeffs(rb);
+            rows_[rb].coeffs.erase(it);
+            rows_[rb].constant += solved.constant * factor;
+            for (const auto& [v, c] : solved.coeffs) rows_[rb].coeffs[v] += c * factor;
+            for (auto cit = rows_[rb].coeffs.begin(); cit != rows_[rb].coeffs.end();) {
+                if (cit->second.is_zero()) cit = rows_[rb].coeffs.erase(cit);
+                else ++cit;
+            }
+            register_row_coeffs(rb);
+        }
     }
 
     unregister_row_coeffs(r);
     rows_[r] = std::move(solved);
     register_row_coeffs(r);
-    if (row_bound_indexed_dirty_scan_) row_basic_[r] = nonbasic;
+    if (row_index_enabled()) row_basic_[r] = nonbasic;
     row_of_basic_[nonbasic] = r;
     row_of_basic_[basic] = -1;
     is_basic_[basic] = false;
@@ -568,6 +716,208 @@ bool LraSolver::enqueue_propagation(int lit, std::vector<int> reason, bool row_b
     return false;
 }
 
+bool LraSolver::enqueue_graph_propagation(int lit, std::vector<int> reason) {
+    bool had_conflict = has_conflict_;
+    bool enqueued = enqueue_propagation(lit, std::move(reason), false);
+    if (enqueued && stats_) ++stats_->lra_simple_graph_propagations;
+    if (!had_conflict && has_conflict_ && stats_) ++stats_->lra_simple_graph_conflicts;
+    return enqueued;
+}
+
+std::vector<LraSolver::ActiveGraphEdge> LraSolver::active_simple_graph_edges(
+    const std::vector<int>* model) const {
+    std::unordered_set<int> model_lits;
+    if (model) model_lits.insert(model->begin(), model->end());
+
+    std::vector<ActiveGraphEdge> edges;
+    for (const auto& [sat_var, atom] : simple_graph_atoms_) {
+        if (sat_var < 0 || static_cast<size_t>(sat_var) >= atom_assignment_.size()) continue;
+        int value = atom_assignment_[sat_var];
+        if (value == 0 && !model_lits.empty()) {
+            if (model_lits.contains(sat_var)) value = 1;
+            else if (model_lits.contains(-sat_var)) value = -1;
+        }
+        if (value == 0) continue;
+        int lit = value > 0 ? sat_var : -sat_var;
+        const auto& templates = value > 0 ? atom.positive_edges : atom.negative_edges;
+        for (const auto& edge : templates)
+            edges.push_back(ActiveGraphEdge{edge.from, edge.to, edge.weight, lit});
+    }
+    return edges;
+}
+
+std::optional<LraSolver::ShortestPaths> LraSolver::shortest_paths_from(
+    int source, const std::vector<ActiveGraphEdge>& edges, size_t node_count) const {
+    if (source < 0 || static_cast<size_t>(source) >= node_count) return std::nullopt;
+    ShortestPaths out;
+    out.dist.resize(node_count);
+    out.pred_edge.assign(node_count, -1);
+    out.dist[source] = DeltaRational(Rational(0));
+
+    for (size_t iter = 1; iter < node_count; ++iter) {
+        bool changed = false;
+        for (size_t edge_idx = 0; edge_idx < edges.size(); ++edge_idx) {
+            const auto& edge = edges[edge_idx];
+            if (edge.from < 0 || edge.to < 0 ||
+                static_cast<size_t>(edge.from) >= node_count ||
+                static_cast<size_t>(edge.to) >= node_count ||
+                !out.dist[edge.from])
+                continue;
+            DeltaRational candidate = *out.dist[edge.from] + edge.weight;
+            if (!out.dist[edge.to] || candidate < *out.dist[edge.to]) {
+                out.dist[edge.to] = candidate;
+                out.pred_edge[edge.to] = static_cast<int>(edge_idx);
+                changed = true;
+            }
+        }
+        if (!changed) break;
+    }
+    return out;
+}
+
+std::vector<int> LraSolver::graph_path_reason(
+    int source, int target, const ShortestPaths& paths,
+    const std::vector<ActiveGraphEdge>& edges) const {
+    std::vector<int> reason;
+    std::vector<char> seen_node(paths.pred_edge.size(), 0);
+    int cur = target;
+    while (cur != source) {
+        if (cur < 0 || static_cast<size_t>(cur) >= paths.pred_edge.size()) break;
+        if (seen_node[cur]) break;
+        seen_node[cur] = 1;
+        int edge_idx = paths.pred_edge[cur];
+        if (edge_idx < 0 || static_cast<size_t>(edge_idx) >= edges.size()) break;
+        const auto& edge = edges[edge_idx];
+        reason.push_back(-edge.source_lit);
+        cur = edge.from;
+    }
+    std::sort(reason.begin(), reason.end());
+    reason.erase(std::unique(reason.begin(), reason.end()), reason.end());
+    return reason;
+}
+
+std::vector<int> LraSolver::graph_negative_cycle_reason(
+    const std::vector<ActiveGraphEdge>& edges, size_t node_count) const {
+    std::vector<DeltaRational> dist(node_count, DeltaRational(Rational(0)));
+    std::vector<int> pred_edge(node_count, -1);
+    int changed_node = -1;
+
+    for (size_t iter = 0; iter < node_count; ++iter) {
+        changed_node = -1;
+        for (size_t edge_idx = 0; edge_idx < edges.size(); ++edge_idx) {
+            const auto& edge = edges[edge_idx];
+            if (edge.from < 0 || edge.to < 0 ||
+                static_cast<size_t>(edge.from) >= node_count ||
+                static_cast<size_t>(edge.to) >= node_count)
+                continue;
+            DeltaRational candidate = dist[edge.from] + edge.weight;
+            if (candidate < dist[edge.to]) {
+                dist[edge.to] = candidate;
+                pred_edge[edge.to] = static_cast<int>(edge_idx);
+                changed_node = edge.to;
+            }
+        }
+        if (changed_node < 0) return {};
+    }
+
+    int cycle_node = changed_node;
+    for (size_t i = 0; i < node_count && cycle_node >= 0; ++i) {
+        int edge_idx = pred_edge[cycle_node];
+        if (edge_idx < 0 || static_cast<size_t>(edge_idx) >= edges.size()) break;
+        cycle_node = edges[edge_idx].from;
+    }
+
+    std::vector<int> reason;
+    std::vector<char> seen(node_count, 0);
+    int cur = cycle_node;
+    while (cur >= 0 && static_cast<size_t>(cur) < node_count && !seen[cur]) {
+        seen[cur] = 1;
+        int edge_idx = pred_edge[cur];
+        if (edge_idx < 0 || static_cast<size_t>(edge_idx) >= edges.size()) break;
+        const auto& edge = edges[edge_idx];
+        reason.push_back(-edge.source_lit);
+        cur = edge.from;
+    }
+    std::sort(reason.begin(), reason.end());
+    reason.erase(std::unique(reason.begin(), reason.end()), reason.end());
+    return reason;
+}
+
+void LraSolver::detect_simple_graph_conflict(const std::vector<int>* model) {
+    if (!simple_graph_propagation_ || has_conflict_ || simple_graph_atoms_.empty()) return;
+    std::vector<ActiveGraphEdge> edges = active_simple_graph_edges(model);
+    if (stats_) stats_->lra_simple_graph_edges = edges.size();
+    if (edges.empty()) return;
+    std::vector<int> cycle_reason = graph_negative_cycle_reason(edges, graph_node_count());
+    if (!cycle_reason.empty()) {
+        if (stats_) ++stats_->lra_simple_graph_conflicts;
+        set_conflict(std::move(cycle_reason));
+    }
+}
+
+void LraSolver::discover_simple_graph_propagations(const std::vector<int>* model) {
+    if (!simple_graph_propagation_ || !propagation_enabled_ || simple_graph_atoms_.empty()) return;
+
+    std::vector<ActiveGraphEdge> edges = active_simple_graph_edges(model);
+    if (stats_) stats_->lra_simple_graph_edges = edges.size();
+    if (edges.empty()) return;
+
+    size_t node_count = graph_node_count();
+    std::vector<int> cycle_reason = graph_negative_cycle_reason(edges, node_count);
+    if (!cycle_reason.empty()) {
+        if (stats_) ++stats_->lra_simple_graph_conflicts;
+        set_conflict(std::move(cycle_reason));
+        return;
+    }
+
+    std::unordered_map<int, ShortestPaths> path_cache;
+    size_t candidates = 0;
+    bool budget_cutoff = false;
+
+    auto implied = [&](const std::vector<GraphEdgeTemplate>& templates,
+                       std::vector<int>& reason) {
+        reason.clear();
+        if (templates.empty()) return false;
+        for (const auto& tmpl : templates) {
+            auto pit = path_cache.find(tmpl.from);
+            if (pit == path_cache.end()) {
+                auto paths = shortest_paths_from(tmpl.from, edges, node_count);
+                if (!paths) return false;
+                pit = path_cache.emplace(tmpl.from, std::move(*paths)).first;
+            }
+            const ShortestPaths& paths = pit->second;
+            if (tmpl.to < 0 || static_cast<size_t>(tmpl.to) >= paths.dist.size() ||
+                !paths.dist[tmpl.to] || *paths.dist[tmpl.to] > tmpl.weight)
+                return false;
+            std::vector<int> path_reason = graph_path_reason(tmpl.from, tmpl.to, paths, edges);
+            reason.insert(reason.end(), path_reason.begin(), path_reason.end());
+        }
+        std::sort(reason.begin(), reason.end());
+        reason.erase(std::unique(reason.begin(), reason.end()), reason.end());
+        return true;
+    };
+
+    auto inspect = [&](int lit, const std::vector<GraphEdgeTemplate>& templates) {
+        if (has_conflict_ || templates.empty()) return;
+        if (simple_graph_budget_ > 0 && candidates >= simple_graph_budget_) {
+            budget_cutoff = true;
+            return;
+        }
+        ++candidates;
+        if (stats_) ++stats_->lra_simple_graph_candidates;
+        if (current_lit_value(lit) > 0) return;
+        std::vector<int> reason;
+        if (implied(templates, reason)) enqueue_graph_propagation(lit, std::move(reason));
+    };
+
+    for (const auto& [sat_var, atom] : simple_graph_atoms_) {
+        if (has_conflict_) break;
+        inspect(sat_var, atom.positive_edges);
+        inspect(-sat_var, atom.negative_edges);
+    }
+    if (budget_cutoff && stats_) ++stats_->lra_simple_graph_budget_cutoffs;
+}
+
 void LraSolver::discover_row_bound_propagations() {
     if (!row_bound_propagation_) return;
     size_t candidates_this_discovery = 0;
@@ -735,6 +1085,8 @@ void LraSolver::discover_bound_propagations() {
     if (!incremental_prop_scan_) {
         for (const auto& [sat_var, ea] : elementary_atoms_) inspect_atom(sat_var, ea);
         if (has_conflict_) return;
+        discover_simple_graph_propagations();
+        if (has_conflict_) return;
         discover_row_bound_propagations();
         for (int var : prop_dirty_vars_) {
             if (var >= 0 && static_cast<size_t>(var) < prop_var_dirty_.size())
@@ -753,6 +1105,8 @@ void LraSolver::discover_bound_propagations() {
             inspect_atom(sat_var, it->second);
         }
     }
+    discover_simple_graph_propagations();
+    if (has_conflict_) return;
     discover_row_bound_propagations();
     for (int var : prop_dirty_vars_) {
         if (var >= 0 && static_cast<size_t>(var) < prop_var_dirty_.size())
@@ -761,8 +1115,10 @@ void LraSolver::discover_bound_propagations() {
     prop_dirty_vars_.clear();
 }
 
-bool LraSolver::cb_check_found_model(const std::vector<int>&) {
+bool LraSolver::cb_check_found_model(const std::vector<int>& model) {
     if (stats_) ++stats_->lra_final_checks;
+    if (has_conflict_) return false;
+    discover_simple_graph_propagations(&model);
     if (has_conflict_) return false;
     if (tableau_dirty_) {
         if (!check()) return false;

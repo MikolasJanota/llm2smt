@@ -141,6 +141,79 @@ TEST(LraSolver, RowBoundPropagationExplainsWithSourceBounds) {
     EXPECT_EQ(antecedents, (std::vector<int>{-y_ge, -x_ge}));
 }
 
+TEST(LraSolver, SimpleGraphPropagatesDifferenceConstraint) {
+    llm2smt::Stats stats;
+    LraSolver solver(&stats);
+    solver.set_simple_graph_propagation(true);
+    solver.declare_real("x");
+    solver.declare_real("y");
+    solver.declare_real("z");
+
+    LinearExpr x_minus_y_minus_one;
+    x_minus_y_minus_one.add_var("x", Rational(1));
+    x_minus_y_minus_one.add_var("y", Rational(-1));
+    x_minus_y_minus_one.constant = Rational(-1);
+
+    LinearExpr y_minus_z_minus_one;
+    y_minus_z_minus_one.add_var("y", Rational(1));
+    y_minus_z_minus_one.add_var("z", Rational(-1));
+    y_minus_z_minus_one.constant = Rational(-1);
+
+    LinearExpr x_minus_z_minus_two;
+    x_minus_z_minus_two.add_var("x", Rational(1));
+    x_minus_z_minus_two.add_var("z", Rational(-1));
+    x_minus_z_minus_two.constant = Rational(-2);
+
+    int xy = solver.register_atom({x_minus_y_minus_one, Relation::Le});
+    int yz = solver.register_atom({y_minus_z_minus_one, Relation::Le});
+    int xz = solver.register_atom({x_minus_z_minus_two, Relation::Le});
+
+    solver.notify_assignment(xy, false);
+    solver.notify_assignment(yz, false);
+
+    EXPECT_EQ(solver.cb_propagate(), xz);
+    EXPECT_GT(stats.lra_simple_graph_propagations, 0u);
+
+    EXPECT_EQ(solver.cb_add_reason_clause_lit(xz), xz);
+    std::vector<int> antecedents;
+    for (int lit = solver.cb_add_reason_clause_lit(xz); lit != 0;
+         lit = solver.cb_add_reason_clause_lit(xz)) {
+        antecedents.push_back(lit);
+    }
+    std::sort(antecedents.begin(), antecedents.end());
+    EXPECT_EQ(antecedents, (std::vector<int>{-yz, -xy}));
+}
+
+TEST(LraSolver, SimpleGraphPropagatesUtvpiConstraint) {
+    llm2smt::Stats stats;
+    LraSolver solver(&stats);
+    solver.set_simple_graph_propagation(true);
+    solver.declare_real("x");
+    solver.declare_real("y");
+
+    LinearExpr sum_minus_one;
+    sum_minus_one.add_var("x", Rational(1));
+    sum_minus_one.add_var("y", Rational(1));
+    sum_minus_one.constant = Rational(-1);
+
+    LinearExpr y_minus_one;
+    y_minus_one.add_var("y", Rational(1));
+    y_minus_one.constant = Rational(-1);
+
+    LinearExpr x;
+    x.add_var("x", Rational(1));
+
+    int sum_le = solver.register_atom({sum_minus_one, Relation::Le});
+    int y_ge = solver.register_atom({y_minus_one, Relation::Ge});
+    int x_le_zero = solver.register_atom({x, Relation::Le});
+
+    solver.notify_assignment(sum_le, false);
+    solver.notify_assignment(y_ge, false);
+
+    EXPECT_EQ(solver.cb_propagate(), x_le_zero);
+    EXPECT_GT(stats.lra_simple_graph_propagations, 0u);
+}
+
 TEST(LraSolver, DirectEqualityAtomAppliesBothBounds) {
     LraSolver solver;
     solver.declare_real("x");

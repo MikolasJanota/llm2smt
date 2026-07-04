@@ -48,6 +48,9 @@ public:
     void set_row_bound_dirty_scan(bool v) { row_bound_dirty_scan_ = v; }
     void set_row_bound_indexed_dirty_scan(bool v) { row_bound_indexed_dirty_scan_ = v; }
     void set_row_bound_propagation_budget(size_t v) { row_bound_propagation_budget_ = v; }
+    void set_tableau_row_index(bool v) { tableau_row_index_ = v; }
+    void set_simple_graph_propagation(bool v) { simple_graph_propagation_ = v; }
+    void set_simple_graph_budget(size_t v) { simple_graph_budget_ = v; }
     void add_branch_hint(int lit);
 
     void notify_assignment(int lit, bool is_fixed) override;
@@ -94,6 +97,29 @@ private:
         int negative_source_lit = 0;
     };
 
+    struct GraphEdgeTemplate {
+        int from = 0;
+        int to = 0;
+        DeltaRational weight;
+    };
+
+    struct SimpleGraphAtom {
+        std::vector<GraphEdgeTemplate> positive_edges;
+        std::vector<GraphEdgeTemplate> negative_edges;
+    };
+
+    struct ActiveGraphEdge {
+        int from = 0;
+        int to = 0;
+        DeltaRational weight;
+        int source_lit = 0;
+    };
+
+    struct ShortestPaths {
+        std::vector<std::optional<DeltaRational>> dist;
+        std::vector<int> pred_edge;
+    };
+
     int next_var_ = 1;
     std::vector<int> observed_vars_;
     std::vector<int> atom_assignment_; // indexed by SAT variable: -1 false, 0 unassigned, 1 true
@@ -120,7 +146,10 @@ private:
     bool row_bound_propagation_ = false;
     bool row_bound_dirty_scan_ = false;
     bool row_bound_indexed_dirty_scan_ = false;
+    bool tableau_row_index_ = false;
     size_t row_bound_propagation_budget_ = 0;
+    bool simple_graph_propagation_ = false;
+    size_t simple_graph_budget_ = 20000;
     size_t conflict_minimize_limit_ = 64;
     Stats* stats_ = nullptr;
     bool tableau_dirty_ = false;
@@ -151,7 +180,9 @@ private:
     size_t branch_hint_head_ = 0;
     int reason_serving_lit_ = 0;
     size_t reason_serving_idx_ = 0;
+    std::unordered_map<int, SimpleGraphAtom> simple_graph_atoms_;
 
+    bool row_index_enabled() const { return row_bound_indexed_dirty_scan_ || tableau_row_index_; }
     static std::string atom_key(const Atom& atom);
     int ensure_real_var(const std::string& name);
     int ensure_term_var(const LinearExpr& expr);
@@ -172,12 +203,27 @@ private:
     Rational choose_delta() const;
     void discover_bound_propagations();
     void discover_row_bound_propagations();
+    void discover_simple_graph_propagations(const std::vector<int>* model = nullptr);
+    void detect_simple_graph_conflict(const std::vector<int>* model = nullptr);
     void mark_all_bound_vars_for_propagation();
     int current_lit_value(int lit) const;
     bool enqueue_propagation(int lit, std::vector<int> reason, bool row_bound);
+    bool enqueue_graph_propagation(int lit, std::vector<int> reason);
     bool feasible_for_literals(const std::vector<int>& lits,
                                std::map<std::string, Rational>* model) const;
     std::vector<int> minimize_conflict(std::vector<int> active) const;
+    int graph_node_for_var(int var, bool negated) const;
+    int graph_zero_node() const { return 0; }
+    size_t graph_node_count() const;
+    std::optional<SimpleGraphAtom> make_simple_graph_atom(const Atom& atom);
+    std::vector<ActiveGraphEdge> active_simple_graph_edges(const std::vector<int>* model) const;
+    std::optional<ShortestPaths> shortest_paths_from(
+        int source, const std::vector<ActiveGraphEdge>& edges, size_t node_count) const;
+    std::vector<int> graph_path_reason(
+        int source, int target, const ShortestPaths& paths,
+        const std::vector<ActiveGraphEdge>& edges) const;
+    std::vector<int> graph_negative_cycle_reason(
+        const std::vector<ActiveGraphEdge>& edges, size_t node_count) const;
 };
 
 } // namespace llm2smt::lra

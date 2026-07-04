@@ -111,6 +111,66 @@ It is skipped in proof mode because the proof pipeline currently reasons about
 the original EUF clauses and theory lemmas rather than these SAT-level derived
 definitions.
 
+## QF_LRA Equality Elimination
+
+Most of this page describes the generic `NodeId` preprocessor. QF_LRA also has
+parser-local preprocessing in `Smt2Visitor`, because arithmetic atoms are lowered
+directly into SAT and LRA objects instead of first becoming generic `NodeId`
+formulas.
+
+The main parser-local arithmetic pass is Gaussian-elimination-style equality
+elimination. Before registering later LRA atoms, the parser collects linear
+equalities that are asserted unconditionally at top level, either as direct
+assertions or as children of an already flattened top-level `and`. Each equality
+is converted to an exact rational linear row: a normalized equation of the form
+`c + a1*x1 + ... + an*xn = 0`, stored as one constant plus rational
+coefficients for variables. These are called rows because the pass treats them
+like rows of a linear system during Gaussian elimination. The pass chooses a pivot variable,
+preferring internal `__lra_` auxiliaries before declared Real constants, and
+stores a substitution for that pivot. Later rows and arithmetic atoms are
+rewritten through the substitution map.
+
+The pass is deliberately conservative:
+
+- guarded equalities under `or`, `=>`, Boolean `ite`, or negation are ignored;
+- arithmetic equalities containing arithmetic `ite` terms are ignored;
+- dependent rows are ignored;
+- inconsistent rows immediately add an empty SAT clause;
+- eliminated declared Real constants are reconstructed for model printing.
+
+This is enabled by default and disabled with:
+
+```sh
+--no-lra-eq-elim
+```
+
+The number of processed rows is capped with:
+
+```sh
+--lra-eq-elim-limit N
+```
+
+## QF_LRA DL/UTVPI Precheck
+
+After equality elimination and before normal SAT/LRA registration, the QF_LRA
+parser runs a conservative graph precheck for unconditional top-level
+unary, difference-logic, and UTVPI atoms. It uses exact rational arithmetic and
+the standard signed-variable UTVPI graph encoding. The pass is one-sided: a
+negative cycle emits an empty SAT clause, while graph-consistent or unsupported
+batches fall back to the normal encoding.
+
+This precheck is enabled by default and disabled with:
+
+```sh
+--no-lra-dl-fast-path
+```
+
+It intentionally ignores guarded atoms under Boolean structure other than
+top-level `and`, and it does not attempt to produce SAT answers or models.
+
+See [](qf-lra.md) for the QF_LRA-specific performance notes and ablation
+results.
+
 ## Important Ordering Constraints
 
 Several regressions in this solver came from changing preprocessing order:
@@ -122,4 +182,9 @@ Several regressions in this solver came from changing preprocessing order:
 - proof snapshots must be taken after simplification so atom shapes match the
   SAT encoding;
 - Bool symbols should be bridged into EUF only when they appear in U-sorted
-  term position.
+  term position;
+- QF_LRA equality elimination must run before later arithmetic atom
+  registration so atoms see the rewritten linear expressions;
+- QF_LRA DL/UTVPI prechecking must run after equality elimination but before
+  arithmetic atom registration, because it may emit an immediate UNSAT clause
+  without creating SAT literals or LRA tableau rows.

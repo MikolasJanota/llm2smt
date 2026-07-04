@@ -1,0 +1,8 @@
+(set-logic QF_LRA)
+(declare-fun x () Real)
+(declare-fun y () Real)
+(declare-fun b () Bool)
+(assert (or b (<= x 0)))
+(assert (>= x 1))
+(assert (>= y 0))
+(check-sat)

@@ -36,6 +36,11 @@ struct Stats {
     uint64_t lra_eq_elim_rows        = 0; // top-level equality rows processed by QF_LRA elimination
     uint64_t lra_eq_elim_vars        = 0; // variables eliminated by QF_LRA equality elimination
     uint64_t lra_eq_elim_contradictions = 0; // inconsistent equality rows detected before SAT search
+    uint64_t lra_dl_fast_path_attempts = 0; // top-level QF_LRA assertion batches checked by the DL/UTVPI pre-encoder
+    uint64_t lra_dl_fast_path_unsats = 0; // batches proved UNSAT by the DL/UTVPI pre-encoder
+    uint64_t lra_dl_fast_path_fallbacks = 0; // batches passed to normal SAT/LRA encoding after the fast-path check
+    uint64_t lra_dl_fast_path_atoms = 0; // arithmetic atoms accepted by the DL/UTVPI pre-encoder
+    uint64_t lra_dl_fast_path_rejected = 0; // batches containing guarded or non-graph arithmetic outside the fast path
     uint64_t lra_const_bool_folds    = 0; // QF_LRA Boolean constants/connectives folded before Tseitin encoding
     uint64_t lra_const_arith_folds   = 0; // QF_LRA arithmetic atoms folded to constants before LRA registration
     uint64_t lra_ite_terms_simplified = 0; // QF_LRA arithmetic ite auxiliaries avoided by local simplification
@@ -67,6 +72,13 @@ struct Stats {
     uint64_t lra_prop_candidates_considered = 0; // elementary atoms inspected by propagation discovery
     uint64_t lra_row_prop_candidates_considered = 0; // row-bound atoms inspected by propagation discovery
     uint64_t lra_row_bound_propagations = 0; // literals enqueued from derived row bounds
+    uint64_t lra_simple_graph_atoms = 0; // atoms recognized as unary/difference/UTVPI graph constraints
+    uint64_t lra_simple_graph_edges = 0; // active graph edges inspected during the last graph discovery
+    uint64_t lra_simple_graph_candidates = 0; // graph atom candidates inspected by propagation discovery
+    uint64_t lra_simple_graph_propagations = 0; // literals enqueued from graph shortest-path implications
+    uint64_t lra_simple_graph_conflicts = 0; // conflicts found by graph negative-cycle or contradicted propagation
+    uint64_t lra_simple_graph_budget_cutoffs = 0; // graph discovery calls stopped by candidate budget
+    uint64_t lra_simple_graph_skipped = 0; // LRA atoms not representable as unary/DL/UTVPI graph constraints
     uint64_t lra_branch_decisions     = 0; // finite-domain branch hints returned to SAT
     uint64_t lra_atoms               = 0; // unique elementary LRA atoms registered
     uint64_t lra_term_vars           = 0; // unique tableau term variables introduced
@@ -115,6 +127,11 @@ struct Stats {
         row("lra.eq_elim_rows",         lra_eq_elim_rows);
         row("lra.eq_elim_vars",         lra_eq_elim_vars);
         row("lra.eq_elim_contradictions", lra_eq_elim_contradictions);
+        row("lra.dl_fast_path_attempts", lra_dl_fast_path_attempts);
+        row("lra.dl_fast_path_unsats",  lra_dl_fast_path_unsats);
+        row("lra.dl_fast_path_fallbacks", lra_dl_fast_path_fallbacks);
+        row("lra.dl_fast_path_atoms",   lra_dl_fast_path_atoms);
+        row("lra.dl_fast_path_rejected", lra_dl_fast_path_rejected);
         row("lra.const_bool_folds",     lra_const_bool_folds);
         row("lra.const_arith_folds",    lra_const_arith_folds);
         row("lra.ite_terms_simplified", lra_ite_terms_simplified);
@@ -143,6 +160,13 @@ struct Stats {
         row("lra.prop_candidates_considered", lra_prop_candidates_considered);
         row("lra.row_prop_candidates_considered", lra_row_prop_candidates_considered);
         row("lra.row_bound_propagations", lra_row_bound_propagations);
+        row("lra.simple_graph_atoms",    lra_simple_graph_atoms);
+        row("lra.simple_graph_edges",    lra_simple_graph_edges);
+        row("lra.simple_graph_candidates", lra_simple_graph_candidates);
+        row("lra.simple_graph_propagations", lra_simple_graph_propagations);
+        row("lra.simple_graph_conflicts", lra_simple_graph_conflicts);
+        row("lra.simple_graph_budget_cutoffs", lra_simple_graph_budget_cutoffs);
+        row("lra.simple_graph_skipped",  lra_simple_graph_skipped);
         row("lra.branch_decisions",       lra_branch_decisions);
         row("lra.atoms",                lra_atoms);
         row("lra.term_vars",            lra_term_vars);

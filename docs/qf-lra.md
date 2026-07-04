@@ -96,10 +96,12 @@ Equality elimination is deliberately conservative. It only consumes arithmetic
 equalities asserted unconditionally at top level, either as direct assertions or
 as children of a top-level `and`; it does not use equalities guarded by `or`,
 `=>`, Boolean `ite`, or negation, and it skips arithmetic equalities whose terms
-contain arithmetic `ite`. Rows are processed with exact rational arithmetic into
-a substitution map, dependent rows are ignored, inconsistent rows add an
-immediate empty SAT clause, and `get-model` reconstructs eliminated declared
-Real constants from the remaining LRA model. The pass is on by default; use
+contain arithmetic `ite`. Here an equality row is the normalized linear equation
+`c + a1*x1 + ... + an*xn = 0` produced from one equality, stored as one constant
+plus exact rational coefficients for variables. These rows are processed into a
+substitution map, dependent rows are ignored, inconsistent rows add an immediate
+empty SAT clause, and `get-model` reconstructs eliminated declared Real
+constants from the remaining LRA model. The pass is on by default; use
 `--no-lra-eq-elim` to disable it and `--lra-eq-elim-limit N` to cap the number
 of equality rows processed.
 
@@ -183,6 +185,134 @@ elementary arithmetic literals with a reason clause built from the contributing
 bound-source literals. The existing `--no-theory-prop` flag disables these LRA
 propagations as well as EUF propagations.
 
+## LRA Opportunities
+
+Start new LRA performance work by classifying the benchmark shape, then choose a
+technique that matches the dominant structure. The current 60s native TSV
+`eval_results/full-rational-sign-fastpaths-60s-20260703.tsv` and Z3 TSV
+`eval_results/full-z3-60s-20260703.tsv` show that the remaining native gap is
+not spread evenly across QF_LRA. The 15 native timeouts are all generated
+`tta_startup` files, and 13 native-slow/Z3-fast cases are also in
+`tta_startup`.
+
+A lightweight S-expression classifier over the 137-file suite gives this shape:
+
+| Set | Files | Avg linear atoms | Avg arithmetic `ite` | Avg finite-domain choices | Unary/two-variable linear atoms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Full QF_LRA suite | 137 | 902 | 71 | 159 | 92.2% |
+| Native 60s timeouts | 15 | 2,799 | 159 | 430 | 90.2% |
+| Native slow, Z3 <= 5s | 13 | 2,357 | 139 | 394 | 91.1% |
+
+The hardest files are therefore not dense arbitrary LRA instances. They are
+large Boolean encodings with thousands of `and`/`or` nodes, many arithmetic
+`ite` terms, hundreds of small finite-domain equalities such as `x = 0`,
+`x = 1`, ..., and mostly unary or two-variable linear atoms. Width-3 atoms still
+occur, so pure difference logic is not enough, but the high fraction of
+two-variable constraints makes a difference-logic/UTVPI recognizer worth
+testing before deeper simplex rewrites.
+
+Promising opportunities, in priority order:
+
+- **Difference-logic and UTVPI fast paths.** Detect formulas or connected
+  components whose linear atoms are unary or two-variable constraints and route
+  them through graph-style consistency/propagation. Z3 uses specialized engines
+  for RDL/IDL/UTVPI-style fragments, while the native path currently sends all
+  general atoms through simplex. The first native step is a default-on
+  pre-encoding UNSAT check for pure top-level unary/DL/UTVPI assertion batches;
+  it is intentionally one-sided and falls back to normal encoding for SAT/model
+  cases and for guarded or wider atoms.
+- **Finite-domain SAT compilation.** Extend the existing finite-domain AMO and
+  equality-definition work toward exactly-one clauses, value-ordering or
+  symmetry-breaking constraints under a flag, and stronger guarded implications
+  from domain choices to simple bounds. This matches the hundreds of repeated
+  value choices in the hard `tta_startup` files.
+- **ITE-aware preprocessing.** Continue reducing arithmetic `ite` chains before
+  LRA registration. The hard cases average more than 100 arithmetic `ite` terms,
+  so missed sharing or missed constant/domain simplification can create many
+  unnecessary auxiliary rows and guarded atoms.
+- **Indexed cheap bound propagation.** Z3 emphasizes direct and row-derived
+  bound propagation using indexes from variables to bound atoms. Native
+  row-bound propagation exists, but the aggregate result depends heavily on scan
+  cost. The next version should focus on reverse indexes, hit-rate counters, and
+  strict candidate budgets rather than broader full-row scans.
+- **Simplex pivot and sparse-row engineering.** If shape-specific
+  preprocessing does not remove the gap, profile the remaining slow cases for
+  pivot count, row density, and rational normalization. Candidate work includes
+  pivot choices that reduce fill-in/coefficient growth and, as a larger
+  option-controlled experiment, a sum-of-infeasibilities simplex mode for
+  pivot-heavy instances.
+- **Theory-aware SAT branching.** The finite-domain branch hint is currently
+  narrow. A better callback should prefer literals that decide small-domain
+  values or strong bounds in the current LRA component, and should be evaluated
+  against the native-slow/Z3-fast `tta_startup` subset before becoming default.
+
+### DL/UTVPI Fast Paths
+
+`--no-lra-dl-fast-path` disables the default parser-local graph precheck for
+top-level QF_LRA assertions. The precheck accepts only unconditional assertions
+and direct children of top-level `and`; it rejects guarded atoms under `or`,
+`=>`, Boolean `ite`, negation, or `let`. Accepted arithmetic atoms must be
+unary, difference-logic (`x - y <= c`), or UTVPI (`±x ± y <= c`) constraints
+over exact rationals. Equalities are expanded to both non-strict directions.
+
+The pass is deliberately one-sided: it may emit an empty SAT clause when the
+accepted graph has a negative cycle, but it never returns SAT and never prints a
+model. If the graph is consistent, or if any assertion is outside the fragment,
+the parser falls back to the existing SAT/LRA encoding. This keeps model
+printing and mixed LRA completeness in the Dutertre/de Moura-style simplex core
+while avoiding SAT variables, LRA rows, checks, and pivots for pure graph
+contradictions.
+
+The encoding uses the standard signed-variable UTVPI reduction. Unary bounds
+are represented both as zero-node DL edges and as signed-variable edges, so
+simple contradictions such as `x <= 0`, `x >= 1` and UTVPI contradictions such
+as `x + y <= 1`, `x >= 1`, `y > 0` are caught before simplex.
+
+On the current benchmark set this is expected to be neutral-to-small: the
+shape scan found no purely relational DL files and only 14 tiny pure
+unary/DL-with-equality files, all already solved in a few milliseconds. The
+value of the pass is therefore mostly as infrastructure for component-level
+fragment detection, and as protection for synthetic or future pure DL/UTVPI
+inputs. Focused regressions show the intended effect: the pure DL and UTVPI
+UNSAT examples now report `lra.dl_fast_path_unsats=1`, `sat.vars=0`,
+`lra.check_calls=0`, and `lra.pivots=0`; `--no-lra-dl-fast-path` restores the
+normal simplex path.
+
+### Simple Graph Propagation
+
+`--lra-simple-graph-prop` enables an experimental auxiliary graph reasoner for
+the simple-constraint subset. It recognizes unary bounds, difference-logic
+atoms such as `x - y <= c`, and UTVPI-shaped atoms such as `x + y <= c` by
+building difference edges over signed variables. `--lra-simple-graph-budget N`
+limits the number of graph atom candidates inspected per discovery call
+(`0` means unlimited).
+
+This is deliberately not a replacement for simplex. The graph reasoner only
+uses currently active SAT-assigned literals, can add sound conflict or
+propagation clauses derived from the simple subset, and then leaves the mixed
+LRA problem to the existing Dutertre/de Moura-style incremental simplex core.
+This matters because the `tta_startup` files still contain width-3 atoms, so a
+graph-satisfiable subset does not imply full LRA satisfiability.
+
+The design follows the standard split used in SMT arithmetic solvers: keep a
+complete LRA simplex engine for the mixed problem, but exploit specialized
+fragments when the formula shape allows it. The relevant references are
+Dutertre and de Moura, *A Fast Linear-Arithmetic Solver for DPLL(T)*, for the
+simplex core and exact strict-bound treatment; Bjørner and Nachmanson,
+*Arithmetic Solving in Z3*, for fragment-specialized arithmetic engines in Z3;
+and the usual UTVPI signed-variable graph reduction, which represents
+`±x ± y <= c` as difference constraints over `x` and `-x`.
+
+The first implementation is intentionally default-off. On 2026-07-04, the 20s
+quick suite regressed from 5/5 solved and PAR2 1.077 to 4/5 solved and PAR2
+10.032 with `--lra-simple-graph-prop`; the 20s hard suite regressed from 8/10
+solved and PAR2 8.681 to 6/10 solved and PAR2 19.412. Smaller candidate
+budgets of 100 and 1000 were also worse on quick. After review, pure DL
+negative-cycle conflicts were made cheaper and can avoid simplex entirely on a
+synthetic 201-edge chain, but mixed-instance propagation still does too much
+repeated shortest-path work. The next graph iteration should reduce that work
+and add a stronger hit-rate guard before any default-on evaluation.
+
 ## Current Limits
 
 The LRA-local preprocessing is intentionally conservative. It folds constant
@@ -203,7 +333,12 @@ still incomplete in the native path:
 - row-bound tightening before SAT search starts;
 - default-on symmetry breaking for finite-domain LRA variables; this needs a
   proof that variable/value permutations preserve the formula before adding
-  ordering constraints.
+  ordering constraints;
+- component-level DL/UTVPI extraction when only part of the formula fits the
+  graph fragment; the current default fast path is whole-batch and one-sided;
+- default-on simple-graph propagation for assigned unary/DL/UTVPI atoms; the
+  implementation exists behind `--lra-simple-graph-prop` and needs aggregate
+  PAR2 evidence before promotion.
 
 ## Evaluation Notes
 
@@ -305,13 +440,24 @@ for this dirty scan. The indexed mode is default-off because it improves some
 long-tail induction instances but regressed quick and hard PAR2 samples in the
 July 2026 evaluation.
 
+`--lra-tableau-row-index` enables a separate experimental reverse row index for
+simplex `update` and `pivot` scans. The intended target is pivot-heavy problems
+where scanning every basic row dominates the profile. It is default-off: on the
+2026-07-04 quick suite it solved 5/5 but regressed PAR2 from 1.016 s to 1.813 s,
+while the hard suite stayed mixed at 8/10 solved and PAR2 8.838 s. Keep it as an
+engineering experiment for profiled sparse-tableau cases rather than a default
+heuristic.
+
 `--stats` prints LRA counters for assignments, simplex checks, pivots,
 conflicts, conflict-clause literals, delivered propagations, propagation
 candidates considered, registered elementary atoms, tableau term variables, Real
 variables, row-bound candidates, row-bound propagations, equality-elimination
 rows/variables/contradictions, local constant folds, arithmetic `ite`
-simplifications, finite-domain bound/equality-definition clauses, and LRA-local
-cache hits. It also prints SAT encoding size counters. Extra propagation traffic can speed up hard bound-heavy cases but can
+simplifications, finite-domain bound/equality-definition clauses, simple-graph
+atoms/edges/candidates/propagations/conflicts/budget cutoffs, and LRA-local
+cache hits. The DL/UTVPI precheck counters report attempts, UNSAT hits,
+fallbacks, accepted atoms, and rejected batches. It also prints SAT encoding
+size counters. Extra propagation traffic can speed up hard bound-heavy cases but can
 also slow the SAT search, so PAR2 is tracked alongside solved counts when
 comparing these options.
 The stats output also includes a `z3-shaped` section with native approximations
@@ -369,6 +515,8 @@ earlier run.
 | 2026-07-03 | `--lra-ite-eq-direct` candidate, repeat 1 | 20 s | 116 / 137 | 51 / 72 | 21 | 0 | 6.919 s | `loop-ite-eq-direct-repeat-1-full-candidate-20260703-225957` | Repeats the full-suite gain; no Z3/OpenSMT disagreements on commonly solved files. |
 | 2026-07-03 | local loop default, repeat 2 | 20 s | 116 / 137 | 51 / 72 | 21 | 0 | 7.374 s | `loop-ite-eq-direct-repeat-2-full-default-20260703-230538` | Stronger default run shows solved-count noise at the 20 s cutoff. |
 | 2026-07-03 | `--lra-ite-eq-direct` candidate, repeat 2 | 20 s | 116 / 137 | 51 / 72 | 21 | 0 | 6.943 s | `loop-ite-eq-direct-repeat-2-full-candidate-20260703-230538` | Solved count ties the strongest default repeat while preserving a PAR2 win; promoted to the default on 2026-07-04 with `--no-lra-ite-eq-direct` retained as the ablation. |
+| 2026-07-04 | DL/UTVPI fast path default on | 20 s | 114 / 137 | 49 / 72 | 23 | 0 | 7.478 s | `full-dlfast-default-20260704` | Accepted as default-on but small; the pure graph regressions avoid SAT/LRA rows, and the paired ablation below shows one extra local `tta_startup` solve with no Z3 answer disagreements. |
+| 2026-07-04 | `--no-lra-dl-fast-path` ablation | 20 s | 113 / 137 | 48 / 72 | 24 | 0 | 7.604 s | `full-dlfast-off-20260704` | Slightly worse than the default-on run; keep the disable flag because the current benchmark set has few pure DL/UTVPI instances and timing near the cutoff is noisy. |
 
 Most native rows in this log solve `check`, `keymaera`, and
 `spider_benchmarks` completely; the moving metric is usually `tta_startup`.

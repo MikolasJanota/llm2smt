@@ -205,6 +205,7 @@ private:
     void lra_assert_formula(smt2parser::SMTLIBv2Parser::TermContext*);
     void lra_flush_assertions();
     void lra_collect_unconditional_equalities(smt2parser::SMTLIBv2Parser::TermContext*);
+    bool lra_try_dl_fast_path_unsat();
     void lra_try_eliminate_equality(lra::LinearExpr e);
     bool lra_term_is_elim_safe(smt2parser::SMTLIBv2Parser::TermContext*) const;
     std::optional<lra::Rational> lra_model_value(const std::string& name) const;
