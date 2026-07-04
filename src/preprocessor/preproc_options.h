@@ -40,6 +40,9 @@ struct PreprocOptions {
     bool        lra_row_bound_indexed_dirty_scan = false; // experimental: use a reverse row index for dirty row-bound propagation scans
     size_t      lra_row_bound_prop_budget = 0; // max row-bound atom candidates per discovery; 0 means unlimited
     bool        lra_tableau_row_index = false; // experimental: use reverse row index for simplex update/pivot scans
+    std::string lra_pivot_heuristic = "min-var"; // QF_LRA simplex entering heuristic: min-var or min-column
+    size_t      lra_pivot_bland_after = 0; // pivot cap before falling back to Bland/min-var in one check call; 0 disables
+    bool        lra_simple_graph_conflicts = false; // experimental: conflict-only unary/DL/UTVPI graph checks
     bool        lra_simple_graph_prop = false; // experimental: propagate from unary/DL/UTVPI graph constraints
     size_t      lra_simple_graph_budget = 20000; // max simple-graph atom candidates per discovery; 0 means unlimited
     bool        lra_dl_fast_path = true; // prove pure top-level unary/DL/UTVPI contradictions before SAT/LRA encoding

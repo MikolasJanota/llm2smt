@@ -255,6 +255,14 @@ int main(int argc, char** argv) {
                           "Maximum QF_LRA row-bound propagation candidates per discovery (0 = unlimited)");
     lra_group->add_flag("--lra-tableau-row-index", opts.lra_tableau_row_index,
                         "Enable experimental QF_LRA reverse row index for simplex update/pivot scans");
+    lra_group->add_option("--lra-pivot-heuristic", opts.lra_pivot_heuristic,
+                          "QF_LRA simplex entering heuristic: min-var or min-column")
+       ->check(CLI::IsMember({"min-var", "min-column"}));
+    lra_group->add_option("--lra-pivot-bland-after", opts.lra_pivot_bland_after,
+                          "QF_LRA pivots in one check before falling back to Bland/min-var (0 = disabled)")
+       ->check(CLI::NonNegativeNumber);
+    lra_group->add_flag("--lra-simple-graph-conflicts", opts.lra_simple_graph_conflicts,
+                        "Enable experimental QF_LRA unary/difference/UTVPI graph conflict detection");
     lra_group->add_flag("--lra-simple-graph-prop", opts.lra_simple_graph_prop,
                         "Enable experimental QF_LRA unary/difference/UTVPI graph propagation");
     lra_group->add_option("--lra-simple-graph-budget", opts.lra_simple_graph_budget,
@@ -314,6 +322,9 @@ int main(int argc, char** argv) {
         lra.set_row_bound_indexed_dirty_scan(opts.lra_row_bound_indexed_dirty_scan);
         lra.set_row_bound_propagation_budget(opts.lra_row_bound_prop_budget);
         lra.set_tableau_row_index(opts.lra_tableau_row_index);
+        lra.set_pivot_heuristic(opts.lra_pivot_heuristic);
+        lra.set_pivot_bland_after(opts.lra_pivot_bland_after);
+        lra.set_simple_graph_conflicts(opts.lra_simple_graph_conflicts);
         lra.set_simple_graph_propagation(opts.lra_simple_graph_prop);
         lra.set_simple_graph_budget(opts.lra_simple_graph_budget);
         euf.set_prop_interval(opts.prop_interval);

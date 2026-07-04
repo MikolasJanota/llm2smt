@@ -144,6 +144,9 @@ Theory propagation options:
 - `--lra-row-bound-dirty-scan`
 - `--lra-row-bound-prop-budget N`
 - `--lra-tableau-row-index`
+- `--lra-pivot-heuristic min-var|min-column`
+- `--lra-pivot-bland-after N`
+- `--lra-simple-graph-conflicts`
 - `--lra-simple-graph-prop`
 - `--lra-simple-graph-budget N`
 - `--no-lra-dl-fast-path`
@@ -172,8 +175,8 @@ normal execution and printed only with `--stats`. The stats are grouped into:
 - QF_LRA local encoding cache counters;
 - SAT encoding size counters;
 - EUF assignment, conflict, and propagation counters.
-- LRA assignment, check, conflict, propagation, row-bound propagation,
-  DL/UTVPI fast-path, simple-graph, and tableau-size counters.
+- LRA assignment, check, conflict, propagation, pivot heuristic, row-bound
+  propagation, DL/UTVPI fast-path, simple-graph, and tableau-size counters.
 
 The SIGTERM handler prints `unknown` and uses an `atexit` handler so timeout
 runs can still produce stats when `--stats` is active.

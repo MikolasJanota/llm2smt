@@ -66,6 +66,10 @@ struct Stats {
     uint64_t lra_check_calls         = 0; // simplex consistency checks
     uint64_t lra_final_checks        = 0; // complete SAT models accepted by the LRA final check
     uint64_t lra_pivots              = 0; // successful tableau pivots
+    uint64_t lra_check_max_pivots    = 0; // maximum pivots used in one simplex check call
+    uint64_t lra_pivot_candidates    = 0; // eligible entering variables inspected by pivot heuristics
+    uint64_t lra_pivot_min_column_choices = 0; // pivots selected by the min-column heuristic
+    uint64_t lra_pivot_bland_fallbacks = 0; // pivots selected after fallback to Bland/min-var
     uint64_t lra_conflicts           = 0; // theory conflict clauses generated
     uint64_t lra_conflict_lits_total = 0; // total literals across all LRA conflicts
     uint64_t lra_propagations        = 0; // theory literals delivered to SAT
@@ -77,6 +81,10 @@ struct Stats {
     uint64_t lra_simple_graph_candidates = 0; // graph atom candidates inspected by propagation discovery
     uint64_t lra_simple_graph_propagations = 0; // literals enqueued from graph shortest-path implications
     uint64_t lra_simple_graph_conflicts = 0; // conflicts found by graph negative-cycle or contradicted propagation
+    uint64_t lra_simple_graph_conflict_checks = 0; // negative-cycle checks performed on active graph edges
+    uint64_t lra_simple_graph_clean_skips = 0; // graph conflict checks skipped because active edges were unchanged
+    uint64_t lra_simple_graph_active_edges = 0; // current active graph edges maintained incrementally
+    uint64_t lra_simple_graph_rebuilds_avoided = 0; // active graph scans avoided by incremental edge maintenance
     uint64_t lra_simple_graph_budget_cutoffs = 0; // graph discovery calls stopped by candidate budget
     uint64_t lra_simple_graph_skipped = 0; // LRA atoms not representable as unary/DL/UTVPI graph constraints
     uint64_t lra_branch_decisions     = 0; // finite-domain branch hints returned to SAT
@@ -154,6 +162,10 @@ struct Stats {
         row("lra.check_calls",          lra_check_calls);
         row("lra.final_checks",         lra_final_checks);
         row("lra.pivots",               lra_pivots);
+        row("lra.check_max_pivots",     lra_check_max_pivots);
+        row("lra.pivot_candidates",     lra_pivot_candidates);
+        row("lra.pivot_min_column_choices", lra_pivot_min_column_choices);
+        row("lra.pivot_bland_fallbacks", lra_pivot_bland_fallbacks);
         row("lra.conflicts",            lra_conflicts);
         row("lra.conflict_lits_total",  lra_conflict_lits_total);
         row("lra.propagations",         lra_propagations);
@@ -165,6 +177,10 @@ struct Stats {
         row("lra.simple_graph_candidates", lra_simple_graph_candidates);
         row("lra.simple_graph_propagations", lra_simple_graph_propagations);
         row("lra.simple_graph_conflicts", lra_simple_graph_conflicts);
+        row("lra.simple_graph_checks", lra_simple_graph_conflict_checks);
+        row("lra.simple_graph_clean_skips", lra_simple_graph_clean_skips);
+        row("lra.simple_graph_active", lra_simple_graph_active_edges);
+        row("lra.simple_graph_reuse", lra_simple_graph_rebuilds_avoided);
         row("lra.simple_graph_budget_cutoffs", lra_simple_graph_budget_cutoffs);
         row("lra.simple_graph_skipped",  lra_simple_graph_skipped);
         row("lra.branch_decisions",       lra_branch_decisions);

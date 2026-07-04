@@ -139,7 +139,8 @@ simplex architecture:
   linear expression;
 - `notify_assignment` updates a bound stack for elementary atoms;
 - Figure 3.1-style `update` / `pivotAndUpdate` repairs assignments;
-- Figure 3.2 `Check` uses a deterministic Bland-style smallest-variable choice;
+- Figure 3.2 `Check` uses a deterministic Bland-style smallest-variable choice
+  by default, with experimental option-controlled pivot alternatives;
 - Section 3.2.2 conflict clauses are built from the violated row's active bound
   sources;
 - Section 3.2.4 backtracking restores only bound-stack entries and leaves the
@@ -280,10 +281,19 @@ normal simplex path.
 
 ### Simple Graph Propagation
 
+`--lra-simple-graph-conflicts` enables conflict-only graph reasoning for the
+same unary, difference-logic, and UTVPI subset recognized by the parser
+precheck. The solver maintains active graph edges incrementally as graph-shaped
+arithmetic literals are assigned and removed on backtrack, and it runs
+negative-cycle detection only when those active edges have changed or during a
+final model check. This avoids the repeated full active-edge rebuild that made
+the first graph propagation experiment expensive.
+
 `--lra-simple-graph-prop` enables an experimental auxiliary graph reasoner for
 the simple-constraint subset. It recognizes unary bounds, difference-logic
 atoms such as `x - y <= c`, and UTVPI-shaped atoms such as `x + y <= c` by
-building difference edges over signed variables. `--lra-simple-graph-budget N`
+building difference edges over signed variables. The propagation flag implies
+the conflict-only checks. `--lra-simple-graph-budget N`
 limits the number of graph atom candidates inspected per discovery call
 (`0` means unlimited).
 
@@ -300,7 +310,8 @@ fragments when the formula shape allows it. The relevant references are
 Dutertre and de Moura, *A Fast Linear-Arithmetic Solver for DPLL(T)*, for the
 simplex core and exact strict-bound treatment; Bjørner and Nachmanson,
 *Arithmetic Solving in Z3*, for fragment-specialized arithmetic engines in Z3;
-and the usual UTVPI signed-variable graph reduction, which represents
+and Lahiri and Musuvathi, *An Efficient Decision Procedure for UTVPI
+Constraints*, for the signed-variable graph reduction, which represents
 `±x ± y <= c` as difference constraints over `x` and `-x`.
 
 The first implementation is intentionally default-off. On 2026-07-04, the 20s
@@ -312,6 +323,44 @@ negative-cycle conflicts were made cheaper and can avoid simplex entirely on a
 synthetic 201-edge chain, but mixed-instance propagation still does too much
 repeated shortest-path work. The next graph iteration should reduce that work
 and add a stronger hit-rate guard before any default-on evaluation.
+
+The conflict-only incremental edge-cache variant is also default-off. It fixes
+the assignment-time rebuild problem and preserves pure graph UNSAT tests, but
+on 2026-07-04 it still regressed the 20s quick suite from 5/5, PAR2 1.333 s to
+5/5, PAR2 1.887 s, and the 20s hard suite from 8/10, PAR2 9.023 s to 5/10,
+PAR2 21.905 s. Treat it as a diagnostic option for pure graph-heavy cases, not
+as a mixed-`tta_startup` default candidate.
+
+### Pivot Heuristics
+
+`--lra-pivot-heuristic min-var|min-column` controls the entering-variable choice
+inside simplex `Check`. The default `min-var` preserves the current
+Dutertre/de Moura Figure 3.2 behavior: choose the smallest eligible non-basic
+variable. This is deterministic and Bland-style, so it is the trusted baseline
+for correctness and termination.
+
+`min-column` is an experimental local heuristic inspired by the implementation
+discussion in King, Barrett, and Dutertre, *Simplex with Sum of Infeasibilities
+for SMT*. It chooses the eligible entering variable with the shortest active
+tableau column and breaks ties by variable id. The goal is to reduce pivot
+fallout and row-update work on pivot-heavy checks while leaving the tableau
+algorithm, exact rational arithmetic, and conflict explanations unchanged.
+
+`--lra-pivot-bland-after N` switches a single check call back to `min-var` after
+`N` pivots (`0` disables the cap). This keeps non-Bland experiments bounded by
+the known Bland-style fallback. The stats `lra.pivot_candidates`,
+`lra.pivot_min_column_choices`, `lra.pivot_bland_fallbacks`, and
+`lra.check_max_pivots` are intended for comparing pivot behavior before looking
+at aggregate PAR2.
+
+The first min-column implementation is default-off. On 2026-07-04 with
+`--lra-pivot-heuristic min-column --lra-pivot-bland-after 1000`, the 20s quick
+suite stayed at 5/5 solved but regressed PAR2 from 1.333 s to 2.758 s, and the
+20s hard suite stayed at 8/10 solved but regressed PAR2 from 9.023 s to
+10.349 s. The combined min-column plus graph-conflict candidate was worse
+again on quick, solving only 3/5 with PAR2 16.238 s. Keep this as an
+instrumented profiling knob until a target file shows lower pivot count and
+lower wall time together.
 
 ## Current Limits
 

@@ -5,6 +5,7 @@
 #include <set>
 #include <span>
 #include <string>
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -33,6 +34,8 @@ struct Atom {
 
 class LraSolver : public ExternalPropagator {
 public:
+    enum class PivotHeuristic { MinVar, MinColumn };
+
     explicit LraSolver(Stats* stats = nullptr) : stats_(stats) {}
 
     int new_var() {
@@ -49,7 +52,17 @@ public:
     void set_row_bound_indexed_dirty_scan(bool v) { row_bound_indexed_dirty_scan_ = v; }
     void set_row_bound_propagation_budget(size_t v) { row_bound_propagation_budget_ = v; }
     void set_tableau_row_index(bool v) { tableau_row_index_ = v; }
-    void set_simple_graph_propagation(bool v) { simple_graph_propagation_ = v; }
+    void set_pivot_heuristic(const std::string& name) {
+        if (name == "min-var") pivot_heuristic_ = PivotHeuristic::MinVar;
+        else if (name == "min-column") pivot_heuristic_ = PivotHeuristic::MinColumn;
+        else throw std::invalid_argument("unknown QF_LRA pivot heuristic: " + name);
+    }
+    void set_pivot_bland_after(size_t v) { pivot_bland_after_ = v; }
+    void set_simple_graph_conflicts(bool v) { simple_graph_conflicts_ = v; }
+    void set_simple_graph_propagation(bool v) {
+        simple_graph_propagation_ = v;
+        if (v) simple_graph_conflicts_ = true;
+    }
     void set_simple_graph_budget(size_t v) { simple_graph_budget_ = v; }
     void add_branch_hint(int lit);
 
@@ -147,7 +160,10 @@ private:
     bool row_bound_dirty_scan_ = false;
     bool row_bound_indexed_dirty_scan_ = false;
     bool tableau_row_index_ = false;
+    PivotHeuristic pivot_heuristic_ = PivotHeuristic::MinVar;
+    size_t pivot_bland_after_ = 0;
     size_t row_bound_propagation_budget_ = 0;
+    bool simple_graph_conflicts_ = false;
     bool simple_graph_propagation_ = false;
     size_t simple_graph_budget_ = 20000;
     size_t conflict_minimize_limit_ = 64;
@@ -181,8 +197,12 @@ private:
     int reason_serving_lit_ = 0;
     size_t reason_serving_idx_ = 0;
     std::unordered_map<int, SimpleGraphAtom> simple_graph_atoms_;
+    std::vector<ActiveGraphEdge> active_simple_graph_edges_;
+    std::vector<size_t> graph_edge_level_counts_{0};
+    bool active_simple_graph_dirty_ = false;
 
     bool row_index_enabled() const { return row_bound_indexed_dirty_scan_ || tableau_row_index_; }
+    bool simple_graph_conflicts_enabled() const { return simple_graph_conflicts_ || simple_graph_propagation_; }
     static std::string atom_key(const Atom& atom);
     int ensure_real_var(const std::string& name);
     int ensure_term_var(const LinearExpr& expr);
@@ -197,6 +217,8 @@ private:
     void update(int x, const DeltaRational& v);
     bool pivot_and_update(int basic, int nonbasic, const DeltaRational& value);
     bool pivot(int basic, int nonbasic);
+    int choose_entering_var(int bad, bool below, bool bland_mode, DeltaRational& target);
+    size_t column_length(int var) const;
     std::vector<int> explain_lower_conflict(int basic) const;
     std::vector<int> explain_upper_conflict(int basic) const;
     void rebuild_model();
@@ -205,6 +227,7 @@ private:
     void discover_row_bound_propagations();
     void discover_simple_graph_propagations(const std::vector<int>* model = nullptr);
     void detect_simple_graph_conflict(const std::vector<int>* model = nullptr);
+    void add_active_simple_graph_edges(int sat_var, int lit);
     void mark_all_bound_vars_for_propagation();
     int current_lit_value(int lit) const;
     bool enqueue_propagation(int lit, std::vector<int> reason, bool row_bound);

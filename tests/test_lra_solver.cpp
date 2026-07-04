@@ -214,6 +214,78 @@ TEST(LraSolver, SimpleGraphPropagatesUtvpiConstraint) {
     EXPECT_GT(stats.lra_simple_graph_propagations, 0u);
 }
 
+TEST(LraSolver, SimpleGraphConflictOnlyFindsNegativeCycle) {
+    llm2smt::Stats stats;
+    LraSolver solver(&stats);
+    solver.set_simple_graph_conflicts(true);
+    solver.declare_real("x");
+    solver.declare_real("y");
+    solver.declare_real("z");
+
+    LinearExpr x_minus_y;
+    x_minus_y.add_var("x", Rational(1));
+    x_minus_y.add_var("y", Rational(-1));
+
+    LinearExpr y_minus_z;
+    y_minus_z.add_var("y", Rational(1));
+    y_minus_z.add_var("z", Rational(-1));
+
+    LinearExpr z_minus_x;
+    z_minus_x.add_var("z", Rational(1));
+    z_minus_x.add_var("x", Rational(-1));
+
+    int xy = solver.register_atom({x_minus_y, Relation::Le});
+    int yz = solver.register_atom({y_minus_z, Relation::Le});
+    int zx = solver.register_atom({z_minus_x, Relation::Lt});
+
+    solver.notify_assignment(xy, false);
+    solver.notify_assignment(yz, false);
+    solver.notify_assignment(zx, false);
+
+    EXPECT_FALSE(solver.cb_check_found_model({}));
+    bool forgettable = true;
+    EXPECT_TRUE(solver.cb_has_external_clause(forgettable));
+    EXPECT_FALSE(forgettable);
+    EXPECT_GT(stats.lra_simple_graph_conflicts, 0u);
+    EXPECT_GT(stats.lra_simple_graph_conflict_checks, 0u);
+    EXPECT_EQ(stats.lra_simple_graph_propagations, 0u);
+}
+
+TEST(LraSolver, MinColumnPivotHeuristicReportsChoices) {
+    llm2smt::Stats stats;
+    LraSolver solver(&stats);
+    solver.set_pivot_heuristic("min-column");
+    solver.declare_real("x");
+    solver.declare_real("y");
+
+    LinearExpr sum_minus_three;
+    sum_minus_three.add_var("x", Rational(1));
+    sum_minus_three.add_var("y", Rational(1));
+    sum_minus_three.constant = Rational(-3);
+
+    LinearExpr x_minus_two;
+    x_minus_two.add_var("x", Rational(1));
+    x_minus_two.constant = Rational(-2);
+
+    LinearExpr y_minus_two;
+    y_minus_two.add_var("y", Rational(1));
+    y_minus_two.constant = Rational(-2);
+
+    int sum_eq = solver.register_atom({sum_minus_three, Relation::Eq});
+    int x_ge = solver.register_atom({x_minus_two, Relation::Ge});
+    int y_ge = solver.register_atom({y_minus_two, Relation::Ge});
+
+    solver.notify_assignment(sum_eq, false);
+    solver.notify_assignment(x_ge, false);
+    solver.notify_assignment(y_ge, false);
+
+    EXPECT_FALSE(solver.cb_check_found_model({}));
+    EXPECT_GT(stats.lra_pivots, 0u);
+    EXPECT_GT(stats.lra_pivot_candidates, 0u);
+    EXPECT_GT(stats.lra_pivot_min_column_choices, 0u);
+    EXPECT_GT(stats.lra_check_max_pivots, 0u);
+}
+
 TEST(LraSolver, DirectEqualityAtomAppliesBothBounds) {
     LraSolver solver;
     solver.declare_real("x");

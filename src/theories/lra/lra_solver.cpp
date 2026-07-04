@@ -359,6 +359,8 @@ void LraSolver::notify_assignment(int lit, bool) {
     atom_assignment_[sat_var] = new_value;
     trail_.push_back(lit);
     level_counts_.back()++;
+    if (simple_graph_conflicts_enabled() && simple_graph_atoms_.contains(sat_var))
+        add_active_simple_graph_edges(sat_var, lit);
 
     auto it = elementary_atoms_.find(sat_var);
     if (it == elementary_atoms_.end()) return;
@@ -373,7 +375,6 @@ void LraSolver::notify_assignment(int lit, bool) {
         if (stats_) ++stats_->lra_fixed_equalities;
         bool ok = apply_bound(ea.var, BoundKind::Lower, DeltaRational(Rational(0)), lit);
         if (ok) apply_bound(ea.var, BoundKind::Upper, DeltaRational(Rational(0)), lit);
-        if (simple_graph_atoms_.contains(sat_var)) detect_simple_graph_conflict();
         return;
     }
     BoundKind kind = ea.positive_kind;
@@ -385,12 +386,12 @@ void LraSolver::notify_assignment(int lit, bool) {
             : DeltaRational(ea.positive_value.real, ea.positive_value.delta - Rational(1));
     }
     apply_bound(ea.var, kind, value, lit);
-    if (simple_graph_atoms_.contains(sat_var)) detect_simple_graph_conflict();
 }
 
 void LraSolver::notify_new_decision_level() {
     level_counts_.push_back(0);
     bound_level_counts_.push_back(0);
+    graph_edge_level_counts_.push_back(0);
 }
 
 void LraSolver::notify_backtrack(size_t new_level) {
@@ -404,6 +405,13 @@ void LraSolver::notify_backtrack(size_t new_level) {
             if (static_cast<int>(atom_assignment_.size()) > sat_var)
                 atom_assignment_[sat_var] = 0;
         }
+    }
+    while (graph_edge_level_counts_.size() > new_level + 1) {
+        size_t n = graph_edge_level_counts_.back();
+        graph_edge_level_counts_.pop_back();
+        while (n-- > 0 && !active_simple_graph_edges_.empty())
+            active_simple_graph_edges_.pop_back();
+        active_simple_graph_dirty_ = true;
     }
     while (bound_level_counts_.size() > new_level + 1) {
         size_t n = bound_level_counts_.back();
@@ -543,6 +551,74 @@ bool LraSolver::pivot_and_update(int basic, int nonbasic, const DeltaRational& v
     return true;
 }
 
+size_t LraSolver::column_length(int var) const {
+    if (var < 0) return 0;
+    if (row_index_enabled() && static_cast<size_t>(var) < rows_by_var_.size())
+        return rows_by_var_[var].size();
+    size_t n = 0;
+    for (int b : basic_vars_) {
+        int r = row_of_basic_[b];
+        if (r >= 0 && static_cast<size_t>(r) < rows_.size() && rows_[r].coeffs.contains(var))
+            ++n;
+    }
+    return n;
+}
+
+int LraSolver::choose_entering_var(int bad, bool below, bool bland_mode, DeltaRational& target) {
+    int entering = -1;
+    size_t best_column = std::numeric_limits<size_t>::max();
+    const auto& row = rows_[row_of_basic_[bad]];
+
+    auto repair_target = [&](int x, const Rational& a) {
+        DeltaRational repair = beta_[x] + ((below ? lower_[bad].value : upper_[bad].value) - beta_[bad]) / a;
+        if (below) {
+            if (a > Rational(0))
+                return upper_[x].active && upper_[x].value < repair ? upper_[x].value : repair;
+            return lower_[x].active && lower_[x].value > repair ? lower_[x].value : repair;
+        }
+        if (a < Rational(0))
+            return upper_[x].active && upper_[x].value < repair ? upper_[x].value : repair;
+        return lower_[x].active && lower_[x].value > repair ? lower_[x].value : repair;
+    };
+
+    for (const auto& [x, a] : row.coeffs) {
+        bool ok = below
+            ? ((a > Rational(0) && (!upper_[x].active || beta_[x] < upper_[x].value)) ||
+               (a < Rational(0) && (!lower_[x].active || beta_[x] > lower_[x].value)))
+            : ((a < Rational(0) && (!upper_[x].active || beta_[x] < upper_[x].value)) ||
+               (a > Rational(0) && (!lower_[x].active || beta_[x] > lower_[x].value)));
+        if (!ok) continue;
+        if (stats_) ++stats_->lra_pivot_candidates;
+
+        if (bland_mode || pivot_heuristic_ == PivotHeuristic::MinVar) {
+            if (entering < 0 || x < entering) {
+                entering = x;
+                target = repair_target(x, a);
+            }
+            continue;
+        }
+
+        // King/Barrett/Dutertre's SOI paper notes that many SMT solvers use
+        // local pivot heuristics such as choosing a short entering column, with
+        // Bland-style fallback for termination. This option keeps the
+        // Dutertre/de Moura simplex core and only changes that local choice.
+        size_t len = column_length(x);
+        if (entering < 0 || len < best_column || (len == best_column && x < entering)) {
+            entering = x;
+            best_column = len;
+            target = repair_target(x, a);
+        }
+    }
+
+    if (entering >= 0 && stats_) {
+        if (bland_mode && pivot_heuristic_ != PivotHeuristic::MinVar)
+            ++stats_->lra_pivot_bland_fallbacks;
+        else if (pivot_heuristic_ == PivotHeuristic::MinColumn)
+            ++stats_->lra_pivot_min_column_choices;
+    }
+    return entering;
+}
+
 std::vector<int> LraSolver::explain_lower_conflict(int basic) const {
     // Section 3.2.2, Figure 3.2 line 8 explanation.
     std::vector<int> clause;
@@ -572,8 +648,13 @@ std::vector<int> LraSolver::explain_upper_conflict(int basic) const {
 }
 
 bool LraSolver::check() {
-    // Dutertre/de Moura Figure 3.2 Check, using Bland's smallest-variable rule.
+    detect_simple_graph_conflict();
+    if (has_conflict_) return false;
+    // Dutertre/de Moura Figure 3.2 Check. The default path keeps the
+    // Bland-style smallest-variable rule; option-backed experiments may use
+    // local heuristics from the SMT simplex literature with Bland fallback.
     if (stats_) ++stats_->lra_check_calls;
+    size_t pivots_this_check = 0;
     while (true) {
         int bad = -1;
         bool below = false;
@@ -585,50 +666,28 @@ bool LraSolver::check() {
                 if (bad < 0 || b < bad) { bad = b; below = false; }
             }
         }
-        if (bad < 0) return true;
+        if (bad < 0) {
+            if (stats_) stats_->lra_check_max_pivots =
+                std::max<uint64_t>(stats_->lra_check_max_pivots, pivots_this_check);
+            return true;
+        }
 
-        int entering = -1;
         DeltaRational target;
-        const auto& row = rows_[row_of_basic_[bad]];
-        if (below) {
-            for (const auto& [x, a] : row.coeffs) {
-                bool ok = (a > Rational(0) && (!upper_[x].active || beta_[x] < upper_[x].value)) ||
-                          (a < Rational(0) && (!lower_[x].active || beta_[x] > lower_[x].value));
-                if (ok && (entering < 0 || x < entering)) {
-                    entering = x;
-                    DeltaRational repair = beta_[x] + (lower_[bad].value - beta_[bad]) / a;
-                    if (a > Rational(0))
-                        target = upper_[x].active && upper_[x].value < repair ? upper_[x].value : repair;
-                    else
-                        target = lower_[x].active && lower_[x].value > repair ? lower_[x].value : repair;
-                }
-            }
-            if (entering < 0) {
-                set_conflict(explain_lower_conflict(bad));
-                return false;
-            }
-        } else {
-            for (const auto& [x, a] : row.coeffs) {
-                bool ok = (a < Rational(0) && (!upper_[x].active || beta_[x] < upper_[x].value)) ||
-                          (a > Rational(0) && (!lower_[x].active || beta_[x] > lower_[x].value));
-                if (ok && (entering < 0 || x < entering)) {
-                    entering = x;
-                    DeltaRational repair = beta_[x] + (upper_[bad].value - beta_[bad]) / a;
-                    if (a < Rational(0))
-                        target = upper_[x].active && upper_[x].value < repair ? upper_[x].value : repair;
-                    else
-                        target = lower_[x].active && lower_[x].value > repair ? lower_[x].value : repair;
-                }
-            }
-            if (entering < 0) {
-                set_conflict(explain_upper_conflict(bad));
-                return false;
-            }
+        bool bland_mode = pivot_bland_after_ > 0 && pivots_this_check >= pivot_bland_after_;
+        int entering = choose_entering_var(bad, below, bland_mode, target);
+        if (entering < 0) {
+            set_conflict(below ? explain_lower_conflict(bad) : explain_upper_conflict(bad));
+            if (stats_) stats_->lra_check_max_pivots =
+                std::max<uint64_t>(stats_->lra_check_max_pivots, pivots_this_check);
+            return false;
         }
         if (!pivot_and_update(bad, entering, target)) {
             set_conflict({-trail_.back()});
+            if (stats_) stats_->lra_check_max_pivots =
+                std::max<uint64_t>(stats_->lra_check_max_pivots, pivots_this_check);
             return false;
         }
+        ++pivots_this_check;
     }
 }
 
@@ -746,6 +805,17 @@ std::vector<LraSolver::ActiveGraphEdge> LraSolver::active_simple_graph_edges(
     return edges;
 }
 
+void LraSolver::add_active_simple_graph_edges(int sat_var, int lit) {
+    auto it = simple_graph_atoms_.find(sat_var);
+    if (it == simple_graph_atoms_.end()) return;
+    const auto& templates = lit > 0 ? it->second.positive_edges : it->second.negative_edges;
+    for (const auto& edge : templates)
+        active_simple_graph_edges_.push_back(ActiveGraphEdge{edge.from, edge.to, edge.weight, lit});
+    graph_edge_level_counts_.back() += templates.size();
+    active_simple_graph_dirty_ = true;
+    if (stats_) stats_->lra_simple_graph_active_edges = active_simple_graph_edges_.size();
+}
+
 std::optional<LraSolver::ShortestPaths> LraSolver::shortest_paths_from(
     int source, const std::vector<ActiveGraphEdge>& edges, size_t node_count) const {
     if (source < 0 || static_cast<size_t>(source) >= node_count) return std::nullopt;
@@ -844,11 +914,29 @@ std::vector<int> LraSolver::graph_negative_cycle_reason(
 }
 
 void LraSolver::detect_simple_graph_conflict(const std::vector<int>* model) {
-    if (!simple_graph_propagation_ || has_conflict_ || simple_graph_atoms_.empty()) return;
-    std::vector<ActiveGraphEdge> edges = active_simple_graph_edges(model);
-    if (stats_) stats_->lra_simple_graph_edges = edges.size();
-    if (edges.empty()) return;
-    std::vector<int> cycle_reason = graph_negative_cycle_reason(edges, graph_node_count());
+    if (!simple_graph_conflicts_enabled() || has_conflict_ || simple_graph_atoms_.empty()) return;
+    std::vector<ActiveGraphEdge> model_edges;
+    const std::vector<ActiveGraphEdge>* edges = &active_simple_graph_edges_;
+    if (model) {
+        model_edges = active_simple_graph_edges(model);
+        edges = &model_edges;
+    } else if (!active_simple_graph_dirty_) {
+        if (stats_) ++stats_->lra_simple_graph_clean_skips;
+        return;
+    } else if (stats_) {
+        ++stats_->lra_simple_graph_rebuilds_avoided;
+    }
+    if (stats_) {
+        stats_->lra_simple_graph_edges = edges->size();
+        stats_->lra_simple_graph_active_edges = active_simple_graph_edges_.size();
+    }
+    if (edges->empty()) {
+        active_simple_graph_dirty_ = false;
+        return;
+    }
+    if (stats_) ++stats_->lra_simple_graph_conflict_checks;
+    std::vector<int> cycle_reason = graph_negative_cycle_reason(*edges, graph_node_count());
+    active_simple_graph_dirty_ = false;
     if (!cycle_reason.empty()) {
         if (stats_) ++stats_->lra_simple_graph_conflicts;
         set_conflict(std::move(cycle_reason));
@@ -858,12 +946,19 @@ void LraSolver::detect_simple_graph_conflict(const std::vector<int>* model) {
 void LraSolver::discover_simple_graph_propagations(const std::vector<int>* model) {
     if (!simple_graph_propagation_ || !propagation_enabled_ || simple_graph_atoms_.empty()) return;
 
-    std::vector<ActiveGraphEdge> edges = active_simple_graph_edges(model);
-    if (stats_) stats_->lra_simple_graph_edges = edges.size();
-    if (edges.empty()) return;
+    std::vector<ActiveGraphEdge> model_edges;
+    const std::vector<ActiveGraphEdge>* edges = &active_simple_graph_edges_;
+    if (model) model_edges = active_simple_graph_edges(model), edges = &model_edges;
+    else if (stats_) ++stats_->lra_simple_graph_rebuilds_avoided;
+    if (stats_) {
+        stats_->lra_simple_graph_edges = edges->size();
+        stats_->lra_simple_graph_active_edges = active_simple_graph_edges_.size();
+    }
+    if (edges->empty()) return;
 
     size_t node_count = graph_node_count();
-    std::vector<int> cycle_reason = graph_negative_cycle_reason(edges, node_count);
+    if (stats_) ++stats_->lra_simple_graph_conflict_checks;
+    std::vector<int> cycle_reason = graph_negative_cycle_reason(*edges, node_count);
     if (!cycle_reason.empty()) {
         if (stats_) ++stats_->lra_simple_graph_conflicts;
         set_conflict(std::move(cycle_reason));
@@ -881,7 +976,7 @@ void LraSolver::discover_simple_graph_propagations(const std::vector<int>* model
         for (const auto& tmpl : templates) {
             auto pit = path_cache.find(tmpl.from);
             if (pit == path_cache.end()) {
-                auto paths = shortest_paths_from(tmpl.from, edges, node_count);
+                auto paths = shortest_paths_from(tmpl.from, *edges, node_count);
                 if (!paths) return false;
                 pit = path_cache.emplace(tmpl.from, std::move(*paths)).first;
             }
@@ -889,7 +984,7 @@ void LraSolver::discover_simple_graph_propagations(const std::vector<int>* model
             if (tmpl.to < 0 || static_cast<size_t>(tmpl.to) >= paths.dist.size() ||
                 !paths.dist[tmpl.to] || *paths.dist[tmpl.to] > tmpl.weight)
                 return false;
-            std::vector<int> path_reason = graph_path_reason(tmpl.from, tmpl.to, paths, edges);
+            std::vector<int> path_reason = graph_path_reason(tmpl.from, tmpl.to, paths, *edges);
             reason.insert(reason.end(), path_reason.begin(), path_reason.end());
         }
         std::sort(reason.begin(), reason.end());
@@ -1061,6 +1156,8 @@ void LraSolver::discover_row_bound_propagations() {
 
 void LraSolver::discover_bound_propagations() {
     if (!propagation_enabled_) return;
+    detect_simple_graph_conflict();
+    if (has_conflict_) return;
     auto enqueue = [&](int lit, std::vector<int> reason) {
         enqueue_propagation(lit, std::move(reason), false);
     };
@@ -1117,6 +1214,8 @@ void LraSolver::discover_bound_propagations() {
 
 bool LraSolver::cb_check_found_model(const std::vector<int>& model) {
     if (stats_) ++stats_->lra_final_checks;
+    if (has_conflict_) return false;
+    detect_simple_graph_conflict(&model);
     if (has_conflict_) return false;
     discover_simple_graph_propagations(&model);
     if (has_conflict_) return false;

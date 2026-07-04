@@ -121,6 +121,29 @@ add_test(
          grep -Eq 'lra\\.simple_graph_propagations[[:space:]]+0$' /tmp/lra35_off.err"
 )
 add_test(
+    NAME "smt2/lra_simple_graph_conflicts_cli_gate"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats --no-lra-dl-fast-path --lra-simple-graph-conflicts \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra32_simple_graph_dl_unsat.smt2 \
+         >/tmp/lra32_conflict.out 2>/tmp/lra32_conflict.err && \
+         grep -q '^unsat' /tmp/lra32_conflict.out && \
+         grep -Eq 'lra\\.simple_graph_conflicts[[:space:]]+[1-9][0-9]*$' /tmp/lra32_conflict.err && \
+         grep -Eq 'lra\\.simple_graph_checks[[:space:]]+[1-9][0-9]*$' /tmp/lra32_conflict.err && \
+         grep -Eq 'lra\\.simple_graph_active[[:space:]]+[1-9][0-9]*$' /tmp/lra32_conflict.err && \
+         grep -Eq 'lra\\.simple_graph_propagations[[:space:]]+0$' /tmp/lra32_conflict.err"
+)
+add_test(
+    NAME "smt2/lra_pivot_min_column_cli_gate"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats --no-lra-dl-fast-path \
+         --lra-pivot-heuristic min-column --lra-pivot-bland-after 1 \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra09_min_conflict.smt2 \
+         >/tmp/lra09_pivot.out 2>/tmp/lra09_pivot.err && \
+         grep -q '^unsat' /tmp/lra09_pivot.out && \
+         grep -Eq 'lra\\.pivot_candidates[[:space:]]+[1-9][0-9]*$' /tmp/lra09_pivot.err && \
+         grep -Eq 'lra\\.pivot_min_column_choices[[:space:]]+[1-9][0-9]*$' /tmp/lra09_pivot.err"
+)
+add_test(
     NAME "smt2/lra_simple_graph_pure_dl_conflict"
     COMMAND bash -c
         "$<TARGET_FILE:llm2smt> --quiet --stats --no-lra-dl-fast-path --lra-simple-graph-prop \
