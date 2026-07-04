@@ -254,6 +254,7 @@ private:
     std::unordered_map<std::string, int> lra_bool_lit_cache_;
     std::unordered_map<smt2parser::SMTLIBv2Parser::TermContext*, lra::LinearExpr>
         lra_term_cache_;
+    std::unordered_map<std::string, lra::LinearExpr> lra_structural_ite_term_cache_;
     std::unordered_map<std::string, std::vector<LraChoiceLit>>
         lra_simple_eqs_by_var_;
     std::unordered_map<std::string, std::vector<LraVarEqLit>>

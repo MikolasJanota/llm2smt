@@ -892,6 +892,13 @@ lra::LinearExpr Smt2Visitor::lra_term(
         }
         const std::string key = "ite:" + std::to_string(cond) + ":" +
             rewritten_expr_key(then_e) + ":" + rewritten_expr_key(else_e);
+        if (opts_.lra_term_cache) {
+            auto it = lra_structural_ite_term_cache_.find(key);
+            if (it != lra_structural_ite_term_cache_.end()) {
+                ++stats_.lra_term_cache_hits;
+                return remember(it->second);
+            }
+        }
         std::string aux = "__lra_ite_" + std::to_string(ite_counter_++);
         ++stats_.lra_ite_terms;
         ctx_.lra->declare_real(aux);
@@ -905,6 +912,7 @@ lra::LinearExpr Smt2Visitor::lra_term(
         int l_else = lra_register_equality(eq_else);
         { std::array<int,2> cl = {-cond, l_then}; ctx_.sat.add_clause(std::span<const int>(cl)); }
         { std::array<int,2> cl = { cond, l_else}; ctx_.sat.add_clause(std::span<const int>(cl)); }
+        if (opts_.lra_term_cache) lra_structural_ite_term_cache_.emplace(key, aux_e);
         return remember(aux_e);
     }
 
@@ -1221,9 +1229,11 @@ void Smt2Visitor::lra_flush_assertions()
     if (pending_lra_asserts_.empty()) return;
     if (opts_.lra_eq_elim) {
         lra_term_cache_.clear();
+        lra_structural_ite_term_cache_.clear();
         for (auto* t : pending_lra_asserts_)
             lra_collect_unconditional_equalities(t);
         lra_term_cache_.clear();
+        lra_structural_ite_term_cache_.clear();
     }
     if (lra_eq_elim_unsat_) {
         pending_lra_asserts_.clear();

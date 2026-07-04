@@ -233,6 +233,21 @@ add_test(
          grep -q 'lra.ite_terms                 2' /tmp/lra13_off.err"
 )
 add_test(
+    NAME "smt2/lra_structural_ite_term_cache_cli_gate"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra38_structural_ite_term_cache.smt2 \
+         >/tmp/lra38_on.out 2>/tmp/lra38_on.err && \
+         grep -q '^sat' /tmp/lra38_on.out && \
+         grep -Eq 'lra\\.term_cache_hits[[:space:]]+[1-9][0-9]*$' /tmp/lra38_on.err && \
+         grep -Eq 'lra\\.ite_terms[[:space:]]+1$' /tmp/lra38_on.err && \
+         $<TARGET_FILE:llm2smt> --quiet --stats --no-lra-term-cache \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra38_structural_ite_term_cache.smt2 \
+         >/tmp/lra38_off.out 2>/tmp/lra38_off.err && \
+         grep -q '^sat' /tmp/lra38_off.out && \
+         grep -Eq 'lra\\.ite_terms[[:space:]]+2$' /tmp/lra38_off.err"
+)
+add_test(
     NAME "smt2/lra_symmetric_eq_cache"
     COMMAND bash -c
         "$<TARGET_FILE:llm2smt> --quiet --stats --no-lra-eq-elim \

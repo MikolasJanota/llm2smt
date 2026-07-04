@@ -89,8 +89,11 @@ or `--no-lra-bool-cache-and`, `--no-lra-bool-cache-or`, and
 `--no-lra-bool-cache-eq` to isolate one Boolean connective class.
 Normalized arithmetic term results are cached by parse-tree node as well; this
 is especially important for arithmetic `ite`, where repeated uses of the same
-SMT-LIB term should reuse one auxiliary Real variable. Use
-`--no-lra-term-cache` to disable this cache for ablation.
+SMT-LIB term should reuse one auxiliary Real variable. Arithmetic `ite` terms
+also have a structural cache keyed by the condition literal and normalized
+branch expressions, so identical `ite` subterms reached through different
+parse-tree nodes can share the same auxiliary. Use `--no-lra-term-cache` to
+disable both caches for ablation.
 
 Equality elimination is deliberately conservative. It only consumes arithmetic
 equalities asserted unconditionally at top level, either as direct assertions or
@@ -230,7 +233,13 @@ Promising opportunities, in priority order:
 - **ITE-aware preprocessing.** Continue reducing arithmetic `ite` chains before
   LRA registration. The hard cases average more than 100 arithmetic `ite` terms,
   so missed sharing or missed constant/domain simplification can create many
-  unnecessary auxiliary rows and guarded atoms.
+  unnecessary auxiliary rows and guarded atoms. The current term cache includes
+  structural sharing for arithmetic `ite` terms with the same condition and
+  normalized branches; the micro-regression
+  `lra38_structural_ite_term_cache.smt2` ensures two separate identical
+  subterms allocate one auxiliary. On 2026-07-04 the 20s hard sample was
+  essentially neutral but in the right direction, 8/10 solved and PAR2 8.658 s
+  with the cache versus 8/10 and PAR2 9.896 s with `--no-lra-term-cache`.
 - **Indexed cheap bound propagation.** Z3 emphasizes direct and row-derived
   bound propagation using indexes from variables to bound atoms. Native
   row-bound propagation exists, but the aggregate result depends heavily on scan
