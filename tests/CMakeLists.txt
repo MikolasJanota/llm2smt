@@ -173,7 +173,7 @@ add_test(
          grep -q '^sat' /tmp/lra22_on.out && \
          grep -Eq 'lra\\.ite_terms[[:space:]]+0$' /tmp/lra22_on.err && \
          grep -Eq 'lra\\.ite_terms_simplified[[:space:]]+1$' /tmp/lra22_on.err && \
-         $<TARGET_FILE:llm2smt> --quiet --stats --no-lra-eq-elim --no-lra-const-simplify \
+         $<TARGET_FILE:llm2smt> --quiet --stats --no-lra-eq-elim --no-lra-const-simplify --no-lra-ite-eq-direct \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra22_arith_ite_const_cond.smt2 \
          >/tmp/lra22_off.out 2>/tmp/lra22_off.err && \
          grep -q '^sat' /tmp/lra22_off.out && \
@@ -243,12 +243,12 @@ add_test(
 add_test(
     NAME "smt2/lra_flatten_ite_chain_stats"
     COMMAND bash -c
-        "$<TARGET_FILE:llm2smt> --quiet --stats \
+        "$<TARGET_FILE:llm2smt> --quiet --stats --no-lra-ite-eq-direct \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra31_flatten_ite_chain.smt2 \
          >/tmp/lra31.out 2>/tmp/lra31.err && \
          grep -q '^sat' /tmp/lra31.out && \
          grep -Eq 'lra\\.ite_terms[[:space:]]+1$' /tmp/lra31.err && \
-         $<TARGET_FILE:llm2smt> --quiet --stats --lra-ite-eq-direct \
+         $<TARGET_FILE:llm2smt> --quiet --stats \
          ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra31_flatten_ite_chain.smt2 \
          >/tmp/lra31_direct.out 2>/tmp/lra31_direct.err && \
          grep -q '^sat' /tmp/lra31_direct.out && \
@@ -641,7 +641,8 @@ add_test(
          grep -q '\\[Option Group: QF_LRA\\]' ${CMAKE_BINARY_DIR}/llm2smt_help.out && \
          grep -q '\\[Option Group: QF_UF/EUF\\]' ${CMAKE_BINARY_DIR}/llm2smt_help.out && \
          grep -q '\\[Option Group: Theory propagation\\]' ${CMAKE_BINARY_DIR}/llm2smt_help.out && \
-         grep -A80 '\\[Option Group: QF_LRA\\]' ${CMAKE_BINARY_DIR}/llm2smt_help.out | grep -q -- '--no-lra-eq-elim'"
+         grep -A80 '\\[Option Group: QF_LRA\\]' ${CMAKE_BINARY_DIR}/llm2smt_help.out | grep -q -- '--no-lra-eq-elim' && \
+         grep -A80 '\\[Option Group: QF_LRA\\]' ${CMAKE_BINARY_DIR}/llm2smt_help.out | grep -q -- '--no-lra-ite-eq-direct'"
 )
 
 # ── Unit test binaries ────────────────────────────────────────────────────────

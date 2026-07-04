@@ -227,8 +227,8 @@ int main(int argc, char** argv) {
        ->check(CLI::NonNegativeNumber);
     lra_group->add_flag("!--no-lra-const-simplify", opts.lra_const_simplify,
                         "Disable QF_LRA constant/connective simplification before SAT/LRA encoding");
-    lra_group->add_flag("--lra-ite-eq-direct", opts.lra_ite_eq_direct,
-                        "Enable experimental direct Boolean encoding of QF_LRA equalities against arithmetic ite terms");
+    lra_group->add_flag("!--no-lra-ite-eq-direct", opts.lra_ite_eq_direct,
+                        "Disable direct Boolean encoding of QF_LRA equalities against arithmetic ite terms");
     lra_group->add_flag("!--no-lra-finite-domain-bounds", opts.lra_finite_domain_bounds,
                         "Disable QF_LRA SAT links between finite-domain choices and simple bounds");
     lra_group->add_flag("--lra-finite-domain-eqdefs", opts.lra_finite_domain_eq_defs,

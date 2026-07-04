@@ -127,6 +127,7 @@ Preprocessing and encoding options:
 - `--no-lra-bool-cache-eq`
 - `--no-lra-term-cache`
 - `--no-lra-const-simplify`
+- `--no-lra-ite-eq-direct`
 - `--no-lra-finite-domain-bounds`
 - `--lra-finite-domain-eqdefs`
 - `--no-lra-finite-domain-eqdefs`

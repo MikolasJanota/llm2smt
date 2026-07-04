@@ -29,7 +29,7 @@ struct PreprocOptions {
     bool        lra_eq_elim = true; // eliminate variables using unconditional top-level QF_LRA equalities
     size_t      lra_eq_elim_limit = 10000; // maximum top-level equality rows processed by QF_LRA elimination
     bool        lra_const_simplify = true; // fold constant QF_LRA Boolean/arithmetic subexpressions before encoding
-    bool        lra_ite_eq_direct = false; // experimental: encode (= t (ite c a b)) as a Boolean ITE over equality literals
+    bool        lra_ite_eq_direct = true; // encode (= t (ite c a b)) as a Boolean ITE over equality literals
     bool        lra_finite_domain_bounds = true; // link QF_LRA finite-domain choices to simple bound atoms
     bool        lra_finite_domain_eq_defs = true; // propagate QF_LRA variable equalities through finite-domain choices
     bool        lra_finite_domain_branch = false; // experimental: prefer selected QF_LRA finite-domain choice literals as SAT decisions

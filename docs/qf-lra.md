@@ -58,10 +58,10 @@ later atom registration, reuses repeated arithmetic atoms and
 equality/disequality definitions, and expands n-ary arithmetic `distinct` into
 pairwise disequality constraints.
 Use `--no-lra-const-simplify` to disable the local constant/connective
-simplifier for ablation. `--lra-ite-eq-direct` enables an experimental
-direct Boolean encoding for equalities against arithmetic `ite` terms; it
-reduces LRA auxiliaries on some TTA-startup instances but is default-off because
-it added SAT clauses and regressed the quick PAR2 sample in July 2026.
+simplifier for ablation. Direct Boolean encoding for equalities against
+arithmetic `ite` terms is enabled by default; it reduces LRA auxiliaries on
+TTA-startup instances and improved repeated full-suite PAR2 in July 2026. Use
+`--no-lra-ite-eq-direct` for ablation.
 Finite-domain choices such as `x = 0`, `x = 1`, ... are linked to simple bound
 atoms on the same variable by default, so a bound assignment can remove
 incompatible choices and a chosen value can imply trivial bounds. Use
@@ -368,7 +368,7 @@ earlier run.
 | 2026-07-03 | local loop default, repeat 1 | 20 s | 113 / 137 | 48 / 72 | 24 | 0 | 7.842 s | `loop-ite-eq-direct-repeat-1-full-default-20260703-225957` | Repeated timing check for the direct-ITE candidate. |
 | 2026-07-03 | `--lra-ite-eq-direct` candidate, repeat 1 | 20 s | 116 / 137 | 51 / 72 | 21 | 0 | 6.919 s | `loop-ite-eq-direct-repeat-1-full-candidate-20260703-225957` | Repeats the full-suite gain; no Z3/OpenSMT disagreements on commonly solved files. |
 | 2026-07-03 | local loop default, repeat 2 | 20 s | 116 / 137 | 51 / 72 | 21 | 0 | 7.374 s | `loop-ite-eq-direct-repeat-2-full-default-20260703-230538` | Stronger default run shows solved-count noise at the 20 s cutoff. |
-| 2026-07-03 | `--lra-ite-eq-direct` candidate, repeat 2 | 20 s | 116 / 137 | 51 / 72 | 21 | 0 | 6.943 s | `loop-ite-eq-direct-repeat-2-full-candidate-20260703-230538` | Solved count ties the strongest default repeat while preserving a PAR2 win; treat `--lra-ite-eq-direct` as a strong default candidate. |
+| 2026-07-03 | `--lra-ite-eq-direct` candidate, repeat 2 | 20 s | 116 / 137 | 51 / 72 | 21 | 0 | 6.943 s | `loop-ite-eq-direct-repeat-2-full-candidate-20260703-230538` | Solved count ties the strongest default repeat while preserving a PAR2 win; promoted to the default on 2026-07-04 with `--no-lra-ite-eq-direct` retained as the ablation. |
 
 Most native rows in this log solve `check`, `keymaera`, and
 `spider_benchmarks` completely; the moving metric is usually `tta_startup`.
@@ -387,7 +387,9 @@ had higher PAR2. The largest consistent common-solved speedups were in
 `tta_startup`, including `9nodes.missing.induct`, `8nodes.missing.induct`,
 `4nodes.abstract.induct`, `7nodes.missing.induct`, and `6nodes.bug.induct`.
 No Z3/OpenSMT answer disagreements were observed on the candidate's commonly
-solved files in any completed repeat.
+solved files in any completed repeat. Direct ITE equality encoding is therefore
+enabled by default after these runs, with `--no-lra-ite-eq-direct` kept for
+ablation and regression checks.
 
 The next optimization targets should be chosen from fast-Z3/slow-native
 `tta_startup` files, for example:

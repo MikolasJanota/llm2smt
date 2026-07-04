@@ -29,9 +29,9 @@ Use the local loop helper:
 
 ```sh
 python3 scripts/qf_lra_perf_loop.py \
-  --candidate ite-eq-direct \
-  --opts='--lra-ite-eq-direct' \
-  --hypothesis 'Avoid fresh Real ITE auxiliaries; reduce LRA rows/pivots.'
+  --candidate no-ite-eq-direct \
+  --opts='--no-lra-ite-eq-direct' \
+  --hypothesis 'Ablate direct Real ITE equality encoding; expect more LRA auxiliaries.'
 ```
 
 By default this runs:
