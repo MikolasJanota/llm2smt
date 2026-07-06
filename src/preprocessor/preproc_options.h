@@ -16,6 +16,7 @@ struct PreprocOptions {
     bool        eq_bridge  = false;  // add common EUF consequences of disjunction branches
     bool        finite_domain_amo = true; // add SAT AMO clauses from top-level distinct endpoints
     bool        finite_domain_eq_defs = true; // define equalities between finite-domain terms via their value choices
+    bool        finite_domain_value_precedence = false; // experimental QF_UF static symmetry avoidance for finite-domain values
     bool        theory_propagation = true; // enable EUF theory propagation
     int         prop_interval = 32;        // process propagation candidates every N discovery calls, adaptive doubling up to 1024 (default 32)
     double      prop_assign_threshold = 0.25; // skip candidate processing when (assigned/total) >= threshold; 0 = guard disabled

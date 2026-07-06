@@ -111,6 +111,48 @@ It is skipped in proof mode because the proof pipeline currently reasons about
 the original EUF clauses and theory lemmas rather than these SAT-level derived
 definitions.
 
+## Finite-Domain Static Symmetry Avoidance
+
+QF_UF has an experimental finite-domain value-precedence pass, enabled with:
+
+```sh
+--finite-domain-value-precedence
+```
+
+The pass is inspired by the static symmetry reduction used in Paradox-style
+finite model finding and by the MACE-style value-precedence clauses formalized
+by Reger, Riener, and Suda. It is deliberately default-off: this solver remains
+a DPLL(T)-style SMT solver, not a SAT-reduction finite-model finder, and the
+effect of static symmetry clauses needs benchmark evidence before promotion.
+
+The implementation reuses finite-domain choice disjunctions of the form:
+
+```text
+(or (= p v0) (= p v1) ... (= p vn))
+```
+
+where the values are pairwise distinct by asserted disequalities. Terms are
+grouped only when they have the same value set. Within an accepted group, terms
+and values are ordered by stable `NodeId`, and the pass adds value-precedence
+clauses:
+
+- term `p_i` may use only values `v_0 ... v_i`;
+- if `p_i = v_j` for `j > 0`, some earlier term `p_k` must use `v_{j-1}`.
+
+Existing finite-domain ALO clauses from the original disjunctions and AMO
+clauses from `--no-finite-domain-amo`'s default-on counterpart provide the
+exact-one semantics; this pass adds only the static symmetry restrictions.
+
+The value constants must be uninterpreted and undistinguished. A candidate group
+is rejected if any value appears outside the domain-choice equalities and
+value-disequality facts, for example as an argument to a predicate or function.
+This keeps the transformation scoped to genuinely interchangeable domain
+elements.
+
+The pass is disabled in proof mode. Term definitions, incremental model-size
+search, full sort inference, and Paradox's broader finite-model search strategy
+are intentionally out of scope for this branch.
+
 ## QF_LRA Equality Elimination
 
 Most of this page describes the generic `NodeId` preprocessor. QF_LRA also has

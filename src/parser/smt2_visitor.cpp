@@ -2873,7 +2873,8 @@ bool Smt2Visitor::known_equality_lit(NodeId lhs, NodeId rhs, int& lit)
 
 void Smt2Visitor::collect_finite_domain_terms(NodeId f)
 {
-    if (!opts_.finite_domain_amo || !opts_.finite_domain_eq_defs) return;
+    if (!opts_.finite_domain_amo ||
+        (!opts_.finite_domain_eq_defs && !opts_.finite_domain_value_precedence)) return;
 
     NodeManager& nm = ctx_.nm;
     std::vector<NodeId> work{f};
@@ -2907,7 +2908,9 @@ void Smt2Visitor::collect_finite_domain_terms(NodeId f)
                     return false;
                 }
             }
-            if (values.size() < kMinFiniteDomainEqDefSize) return false;
+            if (values.size() < 2) return false;
+            if (!opts_.finite_domain_value_precedence &&
+                values.size() < kMinFiniteDomainEqDefSize) return false;
 
             for (size_t i = 0; i < values.size(); ++i) {
                 for (size_t j = i + 1; j < values.size(); ++j) {
@@ -2921,6 +2924,7 @@ void Smt2Visitor::collect_finite_domain_terms(NodeId f)
 
             FiniteDomainInfo info;
             info.values = std::move(values);
+            std::sort(info.values.begin(), info.values.end());
             info.choice_lits.reserve(info.values.size());
             for (NodeId value : info.values) {
                 int lit = ctx_.euf.register_equality(term, value);
@@ -2937,6 +2941,172 @@ void Smt2Visitor::collect_finite_domain_terms(NodeId f)
         NodeId b = nm.get(first).children[1];
         if (try_candidate(a)) continue;
         (void)try_candidate(b);
+    }
+}
+
+namespace {
+
+struct FiniteDomainSymmetryTerm {
+    NodeId term = NULL_NODE;
+    std::vector<int> choice_lits;
+};
+
+struct FiniteDomainSymmetryGroup {
+    std::vector<NodeId> values;
+    std::vector<FiniteDomainSymmetryTerm> terms;
+};
+
+bool contains_any_node(NodeManager& nm, NodeId root,
+                       const std::unordered_set<NodeId>& needles)
+{
+    std::vector<NodeId> work{root};
+    while (!work.empty()) {
+        NodeId n = work.back();
+        work.pop_back();
+        if (needles.contains(n)) return true;
+        for (NodeId c : nm.get(n).children)
+            work.push_back(c);
+    }
+    return false;
+}
+
+bool is_eq_between(NodeManager& nm, NodeId eq, const std::unordered_set<NodeId>& lhs_set,
+                   const std::unordered_set<NodeId>& rhs_set)
+{
+    if (!nm.is_eq(eq)) return false;
+    NodeId a = nm.get(eq).children[0];
+    NodeId b = nm.get(eq).children[1];
+    return (lhs_set.contains(a) && rhs_set.contains(b)) ||
+           (lhs_set.contains(b) && rhs_set.contains(a));
+}
+
+bool is_value_disequality(NodeManager& nm, NodeId n,
+                          const std::unordered_set<NodeId>& values)
+{
+    if (!nm.is_not(n)) return false;
+    NodeId child = nm.get(n).children[0];
+    if (!nm.is_eq(child)) return false;
+    NodeId a = nm.get(child).children[0];
+    NodeId b = nm.get(child).children[1];
+    return a != b && values.contains(a) && values.contains(b);
+}
+
+bool values_are_undistinguished_in_formula(NodeManager& nm, NodeId root,
+                                           const std::unordered_set<NodeId>& terms,
+                                           const std::unordered_set<NodeId>& values)
+{
+    std::vector<NodeId> work{root};
+    while (!work.empty()) {
+        NodeId n = work.back();
+        work.pop_back();
+
+        if (is_value_disequality(nm, n, values))
+            continue;
+
+        if (is_eq_between(nm, n, terms, values))
+            continue;
+
+        if (values.contains(n))
+            return false;
+
+        if (nm.is_eq(n)) {
+            if (contains_any_node(nm, n, values))
+                return false;
+            continue;
+        }
+
+        for (NodeId c : nm.get(n).children)
+            work.push_back(c);
+    }
+    return true;
+}
+
+} // namespace
+
+void Smt2Visitor::encode_finite_domain_value_precedence()
+{
+    if (!opts_.finite_domain_amo || !opts_.finite_domain_value_precedence) return;
+    if (!opts_.proof_file.empty()) return;
+    if (finite_domain_terms_.empty()) return;
+
+    NodeManager& nm = ctx_.nm;
+    std::vector<FiniteDomainSymmetryGroup> groups;
+    for (const auto& [term, info] : finite_domain_terms_) {
+        if (info.values.size() < 2) continue;
+        bool values_are_constants = true;
+        for (NodeId value : info.values) {
+            if (!nm.is_const(value)) {
+                values_are_constants = false;
+                break;
+            }
+        }
+        if (!values_are_constants) continue;
+
+        auto it = std::find_if(groups.begin(), groups.end(),
+                               [&](const FiniteDomainSymmetryGroup& group) {
+                                   return group.values == info.values;
+                               });
+        if (it == groups.end()) {
+            FiniteDomainSymmetryGroup group;
+            group.values = info.values;
+            groups.push_back(std::move(group));
+            it = groups.end() - 1;
+        }
+        it->terms.push_back({term, info.choice_lits});
+    }
+
+    for (FiniteDomainSymmetryGroup& group : groups) {
+        if (group.terms.size() < 2) continue;
+
+        std::sort(group.terms.begin(), group.terms.end(),
+                  [](const FiniteDomainSymmetryTerm& a,
+                     const FiniteDomainSymmetryTerm& b) {
+                      return a.term < b.term;
+                  });
+
+        std::unordered_set<NodeId> term_set;
+        std::unordered_set<NodeId> value_set;
+        term_set.reserve(group.terms.size());
+        value_set.reserve(group.values.size());
+        for (const auto& term : group.terms)
+            term_set.insert(term.term);
+        for (NodeId value : group.values)
+            value_set.insert(value);
+
+        bool undistinguished = true;
+        for (NodeId f : pending_fmls_) {
+            if (!values_are_undistinguished_in_formula(nm, f, term_set, value_set)) {
+                undistinguished = false;
+                break;
+            }
+        }
+        if (!undistinguished) continue;
+
+        ++stats_.preproc_finite_domain_symmetry_groups;
+        stats_.preproc_finite_domain_symmetry_terms +=
+            static_cast<uint64_t>(group.terms.size());
+        stats_.preproc_finite_domain_symmetry_values +=
+            static_cast<uint64_t>(group.values.size());
+
+        for (size_t i = 0; i < group.terms.size(); ++i) {
+            const auto& term = group.terms[i];
+            for (size_t j = i + 1; j < group.values.size(); ++j) {
+                std::array<int,1> cl = {-term.choice_lits[j]};
+                ctx_.sat.add_clause(std::span<const int>(cl));
+                ++stats_.preproc_finite_domain_value_precedence_clauses;
+            }
+
+            const size_t max_j = std::min(i, group.values.size() - 1);
+            for (size_t j = 1; j <= max_j; ++j) {
+                std::vector<int> cl;
+                cl.reserve(i + 1);
+                cl.push_back(-term.choice_lits[j]);
+                for (size_t k = 0; k < i; ++k)
+                    cl.push_back(group.terms[k].choice_lits[j - 1]);
+                ctx_.sat.add_clause(std::span<const int>(cl));
+                ++stats_.preproc_finite_domain_value_precedence_clauses;
+            }
+        }
     }
 }
 
@@ -3344,8 +3514,13 @@ void Smt2Visitor::flush_pending_fmls()
         if (opts_.finite_domain_eq_defs && opts_.proof_file.empty()) {
             for (NodeId f : pending_fmls_)
                 collect_finite_domain_terms(f);
+            encode_finite_domain_value_precedence();
             for (NodeId f : pending_fmls_)
                 encode_finite_domain_eq_defs(f);
+        } else if (opts_.finite_domain_value_precedence && opts_.proof_file.empty()) {
+            for (NodeId f : pending_fmls_)
+                collect_finite_domain_terms(f);
+            encode_finite_domain_value_precedence();
         }
     }
 

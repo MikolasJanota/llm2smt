@@ -23,6 +23,10 @@ struct Stats {
     uint64_t preproc_flush_ms        = 0; // wall-clock ms for flush_pending_fmls() (NNF+simp+encode)
     uint64_t preproc_finite_domain_amo_clauses = 0; // SAT AMO clauses from distinct endpoints
     uint64_t preproc_finite_domain_eq_def_clauses = 0; // SAT definitions for equalities between finite-domain terms
+    uint64_t preproc_finite_domain_value_precedence_clauses = 0; // static finite-domain value-precedence clauses
+    uint64_t preproc_finite_domain_symmetry_groups = 0; // accepted finite-domain symmetry groups
+    uint64_t preproc_finite_domain_symmetry_terms = 0; // terms covered by finite-domain symmetry groups
+    uint64_t preproc_finite_domain_symmetry_values = 0; // value constants covered by finite-domain symmetry groups
     uint64_t preproc_finite_domain_bound_clauses = 0; // SAT links between finite-domain choices and simple bounds
     uint64_t lra_bool_cache_hits     = 0; // QF_LRA Boolean compound cache hits
     uint64_t lra_bool_cache_hits_and = 0; // QF_LRA Boolean and cache hits
@@ -104,7 +108,10 @@ struct Stats {
     void print(std::ostream& out) const {
         static constexpr int kColWidth = 30;
         auto row = [&](const std::string& name, uint64_t val) {
-            out << "  " << std::left << std::setw(kColWidth) << name << val << "\n";
+            out << "  " << std::left << std::setw(kColWidth) << name;
+            if (name.size() >= kColWidth)
+                out << ' ';
+            out << val << "\n";
         };
         out << "[stats]\n";
         out << "  -- timing (ms) --\n";
@@ -122,6 +129,10 @@ struct Stats {
         row("preproc.bridge_skipped",   preproc_bridge_skipped);
         row("preproc.finite_domain_amo", preproc_finite_domain_amo_clauses);
         row("preproc.finite_domain_eq_defs", preproc_finite_domain_eq_def_clauses);
+        row("preproc.finite_domain_value_precedence", preproc_finite_domain_value_precedence_clauses);
+        row("preproc.finite_domain_symmetry_groups", preproc_finite_domain_symmetry_groups);
+        row("preproc.finite_domain_symmetry_terms", preproc_finite_domain_symmetry_terms);
+        row("preproc.finite_domain_symmetry_values", preproc_finite_domain_symmetry_values);
         row("preproc.finite_domain_bounds", preproc_finite_domain_bound_clauses);
         row("lra.bool_cache_hits",      lra_bool_cache_hits);
         row("lra.bool_cache_hits.and",  lra_bool_cache_hits_and);

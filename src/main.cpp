@@ -193,6 +193,8 @@ int main(int argc, char** argv) {
                         "Disable SAT at-most-one clauses inferred from top-level distinct endpoints");
     euf_group->add_flag("!--no-finite-domain-eqdefs", opts.finite_domain_eq_defs,
                         "Disable SAT definitions for equalities between finite-domain terms");
+    euf_group->add_flag("--finite-domain-value-precedence", opts.finite_domain_value_precedence,
+                        "Enable experimental QF_UF finite-domain static symmetry-avoidance clauses");
 
     auto* prop_group = app.add_option_group("Theory propagation");
     prop_group->add_flag("!--no-theory-prop", opts.theory_propagation,
