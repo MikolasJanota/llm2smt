@@ -1,0 +1,13 @@
+file	kind	status	expected_uf_symmetry_clauses	note	size_bytes
+fixed_choice_n2_t5.smt2	fixed-choice	sat	positive	terms do not contain values	506
+moving_unary_cycle_n2.smt2	moving-unary	sat	0	terms contain permuted values	325
+moving_binary_table_n2.smt2	moving-binary	sat	0	binary terms contain permuted values	506
+fixed_choice_n3_t5.smt2	fixed-choice	sat	positive	terms do not contain values	665
+moving_unary_cycle_n3.smt2	moving-unary	sat	0	terms contain permuted values	519
+moving_binary_table_n3.smt2	moving-binary	sat	0	binary terms contain permuted values	1170
+fixed_choice_n4_t5.smt2	fixed-choice	sat	positive	terms do not contain values	849
+moving_unary_cycle_n4.smt2	moving-unary	sat	0	terms contain permuted values	776
+moving_binary_table_n4.smt2	moving-binary	sat	0	binary terms contain permuted values	2335
+latin_square_fixed_n2.smt2	latin-square	sat	0	QG-like moving table terms	670
+latin_square_fixed_n3.smt2	latin-square	sat	0	QG-like moving table terms	1908
+latin_square_fixed_n4.smt2	latin-square	sat	0	QG-like moving table terms	4303
