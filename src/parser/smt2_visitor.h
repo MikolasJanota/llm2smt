@@ -170,6 +170,7 @@ private:
     void collect_finite_domain_terms(NodeId f);
     void encode_finite_domain_eq_defs(NodeId f);
     void encode_finite_domain_value_precedence();
+    void encode_uf_symmetry_breaking();
     void remember_finite_domain_eq_lit(NodeId lhs, NodeId rhs, int lit);
     bool known_equality_lit(NodeId lhs, NodeId rhs, int& lit);
 

@@ -27,6 +27,11 @@ struct Stats {
     uint64_t preproc_finite_domain_symmetry_groups = 0; // accepted finite-domain symmetry groups
     uint64_t preproc_finite_domain_symmetry_terms = 0; // terms covered by finite-domain symmetry groups
     uint64_t preproc_finite_domain_symmetry_values = 0; // value constants covered by finite-domain symmetry groups
+    uint64_t preproc_uf_symmetry_sets = 0; // accepted SMT-native QF_UF symmetry value sets
+    uint64_t preproc_uf_symmetry_values = 0; // value constants covered by SMT-native symmetry sets
+    uint64_t preproc_uf_symmetry_terms = 0; // terms considered by SMT-native symmetry breaking
+    uint64_t preproc_uf_symmetry_clauses = 0; // SMT-native symmetry-breaking clauses
+    uint64_t preproc_uf_symmetry_rejected_noninvariant = 0; // candidate value sets rejected by invariance checks
     uint64_t preproc_finite_domain_bound_clauses = 0; // SAT links between finite-domain choices and simple bounds
     uint64_t lra_bool_cache_hits     = 0; // QF_LRA Boolean compound cache hits
     uint64_t lra_bool_cache_hits_and = 0; // QF_LRA Boolean and cache hits
@@ -133,6 +138,11 @@ struct Stats {
         row("preproc.finite_domain_symmetry_groups", preproc_finite_domain_symmetry_groups);
         row("preproc.finite_domain_symmetry_terms", preproc_finite_domain_symmetry_terms);
         row("preproc.finite_domain_symmetry_values", preproc_finite_domain_symmetry_values);
+        row("preproc.uf_symmetry_sets", preproc_uf_symmetry_sets);
+        row("preproc.uf_symmetry_values", preproc_uf_symmetry_values);
+        row("preproc.uf_symmetry_terms", preproc_uf_symmetry_terms);
+        row("preproc.uf_symmetry_clauses", preproc_uf_symmetry_clauses);
+        row("preproc.uf_symmetry_rejected_noninvariant", preproc_uf_symmetry_rejected_noninvariant);
         row("preproc.finite_domain_bounds", preproc_finite_domain_bound_clauses);
         row("lra.bool_cache_hits",      lra_bool_cache_hits);
         row("lra.bool_cache_hits.and",  lra_bool_cache_hits_and);

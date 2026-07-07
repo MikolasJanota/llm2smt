@@ -195,6 +195,8 @@ int main(int argc, char** argv) {
                         "Disable SAT definitions for equalities between finite-domain terms");
     euf_group->add_flag("--finite-domain-value-precedence", opts.finite_domain_value_precedence,
                         "Enable experimental QF_UF finite-domain static symmetry-avoidance clauses");
+    euf_group->add_flag("--uf-symmetry-breaking", opts.uf_symmetry_breaking,
+                        "Enable experimental SMT-native QF_UF symmetry breaking over invariant finite-domain values");
 
     auto* prop_group = app.add_option_group("Theory propagation");
     prop_group->add_flag("!--no-theory-prop", opts.theory_propagation,

@@ -68,6 +68,9 @@ add_smt2_test(unsat_binary_congruence t08_unsat_binary_congruence.smt2 unsat)
 add_smt2_test(fd_symmetry_accepted t72_fd_symmetry_accepted.smt2 sat)
 add_smt2_test(fd_symmetry_distinguished_value t73_fd_symmetry_distinguished_value.smt2 sat)
 add_smt2_test(fd_symmetry_separate_domains t74_fd_symmetry_separate_domains.smt2 sat)
+add_smt2_test(uf_symmetry_symmetric_values t75_uf_symmetry_symmetric_values.smt2 sat)
+add_smt2_test(uf_symmetry_rejects_asymmetric_value t76_uf_symmetry_rejects_asymmetric_value.smt2 sat)
+add_smt2_test(uf_symmetry_term_uses_value t77_uf_symmetry_term_uses_value.smt2 sat)
 
 # QF_LRA regressions
 add_smt2_test(lra_bound_conflict      lra01_bound_conflict.smt2      unsat)
@@ -270,6 +273,56 @@ add_test(
          grep -q '^sat' /tmp/fd_sym_proof.out && \
          grep -Eq 'preproc\\.finite_domain_value_precedence[[:space:]]+0$' /tmp/fd_sym_proof.err && \
          grep -Eq 'preproc\\.finite_domain_symmetry_groups[[:space:]]+0$' /tmp/fd_sym_proof.err"
+)
+add_test(
+    NAME "smt2/uf_symmetry_breaking_cli_gate"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t75_uf_symmetry_symmetric_values.smt2 \
+         >/tmp/uf_sym_default.out 2>/tmp/uf_sym_default.err && \
+         grep -q '^sat' /tmp/uf_sym_default.out && \
+         grep -Eq 'preproc\\.uf_symmetry_clauses[[:space:]]+0$' /tmp/uf_sym_default.err && \
+         grep -Eq 'preproc\\.uf_symmetry_sets[[:space:]]+0$' /tmp/uf_sym_default.err && \
+         $<TARGET_FILE:llm2smt> --quiet --stats --uf-symmetry-breaking \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t75_uf_symmetry_symmetric_values.smt2 \
+         >/tmp/uf_sym_on.out 2>/tmp/uf_sym_on.err && \
+         grep -q '^sat' /tmp/uf_sym_on.out && \
+         grep -Eq 'preproc\\.uf_symmetry_sets[[:space:]]+1$' /tmp/uf_sym_on.err && \
+         grep -Eq 'preproc\\.uf_symmetry_values[[:space:]]+3$' /tmp/uf_sym_on.err && \
+         grep -Eq 'preproc\\.uf_symmetry_terms[[:space:]]+3$' /tmp/uf_sym_on.err && \
+         grep -Eq 'preproc\\.uf_symmetry_clauses[[:space:]]+2$' /tmp/uf_sym_on.err"
+)
+add_test(
+    NAME "smt2/uf_symmetry_breaking_rejects_noninvariant"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats --uf-symmetry-breaking \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t76_uf_symmetry_rejects_asymmetric_value.smt2 \
+         >/tmp/uf_sym_reject.out 2>/tmp/uf_sym_reject.err && \
+         grep -q '^sat' /tmp/uf_sym_reject.out && \
+         grep -Eq 'preproc\\.uf_symmetry_sets[[:space:]]+0$' /tmp/uf_sym_reject.err && \
+         grep -Eq 'preproc\\.uf_symmetry_clauses[[:space:]]+0$' /tmp/uf_sym_reject.err && \
+         grep -Eq 'preproc\\.uf_symmetry_rejected_noninvariant[[:space:]]+1$' /tmp/uf_sym_reject.err"
+)
+add_test(
+    NAME "smt2/uf_symmetry_breaking_term_uses_value"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats --uf-symmetry-breaking \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t77_uf_symmetry_term_uses_value.smt2 \
+         >/tmp/uf_sym_term.out 2>/tmp/uf_sym_term.err && \
+         grep -q '^sat' /tmp/uf_sym_term.out && \
+         grep -Eq 'preproc\\.uf_symmetry_sets[[:space:]]+1$' /tmp/uf_sym_term.err && \
+         grep -Eq 'preproc\\.uf_symmetry_clauses[[:space:]]+1$' /tmp/uf_sym_term.err"
+)
+add_test(
+    NAME "smt2/uf_symmetry_breaking_proof_gate"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats --uf-symmetry-breaking \
+         --proof /tmp/uf_sym_proof.lean \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/t75_uf_symmetry_symmetric_values.smt2 \
+         >/tmp/uf_sym_proof.out 2>/tmp/uf_sym_proof.err && \
+         grep -q '^sat' /tmp/uf_sym_proof.out && \
+         grep -Eq 'preproc\\.uf_symmetry_clauses[[:space:]]+0$' /tmp/uf_sym_proof.err && \
+         grep -Eq 'preproc\\.uf_symmetry_sets[[:space:]]+0$' /tmp/uf_sym_proof.err"
 )
 add_test(
     NAME "smt2/lra_term_cache_ite_cli_gate"

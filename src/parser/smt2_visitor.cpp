@@ -2874,7 +2874,8 @@ bool Smt2Visitor::known_equality_lit(NodeId lhs, NodeId rhs, int& lit)
 void Smt2Visitor::collect_finite_domain_terms(NodeId f)
 {
     if (!opts_.finite_domain_amo ||
-        (!opts_.finite_domain_eq_defs && !opts_.finite_domain_value_precedence)) return;
+        (!opts_.finite_domain_eq_defs && !opts_.finite_domain_value_precedence &&
+         !opts_.uf_symmetry_breaking)) return;
 
     NodeManager& nm = ctx_.nm;
     std::vector<NodeId> work{f};
@@ -2909,7 +2910,7 @@ void Smt2Visitor::collect_finite_domain_terms(NodeId f)
                 }
             }
             if (values.size() < 2) return false;
-            if (!opts_.finite_domain_value_precedence &&
+            if (!opts_.finite_domain_value_precedence && !opts_.uf_symmetry_breaking &&
                 values.size() < kMinFiniteDomainEqDefSize) return false;
 
             for (size_t i = 0; i < values.size(); ++i) {
@@ -3021,6 +3022,100 @@ bool values_are_undistinguished_in_formula(NodeManager& nm, NodeId root,
     return true;
 }
 
+std::string canonical_symmetry_key(NodeManager& nm, NodeId root,
+                                   const std::unordered_map<NodeId, NodeId>& perm,
+                                   std::unordered_map<NodeId, std::string>& memo)
+{
+    auto mit = memo.find(root);
+    if (mit != memo.end()) return mit->second;
+
+    const auto& p = perm.find(root);
+    if (p != perm.end() && nm.is_const(root))
+        return memo[root] = "n" + std::to_string(p->second);
+
+    const NodeData& data = nm.get(root);
+    std::vector<std::string> children;
+    children.reserve(data.children.size());
+    for (NodeId child : data.children)
+        children.push_back(canonical_symmetry_key(nm, child, perm, memo));
+
+    if (nm.is_eq(root) || nm.is_and(root) || nm.is_or(root))
+        std::sort(children.begin(), children.end());
+
+    std::string key = "s" + std::to_string(data.sym) + "(";
+    for (const std::string& child_key : children) {
+        key += child_key;
+        key += ",";
+    }
+    key += ")";
+    return memo[root] = std::move(key);
+}
+
+std::vector<std::string> canonical_formula_multiset(
+    NodeManager& nm,
+    const std::vector<NodeId>& formulas,
+    const std::unordered_map<NodeId, NodeId>& perm)
+{
+    std::vector<std::string> keys;
+    keys.reserve(formulas.size());
+    std::unordered_map<NodeId, std::string> memo;
+    for (NodeId f : formulas)
+        keys.push_back(canonical_symmetry_key(nm, f, perm, memo));
+    std::sort(keys.begin(), keys.end());
+    return keys;
+}
+
+std::unordered_map<NodeId, NodeId> cycle_permutation(const std::vector<NodeId>& values)
+{
+    std::unordered_map<NodeId, NodeId> perm;
+    perm.reserve(values.size());
+    for (size_t i = 0; i < values.size(); ++i)
+        perm[values[i]] = values[(i + values.size() - 1) % values.size()];
+    return perm;
+}
+
+std::unordered_map<NodeId, NodeId> swap_first_two_permutation(const std::vector<NodeId>& values)
+{
+    std::unordered_map<NodeId, NodeId> perm;
+    perm.reserve(values.size());
+    for (NodeId value : values) perm[value] = value;
+    if (values.size() >= 2) {
+        perm[values[0]] = values[1];
+        perm[values[1]] = values[0];
+    }
+    return perm;
+}
+
+bool formulas_are_invariant_under_value_permutations(
+    NodeManager& nm,
+    const std::vector<NodeId>& formulas,
+    const std::vector<NodeId>& values)
+{
+    std::unordered_map<NodeId, NodeId> identity;
+    identity.reserve(values.size());
+    for (NodeId value : values) identity[value] = value;
+    const auto base = canonical_formula_multiset(nm, formulas, identity);
+
+    return base == canonical_formula_multiset(nm, formulas, cycle_permutation(values)) &&
+           base == canonical_formula_multiset(nm, formulas, swap_first_two_permutation(values));
+}
+
+std::unordered_set<NodeId> values_used_in_term(NodeManager& nm, NodeId root,
+                                               const std::unordered_set<NodeId>& values)
+{
+    std::unordered_set<NodeId> used;
+    std::vector<NodeId> work{root};
+    while (!work.empty()) {
+        NodeId n = work.back();
+        work.pop_back();
+        if (values.contains(n))
+            used.insert(n);
+        for (NodeId c : nm.get(n).children)
+            work.push_back(c);
+    }
+    return used;
+}
+
 } // namespace
 
 void Smt2Visitor::encode_finite_domain_value_precedence()
@@ -3105,6 +3200,95 @@ void Smt2Visitor::encode_finite_domain_value_precedence()
                     cl.push_back(group.terms[k].choice_lits[j - 1]);
                 ctx_.sat.add_clause(std::span<const int>(cl));
                 ++stats_.preproc_finite_domain_value_precedence_clauses;
+            }
+        }
+    }
+}
+
+void Smt2Visitor::encode_uf_symmetry_breaking()
+{
+    if (!opts_.finite_domain_amo || !opts_.uf_symmetry_breaking) return;
+    if (!opts_.proof_file.empty()) return;
+    if (finite_domain_terms_.empty()) return;
+
+    NodeManager& nm = ctx_.nm;
+    std::vector<FiniteDomainSymmetryGroup> groups;
+    for (const auto& [term, info] : finite_domain_terms_) {
+        if (info.values.size() < 2) continue;
+        bool values_are_constants = true;
+        for (NodeId value : info.values) {
+            if (!nm.is_const(value)) {
+                values_are_constants = false;
+                break;
+            }
+        }
+        if (!values_are_constants) continue;
+
+        auto it = std::find_if(groups.begin(), groups.end(),
+                               [&](const FiniteDomainSymmetryGroup& group) {
+                                   return group.values == info.values;
+                               });
+        if (it == groups.end()) {
+            FiniteDomainSymmetryGroup group;
+            group.values = info.values;
+            groups.push_back(std::move(group));
+            it = groups.end() - 1;
+        }
+        it->terms.push_back({term, info.choice_lits});
+    }
+
+    for (FiniteDomainSymmetryGroup& group : groups) {
+        if (group.terms.empty()) continue;
+        if (!formulas_are_invariant_under_value_permutations(nm, pending_fmls_, group.values)) {
+            ++stats_.preproc_uf_symmetry_rejected_noninvariant;
+            continue;
+        }
+
+        std::unordered_set<NodeId> value_set;
+        value_set.reserve(group.values.size());
+        for (NodeId value : group.values)
+            value_set.insert(value);
+
+        std::sort(group.terms.begin(), group.terms.end(),
+                  [&](const FiniteDomainSymmetryTerm& a,
+                      const FiniteDomainSymmetryTerm& b) {
+                      auto au = values_used_in_term(nm, a.term, value_set).size();
+                      auto bu = values_used_in_term(nm, b.term, value_set).size();
+                      if (au != bu) return au < bu;
+                      return a.term < b.term;
+                  });
+
+        std::unordered_set<NodeId> cts;
+        cts.reserve(group.values.size());
+        ++stats_.preproc_uf_symmetry_sets;
+        stats_.preproc_uf_symmetry_values += static_cast<uint64_t>(group.values.size());
+        stats_.preproc_uf_symmetry_terms += static_cast<uint64_t>(group.terms.size());
+
+        for (const FiniteDomainSymmetryTerm& term : group.terms) {
+            auto used = values_used_in_term(nm, term.term, value_set);
+            for (NodeId value : used)
+                cts.insert(value);
+
+            if (cts.size() < group.values.size()) {
+                for (NodeId value : group.values) {
+                    if (!cts.contains(value)) {
+                        cts.insert(value);
+                        break;
+                    }
+                }
+            }
+
+            if (cts.size() == group.values.size()) break;
+
+            std::vector<int> clause;
+            clause.reserve(cts.size());
+            for (size_t i = 0; i < group.values.size(); ++i) {
+                if (cts.contains(group.values[i]))
+                    clause.push_back(term.choice_lits[i]);
+            }
+            if (!clause.empty()) {
+                ctx_.sat.add_clause(std::span<const int>(clause));
+                ++stats_.preproc_uf_symmetry_clauses;
             }
         }
     }
@@ -3511,10 +3695,12 @@ void Smt2Visitor::flush_pending_fmls()
     if (opts_.finite_domain_amo) {
         for (NodeId f : pending_fmls_)
             collect_top_level_disequalities(f);
-        if (opts_.finite_domain_eq_defs && opts_.proof_file.empty()) {
+        if ((opts_.finite_domain_eq_defs || opts_.uf_symmetry_breaking) &&
+            opts_.proof_file.empty()) {
             for (NodeId f : pending_fmls_)
                 collect_finite_domain_terms(f);
             encode_finite_domain_value_precedence();
+            encode_uf_symmetry_breaking();
             for (NodeId f : pending_fmls_)
                 encode_finite_domain_eq_defs(f);
         } else if (opts_.finite_domain_value_precedence && opts_.proof_file.empty()) {

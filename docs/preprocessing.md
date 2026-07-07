@@ -153,6 +153,73 @@ The pass is disabled in proof mode. Term definitions, incremental model-size
 search, full sort inference, and Paradox's broader finite-model search strategy
 are intentionally out of scope for this branch.
 
+## SMT-Native QF_UF Symmetry Breaking
+
+```text
+--uf-symmetry-breaking
+```
+
+This default-off pass follows the SMT-native symmetry-breaking direction used
+by veriT and exposed by Yices as `break-symmetries`.  It is inspired by
+Déharbe, Fontaine, Merz, and Woltzenlogel Paleo's constant-permutation theorem:
+if a formula is invariant under permutations of uninterpreted constants
+`c0 ... cn`, and a term is known to take one of those values, the solver can add
+a restriction that keeps only one representative of the symmetric search space.
+SyMT-style graph automorphism is deliberately not implemented here; this pass
+uses a cheap syntactic invariance check over the existing `NodeId` formula DAG.
+
+The pass reuses the same finite-domain choice facts as the MACE-style pass:
+
+```text
+(or (= t c0) (= t c1) ... (= t cn))
+```
+
+with pairwise disequalities between all values.  Unlike
+`--finite-domain-value-precedence`, the values may appear elsewhere in the
+formula, including in predicate and function applications.  The candidate value
+set is accepted only if the whole accumulated formula is unchanged, modulo
+commutativity of `and`, `or`, and equality, under both the cycle and first-swap
+generators for the value constants.  Top-level assertions are compared as a
+multiset, so a permutation may swap two asserted formulas.
+
+For each accepted value set, eligible finite-domain terms are processed in a
+stable order, preferring terms that already mention fewer values from the set.
+The pass maintains the cumulative constant set from Déharbe et al.'s algorithm:
+constants used inside the chosen term are added, then one fresh representative
+is added if possible, and the solver asserts that the term must equal one of the
+currently selected constants.  Once all values are selected, no further clauses
+are useful.  The new stats are:
+
+- `preproc.uf_symmetry_sets`
+- `preproc.uf_symmetry_values`
+- `preproc.uf_symmetry_terms`
+- `preproc.uf_symmetry_clauses`
+- `preproc.uf_symmetry_rejected_noninvariant`
+
+The pass is disabled in proof mode and remains experimental.
+
+On the local QF_UF smoke/performance set (`tests/smt2` plus the available
+`sandbox/non-incremental/QF_UF/NEQ` and `PEQ` samples), a 20-second paired SLURM
+run on July 7, 2026 produced:
+
+```text
+files=209
+disagreements=0
+default.ok=171
+default.timeout=38
+default.par2=8.492046
+candidate.ok=195
+candidate.timeout=14
+candidate.par2=3.798648
+candidate.uf_symmetry_active_files=101
+candidate.sum.preproc.uf_symmetry_clauses=513
+```
+
+The same candidate also completed a YinYang QF_UF fuzz run over the combined
+209-file seed directory with 124 valid seeds and no bug triggers.  These numbers
+are promising enough to justify broader evaluation, but the option remains
+default-off until it has more benchmark and fuzz coverage.
+
 ## QF_LRA Equality Elimination
 
 Most of this page describes the generic `NodeId` preprocessor. QF_LRA also has
