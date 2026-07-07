@@ -35,6 +35,7 @@ struct Atom {
 class LraSolver : public ExternalPropagator {
 public:
     enum class PivotHeuristic { MinVar, MinColumn };
+    enum class RdlPropagation { Off, Cotton };
 
     explicit LraSolver(Stats* stats = nullptr) : stats_(stats) {}
 
@@ -51,6 +52,8 @@ public:
     void set_row_bound_dirty_scan(bool v) { row_bound_dirty_scan_ = v; }
     void set_row_bound_indexed_dirty_scan(bool v) { row_bound_indexed_dirty_scan_ = v; }
     void set_row_bound_propagation_budget(size_t v) { row_bound_propagation_budget_ = v; }
+    void set_row_bound_min_hit_rate(size_t v) { row_bound_min_hit_rate_ = v; }
+    void set_row_bound_hit_window(size_t v) { row_bound_hit_window_ = v; }
     void set_tableau_row_index(bool v) { tableau_row_index_ = v; }
     void set_pivot_heuristic(const std::string& name) {
         if (name == "min-var") pivot_heuristic_ = PivotHeuristic::MinVar;
@@ -64,6 +67,12 @@ public:
         if (v) simple_graph_conflicts_ = true;
     }
     void set_simple_graph_budget(size_t v) { simple_graph_budget_ = v; }
+    void set_rdl_propagation(const std::string& name) {
+        if (name == "off") rdl_propagation_ = RdlPropagation::Off;
+        else if (name == "cotton") rdl_propagation_ = RdlPropagation::Cotton;
+        else throw std::invalid_argument("unknown QF_LRA RDL propagation mode: " + name);
+    }
+    void set_rdl_propagation_budget(size_t v) { rdl_propagation_budget_ = v; }
     void add_branch_hint(int lit);
 
     void notify_assignment(int lit, bool is_fixed) override;
@@ -110,6 +119,11 @@ private:
         int negative_source_lit = 0;
     };
 
+    struct BoundAtomRef {
+        int sat_var = 0;
+        DeltaRational value;
+    };
+
     struct GraphEdgeTemplate {
         int from = 0;
         int to = 0;
@@ -117,6 +131,11 @@ private:
     };
 
     struct SimpleGraphAtom {
+        std::vector<GraphEdgeTemplate> positive_edges;
+        std::vector<GraphEdgeTemplate> negative_edges;
+    };
+
+    struct RdlAtom {
         std::vector<GraphEdgeTemplate> positive_edges;
         std::vector<GraphEdgeTemplate> negative_edges;
     };
@@ -133,6 +152,8 @@ private:
         std::vector<int> pred_edge;
     };
 
+    enum class RdlLabel { Lambda, Sigma, Pi, Delta };
+
     int next_var_ = 1;
     std::vector<int> observed_vars_;
     std::vector<int> atom_assignment_; // indexed by SAT variable: -1 false, 0 unassigned, 1 true
@@ -140,6 +161,8 @@ private:
     std::map<std::string, int> atom_keys_;
     std::unordered_map<int, ElementaryAtom> elementary_atoms_;
     std::vector<std::vector<int>> atoms_by_var_;
+    std::vector<std::vector<BoundAtomRef>> lower_atoms_by_var_;
+    std::vector<std::vector<BoundAtomRef>> upper_atoms_by_var_;
 
     std::vector<int> trail_;
     std::vector<size_t> level_counts_{0};
@@ -163,9 +186,16 @@ private:
     PivotHeuristic pivot_heuristic_ = PivotHeuristic::MinVar;
     size_t pivot_bland_after_ = 0;
     size_t row_bound_propagation_budget_ = 0;
+    size_t row_bound_min_hit_rate_ = 0;
+    size_t row_bound_hit_window_ = 100000;
+    size_t row_bound_window_candidates_ = 0;
+    size_t row_bound_window_enqueues_ = 0;
+    bool row_bound_hit_cutoff_ = false;
     bool simple_graph_conflicts_ = false;
     bool simple_graph_propagation_ = false;
     size_t simple_graph_budget_ = 20000;
+    RdlPropagation rdl_propagation_ = RdlPropagation::Off;
+    size_t rdl_propagation_budget_ = 20000;
     size_t conflict_minimize_limit_ = 64;
     Stats* stats_ = nullptr;
     bool tableau_dirty_ = false;
@@ -200,6 +230,11 @@ private:
     std::vector<ActiveGraphEdge> active_simple_graph_edges_;
     std::vector<size_t> graph_edge_level_counts_{0};
     bool active_simple_graph_dirty_ = false;
+    std::unordered_map<int, RdlAtom> rdl_atoms_;
+    std::vector<ActiveGraphEdge> active_rdl_edges_;
+    std::vector<size_t> rdl_edge_level_counts_{0};
+    std::vector<size_t> rdl_sigma_edge_indices_;
+    std::unordered_map<int, RdlLabel> rdl_labels_;
 
     bool row_index_enabled() const { return row_bound_indexed_dirty_scan_ || tableau_row_index_; }
     bool simple_graph_conflicts_enabled() const { return simple_graph_conflicts_ || simple_graph_propagation_; }
@@ -239,14 +274,40 @@ private:
     int graph_zero_node() const { return 0; }
     size_t graph_node_count() const;
     std::optional<SimpleGraphAtom> make_simple_graph_atom(const Atom& atom);
+    std::optional<RdlAtom> make_rdl_atom(const Atom& atom);
     std::vector<ActiveGraphEdge> active_simple_graph_edges(const std::vector<int>* model) const;
+    std::vector<ActiveGraphEdge> active_rdl_edges(const std::vector<int>* model) const;
     std::optional<ShortestPaths> shortest_paths_from(
-        int source, const std::vector<ActiveGraphEdge>& edges, size_t node_count) const;
+        int source, const std::vector<ActiveGraphEdge>& edges, size_t node_count,
+        bool count_rdl_stats = false) const;
+    std::optional<ShortestPaths> shortest_paths_from_excluding(
+        int source, const std::vector<ActiveGraphEdge>& edges, size_t node_count,
+        size_t skip_edge, bool count_rdl_stats = false) const;
+    std::optional<ShortestPaths> shortest_paths_from_disabled(
+        int source, const std::vector<ActiveGraphEdge>& edges, size_t node_count,
+        const std::vector<char>& disabled_edges, bool count_rdl_stats = false) const;
+    std::optional<ShortestPaths> shortest_paths_to(
+        int target, const std::vector<ActiveGraphEdge>& edges, size_t node_count,
+        bool count_rdl_stats = false) const;
+    std::optional<ShortestPaths> shortest_paths_to_excluding(
+        int target, const std::vector<ActiveGraphEdge>& edges, size_t node_count,
+        size_t skip_edge, bool count_rdl_stats = false) const;
+    std::optional<ShortestPaths> shortest_paths_to_disabled(
+        int target, const std::vector<ActiveGraphEdge>& edges, size_t node_count,
+        const std::vector<char>& disabled_edges, bool count_rdl_stats = false) const;
     std::vector<int> graph_path_reason(
         int source, int target, const ShortestPaths& paths,
         const std::vector<ActiveGraphEdge>& edges) const;
     std::vector<int> graph_negative_cycle_reason(
         const std::vector<ActiveGraphEdge>& edges, size_t node_count) const;
+    bool rdl_propagation_enabled() const { return rdl_propagation_ == RdlPropagation::Cotton; }
+    int rdl_node_for_var(int var) const { return var + 1; }
+    int rdl_zero_node() const { return 0; }
+    size_t rdl_node_count() const { return 1 + static_cast<size_t>(next_lra_var_); }
+    void add_active_rdl_edges(int sat_var, int lit);
+    void rebuild_rdl_sigma_from_active();
+    void discover_rdl_propagations(const std::vector<int>* model = nullptr);
+    bool enqueue_rdl_propagation(int lit, std::vector<int> reason);
 };
 
 } // namespace llm2smt::lra

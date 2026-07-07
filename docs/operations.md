@@ -153,12 +153,69 @@ directory as seeds. For `QF_LRA`, start with smaller directories such as
 `sandbox/non-incremental/QF_LRA/check` before moving to industrial benchmark
 families.
 
-On the SLURM host used for cluster testing, the practical workflow is:
+The SLURM head node is on the private CIIRC network. Reach it through the data
+jump host; direct SSH to `10.35.125.63` from outside that network times out.
+Use this SSH config entry or the equivalent `ssh -J` command:
+
+```text
+Host llm2smt-slurm
+  HostName 10.35.125.63
+  User janotmik
+  ProxyJump janotmik@data.ciirc.cvut.cz
+```
+
+If a non-interactive environment cannot write `~/.ssh/known_hosts`, create a
+temporary known-hosts file for both the jump host and the target:
 
 ```sh
-ssh janotmik@10.35.125.63 'cd ~/llm2smt-fuzz && sbatch yinyang_lra_selected.sbatch'
-ssh janotmik@10.35.125.63 'squeue -u janotmik'
-ssh janotmik@10.35.125.63 'tail -n 80 ~/llm2smt-fuzz/logs/llm2smt-yinyang-*.out'
+KNOWN=/tmp/llm2smt_slurm_known_hosts
+rm -f "$KNOWN"
+ssh-keyscan -H data.ciirc.cvut.cz >> "$KNOWN"
+ssh -o UserKnownHostsFile="$KNOWN" \
+  -o StrictHostKeyChecking=yes \
+  janotmik@data.ciirc.cvut.cz \
+  'ssh-keyscan -H 10.35.125.63' >> "$KNOWN"
+
+cat > /tmp/llm2smt_slurm_ssh_config <<EOF
+Host llm2smt-slurm
+  HostName 10.35.125.63
+  User janotmik
+  ProxyJump janotmik@data.ciirc.cvut.cz
+  UserKnownHostsFile $KNOWN
+  StrictHostKeyChecking yes
+  BatchMode yes
+Host data.ciirc.cvut.cz
+  UserKnownHostsFile $KNOWN
+  StrictHostKeyChecking yes
+  BatchMode yes
+EOF
+```
+
+Check reachability before syncing or submitting:
+
+```sh
+ssh -F /tmp/llm2smt_slurm_ssh_config llm2smt-slurm \
+  'hostname && command -v sbatch && command -v squeue'
+```
+
+The practical SLURM workflow is then:
+
+```sh
+rsync -az --delete -e 'ssh -F /tmp/llm2smt_slurm_ssh_config' \
+  --exclude .git --exclude build --exclude 'build-*' \
+  --exclude .venv-docs --exclude docs/_build \
+  --exclude .venv-build --exclude .venv-yinyang \
+  --exclude vendor --exclude logs --exclude yinyang_bugs \
+  --exclude yinyang_scratch --exclude slurm_logs \
+  --exclude eval_results --exclude profile_results \
+  --exclude node_modules --exclude sandbox \
+  ./ llm2smt-slurm:~/llm2smt-fuzz/
+
+ssh -F /tmp/llm2smt_slurm_ssh_config llm2smt-slurm \
+  'cd ~/llm2smt-fuzz && sbatch yinyang_lra_selected.sbatch'
+ssh -F /tmp/llm2smt_slurm_ssh_config llm2smt-slurm 'squeue -u janotmik'
+ssh -F /tmp/llm2smt_slurm_ssh_config llm2smt-slurm \
+  'tail -n 80 ~/llm2smt-fuzz/logs/llm2smt-yinyang-*.out'
 ```
 
 Use bounded jobs, collect `logs/`, `bench_results/`, and `yinyang_bugs*`, and

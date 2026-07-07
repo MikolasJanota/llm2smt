@@ -41,12 +41,16 @@ struct PreprocOptions {
     bool        lra_row_bound_dirty_scan = true; // restrict row-bound propagation to rows touching dirty bounds
     bool        lra_row_bound_indexed_dirty_scan = false; // experimental: use a reverse row index for dirty row-bound propagation scans
     size_t      lra_row_bound_prop_budget = 0; // max row-bound atom candidates per discovery; 0 means unlimited
+    size_t      lra_row_bound_min_hit_rate = 0; // disable row-bound propagation below this enqueue rate in per-million candidates; 0 disables
+    size_t      lra_row_bound_hit_window = 100000; // candidates observed before applying the row-bound hit-rate cutoff
     bool        lra_tableau_row_index = false; // experimental: use reverse row index for simplex update/pivot scans
     std::string lra_pivot_heuristic = "min-var"; // QF_LRA simplex entering heuristic: min-var or min-column
     size_t      lra_pivot_bland_after = 0; // pivot cap before falling back to Bland/min-var in one check call; 0 disables
     bool        lra_simple_graph_conflicts = false; // experimental: conflict-only unary/DL/UTVPI graph checks
     bool        lra_simple_graph_prop = false; // experimental: propagate from unary/DL/UTVPI graph constraints
     size_t      lra_simple_graph_budget = 20000; // max simple-graph atom candidates per discovery; 0 means unlimited
+    std::string lra_rdl_prop = "off"; // experimental: off or cotton for lazy real difference-logic propagation
+    size_t      lra_rdl_prop_budget = 20000; // max RDL propagation candidates per callback; 0 means unlimited
     bool        lra_dl_fast_path = true; // prove pure top-level unary/DL/UTVPI contradictions before SAT/LRA encoding
 };
 

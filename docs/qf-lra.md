@@ -340,6 +340,57 @@ on 2026-07-04 it still regressed the 20s quick suite from 5/5, PAR2 1.333 s to
 PAR2 21.905 s. Treat it as a diagnostic option for pure graph-heavy cases, not
 as a mixed-`tta_startup` default candidate.
 
+### RDL Cotton/Maler Propagation
+
+`--lra-rdl-prop=cotton` enables a narrower, default-off propagation experiment
+for real difference logic (RDL). It recognizes only atoms reducible to one
+edge `x - y <= c`, plus unary bounds encoded through a zero node; UTVPI remains
+on the older `--lra-simple-graph-prop` path. `--lra-rdl-prop=off` is the
+default, and `--lra-rdl-prop-budget N` limits candidate inspections per
+propagation callback (`0` means unlimited).
+
+The design follows Scott Cotton and Oded Maler, *Fast and Flexible Difference
+Constraint Propagation for DPLL(T)*, SAT 2006; see `sandbox/dl_cotton.pdf`.
+The implementation keeps Cotton/Maler-style literal labels: `Lambda` for
+unassigned graph literals, `Sigma` for assigned but not yet propagated edges,
+`Pi` for assigned and propagated edges, and `Delta` for implied literals
+queued to the SAT solver but not yet assigned. It is lazy: assignment callbacks
+only append active edges and mark them `Sigma`; shortest-path propagation is
+performed when the IPASIR-UP propagation callback asks the theory for work.
+
+Candidate filtering uses the paper's relevancy idea. For each new `Sigma`
+edge, the solver runs the two relevant shortest-path searches around that edge
+and inspects only candidate atoms whose endpoints can be affected by those
+searches. A candidate that passes the filter is still validated by an exact
+shortest-path implication check over the active edge set, and its reason clause
+is built from the source literals along the actual paths. Negative-cycle
+conflicts are reported as theory clauses before the simplex core is used.
+
+This is intentionally not an exhaustive Nieuwenhuis/Oliveras-style propagation
+baseline that scans all implied bounds after every assignment. It is a scoped
+experiment meant to avoid the repeated all-pairs behavior that made the broad
+simple-graph propagator regress. The complete mixed LRA solver remains the
+Dutertre/de Moura simplex core, and the RDL option should stay default-off
+until quick and hard PAR2 evidence shows a win or a clearly isolated
+benchmark-family benefit. The stats `lra.rdl_prop_*` expose active edges,
+`Sigma` queue size, candidate counts, relevant candidates, enqueues,
+duplicates, conflicts, budget cutoffs, and shortest-path relaxations.
+
+The first local 20s quick run on 2026-07-05 rejected this as a default
+candidate: current defaults solved 5/5 with PAR2 1.051 s, while
+`--lra-rdl-prop=cotton` solved 4/5 with PAR2 10.200 s and timed out on
+`simple_startup_10nodes.missing.induct.smt2`. Do not run hard or full promotion
+experiments for this version without first reducing callback candidate and
+shortest-path cost.
+
+After tightening RDL reasons so future unprocessed `Sigma` edges are masked
+out, the focused tests and full CTest suite passed, but the performance result
+remained a rejection: the 2026-07-05 quick rerun solved 5/5 with PAR2 1.243 s
+by default and 3/5 with PAR2 16.146 s under `--lra-rdl-prop=cotton`.
+SLURM YinYang job `107632` fuzzed the QF_LRA `check` seeds with
+`--lra-rdl-prop=cotton` against Z3, processed 2 valid seeds, and found 0 bug
+triggers. Logs were collected as `slurm_logs/llm2smt-rdl-yinyang-check-107632.*`.
+
 ### Pivot Heuristics
 
 `--lra-pivot-heuristic min-var|min-column` controls the entering-variable choice
@@ -498,6 +549,21 @@ for this dirty scan. The indexed mode is default-off because it improves some
 long-tail induction instances but regressed quick and hard PAR2 samples in the
 July 2026 evaluation.
 
+The propagation scanner also keeps per-variable lower-bound and upper-bound atom
+lists. This is not a theory-strengthening heuristic: it preserves the same
+unate and row-bound implications as the older `atoms_by_var_` scan, but avoids
+an unordered-map lookup and a bound-kind branch for each inspected atom. A
+2026-07-05 A/B against commit `f3c6145` was mildly positive but small: quick
+PAR2 moved from 2.677 s to 2.395 s, and hard PAR2 moved from 9.673 s to
+9.624 s, with the same solved counts on both suites.
+
+`--lra-row-bound-min-hit-rate N` and `--lra-row-bound-hit-window N` are
+diagnostic controls for disabling row-bound propagation after a low queued-literal
+rate (`N` is measured per million inspected candidates). They are default-off.
+The first 2026-07-05 trial rejected the cutoff as a default candidate: quick
+PAR2 regressed from 1.323 s to 3.007 s, and hard regressed from 8/10 solved,
+PAR2 9.136 s, to 7/10 solved, PAR2 12.252 s.
+
 `--lra-tableau-row-index` enables a separate experimental reverse row index for
 simplex `update` and `pivot` scans. The intended target is pivot-heavy problems
 where scanning every basic row dominates the profile. It is default-off: on the
@@ -508,8 +574,10 @@ heuristic.
 
 `--stats` prints LRA counters for assignments, simplex checks, pivots,
 conflicts, conflict-clause literals, delivered propagations, propagation
-candidates considered, registered elementary atoms, tableau term variables, Real
-variables, row-bound candidates, row-bound propagations, equality-elimination
+candidates considered, enqueue attempts, duplicate/already-known propagated
+literals, propagation conflicts, registered elementary atoms, tableau term variables, Real
+variables, row-bound candidates, row-bound enqueue attempts, row-bound
+duplicates, row-bound propagations, row-bound hit-rate cutoffs, equality-elimination
 rows/variables/contradictions, local constant folds, arithmetic `ite`
 simplifications, finite-domain bound/equality-definition clauses, simple-graph
 atoms/edges/candidates/propagations/conflicts/budget cutoffs, and LRA-local

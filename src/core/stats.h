@@ -83,8 +83,14 @@ struct Stats {
     uint64_t lra_conflict_lits_total = 0; // total literals across all LRA conflicts
     uint64_t lra_propagations        = 0; // theory literals delivered to SAT
     uint64_t lra_prop_candidates_considered = 0; // elementary atoms inspected by propagation discovery
+    uint64_t lra_prop_enqueue_attempts = 0; // implied LRA literals submitted to the propagation queue
+    uint64_t lra_prop_duplicates     = 0; // implied LRA literals already assigned/enqueued or self-redundant
+    uint64_t lra_prop_conflicts      = 0; // contradicted implied LRA literals turned into conflicts
     uint64_t lra_row_prop_candidates_considered = 0; // row-bound atoms inspected by propagation discovery
+    uint64_t lra_row_prop_enqueue_attempts = 0; // row-bound implied literals submitted to the propagation queue
+    uint64_t lra_row_prop_duplicates = 0; // row-bound implied literals already assigned/enqueued or self-redundant
     uint64_t lra_row_bound_propagations = 0; // literals enqueued from derived row bounds
+    uint64_t lra_row_prop_hit_cutoffs = 0; // row-bound discovery disabled after low enqueue hit rate
     uint64_t lra_simple_graph_atoms = 0; // atoms recognized as unary/difference/UTVPI graph constraints
     uint64_t lra_simple_graph_edges = 0; // active graph edges inspected during the last graph discovery
     uint64_t lra_simple_graph_candidates = 0; // graph atom candidates inspected by propagation discovery
@@ -96,6 +102,15 @@ struct Stats {
     uint64_t lra_simple_graph_rebuilds_avoided = 0; // active graph scans avoided by incremental edge maintenance
     uint64_t lra_simple_graph_budget_cutoffs = 0; // graph discovery calls stopped by candidate budget
     uint64_t lra_simple_graph_skipped = 0; // LRA atoms not representable as unary/DL/UTVPI graph constraints
+    uint64_t lra_rdl_prop_edges_active = 0; // active real difference-logic edges maintained incrementally
+    uint64_t lra_rdl_prop_sigma = 0; // assigned/unpropagated RDL edge batches waiting for lazy propagation
+    uint64_t lra_rdl_prop_candidates = 0; // RDL atom candidates inspected by Cotton/Maler propagation
+    uint64_t lra_rdl_prop_relevant_candidates = 0; // candidates whose endpoints are affected by a new edge
+    uint64_t lra_rdl_prop_enqueues = 0; // literals enqueued by RDL propagation
+    uint64_t lra_rdl_prop_duplicates = 0; // RDL implied literals already assigned/enqueued or self-redundant
+    uint64_t lra_rdl_prop_conflicts = 0; // RDL negative-cycle or contradicted-propagation conflicts
+    uint64_t lra_rdl_prop_budget_cutoffs = 0; // RDL propagation calls stopped by candidate budget
+    uint64_t lra_rdl_prop_sssp_relaxations = 0; // edge relaxations performed by RDL shortest-path searches
     uint64_t lra_branch_decisions     = 0; // finite-domain branch hints returned to SAT
     uint64_t lra_atoms               = 0; // unique elementary LRA atoms registered
     uint64_t lra_term_vars           = 0; // unique tableau term variables introduced
@@ -191,8 +206,14 @@ struct Stats {
         row("lra.conflict_lits_total",  lra_conflict_lits_total);
         row("lra.propagations",         lra_propagations);
         row("lra.prop_candidates_considered", lra_prop_candidates_considered);
+        row("lra.prop_enqueue_attempts", lra_prop_enqueue_attempts);
+        row("lra.prop_duplicates",      lra_prop_duplicates);
+        row("lra.prop_conflicts",       lra_prop_conflicts);
         row("lra.row_prop_candidates_considered", lra_row_prop_candidates_considered);
+        row("lra.row_prop_enqueue_attempts", lra_row_prop_enqueue_attempts);
+        row("lra.row_prop_duplicates",  lra_row_prop_duplicates);
         row("lra.row_bound_propagations", lra_row_bound_propagations);
+        row("lra.row_prop_hit_cutoffs", lra_row_prop_hit_cutoffs);
         row("lra.simple_graph_atoms",    lra_simple_graph_atoms);
         row("lra.simple_graph_edges",    lra_simple_graph_edges);
         row("lra.simple_graph_candidates", lra_simple_graph_candidates);
@@ -204,6 +225,15 @@ struct Stats {
         row("lra.simple_graph_reuse", lra_simple_graph_rebuilds_avoided);
         row("lra.simple_graph_budget_cutoffs", lra_simple_graph_budget_cutoffs);
         row("lra.simple_graph_skipped",  lra_simple_graph_skipped);
+        row("lra.rdl_prop_edges_active", lra_rdl_prop_edges_active);
+        row("lra.rdl_prop_sigma",        lra_rdl_prop_sigma);
+        row("lra.rdl_prop_candidates",   lra_rdl_prop_candidates);
+        row("lra.rdl_prop_relevant_candidates", lra_rdl_prop_relevant_candidates);
+        row("lra.rdl_prop_enqueues",     lra_rdl_prop_enqueues);
+        row("lra.rdl_prop_duplicates",   lra_rdl_prop_duplicates);
+        row("lra.rdl_prop_conflicts",    lra_rdl_prop_conflicts);
+        row("lra.rdl_prop_budget_cutoffs", lra_rdl_prop_budget_cutoffs);
+        row("lra.rdl_prop_sssp_relaxations", lra_rdl_prop_sssp_relaxations);
         row("lra.branch_decisions",       lra_branch_decisions);
         row("lra.atoms",                lra_atoms);
         row("lra.term_vars",            lra_term_vars);

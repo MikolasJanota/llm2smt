@@ -65,6 +65,8 @@ int LraSolver::new_tableau_var(bool basic) {
         upper_.resize(v + 1);
         var_to_real_.resize(v + 1);
         atoms_by_var_.resize(v + 1);
+        lower_atoms_by_var_.resize(v + 1);
+        upper_atoms_by_var_.resize(v + 1);
         prop_var_dirty_.resize(v + 1);
         if (row_index_enabled()) rows_by_var_.resize(v + 1);
     }
@@ -198,12 +200,25 @@ int LraSolver::register_atom(const Atom& atom) {
     }
     elementary_atoms_[sat_var] = ea;
     if (static_cast<int>(atoms_by_var_.size()) <= ea.var) atoms_by_var_.resize(ea.var + 1);
+    if (static_cast<int>(lower_atoms_by_var_.size()) <= ea.var) lower_atoms_by_var_.resize(ea.var + 1);
+    if (static_cast<int>(upper_atoms_by_var_.size()) <= ea.var) upper_atoms_by_var_.resize(ea.var + 1);
     atoms_by_var_[ea.var].push_back(sat_var);
+    if (ea.positive_kind == BoundKind::Lower)
+        lower_atoms_by_var_[ea.var].push_back(BoundAtomRef{sat_var, ea.positive_value});
+    else
+        upper_atoms_by_var_[ea.var].push_back(BoundAtomRef{sat_var, ea.positive_value});
     if (auto simple = make_simple_graph_atom(atom)) {
         simple_graph_atoms_[sat_var] = std::move(*simple);
         if (stats_) ++stats_->lra_simple_graph_atoms;
     } else if (stats_) {
         ++stats_->lra_simple_graph_skipped;
+    }
+    if (rdl_propagation_enabled()) {
+        if (auto rdl = make_rdl_atom(atom)) {
+            rdl_atoms_[sat_var] = std::move(*rdl);
+            rdl_labels_[sat_var] = RdlLabel::Lambda;
+            if (atom.rel != Relation::Eq) rdl_labels_[-sat_var] = RdlLabel::Lambda;
+        }
     }
     return sat_var;
 }
@@ -312,6 +327,86 @@ std::optional<LraSolver::SimpleGraphAtom> LraSolver::make_simple_graph_atom(cons
     return out;
 }
 
+std::optional<LraSolver::RdlAtom> LraSolver::make_rdl_atom(const Atom& atom) {
+    auto strict_bound = [](Rational bound, bool strict) {
+        return DeltaRational(std::move(bound), strict ? Rational(-1) : Rational(0));
+    };
+
+    auto edges_for_le = [&](const LinearExpr& expr, bool strict)
+        -> std::optional<std::vector<GraphEdgeTemplate>> {
+        std::vector<std::pair<std::string, Rational>> coeffs;
+        coeffs.reserve(expr.coeffs.size());
+        for (const auto& [name, coeff] : expr.coeffs)
+            if (!coeff.is_zero()) coeffs.push_back({name, coeff});
+
+        Rational bound = -expr.constant;
+        if (coeffs.empty()) return std::nullopt;
+
+        if (coeffs.size() == 1) {
+            const auto& [name, coeff] = coeffs[0];
+            if (coeff.is_zero()) return std::nullopt;
+            int var = ensure_real_var(name);
+            if (coeff > Rational(0)) {
+                return std::vector<GraphEdgeTemplate>{
+                    {rdl_zero_node(), rdl_node_for_var(var), strict_bound(bound / coeff, strict)}};
+            }
+            return std::vector<GraphEdgeTemplate>{
+                {rdl_node_for_var(var), rdl_zero_node(), strict_bound(bound / (-coeff), strict)}};
+        }
+
+        if (coeffs.size() != 2) return std::nullopt;
+        const auto& [name_a, coeff_a] = coeffs[0];
+        const auto& [name_b, coeff_b] = coeffs[1];
+        Rational abs_a = coeff_a < Rational(0) ? -coeff_a : coeff_a;
+        Rational abs_b = coeff_b < Rational(0) ? -coeff_b : coeff_b;
+        if (abs_a.is_zero() || !(abs_a == abs_b)) return std::nullopt;
+        if (!((coeff_a > Rational(0) && coeff_b < Rational(0)) ||
+              (coeff_a < Rational(0) && coeff_b > Rational(0))))
+            return std::nullopt;
+
+        int var_a = ensure_real_var(name_a);
+        int var_b = ensure_real_var(name_b);
+        int to = coeff_a > Rational(0) ? var_a : var_b;
+        int from = coeff_a > Rational(0) ? var_b : var_a;
+        return std::vector<GraphEdgeTemplate>{
+            {rdl_node_for_var(from), rdl_node_for_var(to), strict_bound(bound / abs_a, strict)}};
+    };
+
+    auto scaled = [](LinearExpr e, const Rational& q) {
+        e.scale(q);
+        return e;
+    };
+    auto edges_for_relation = [&](Relation rel)
+        -> std::optional<std::vector<GraphEdgeTemplate>> {
+        switch (rel) {
+        case Relation::Le: return edges_for_le(atom.lhs_minus_rhs, false);
+        case Relation::Lt: return edges_for_le(atom.lhs_minus_rhs, true);
+        case Relation::Ge: return edges_for_le(scaled(atom.lhs_minus_rhs, Rational(-1)), false);
+        case Relation::Gt: return edges_for_le(scaled(atom.lhs_minus_rhs, Rational(-1)), true);
+        case Relation::Eq: {
+            auto le = edges_for_le(atom.lhs_minus_rhs, false);
+            auto ge = edges_for_le(scaled(atom.lhs_minus_rhs, Rational(-1)), false);
+            if (!le || !ge) return std::nullopt;
+            le->insert(le->end(), ge->begin(), ge->end());
+            return le;
+        }
+        case Relation::Ne:
+            return std::nullopt;
+        }
+        return std::nullopt;
+    };
+
+    auto pos = edges_for_relation(atom.rel);
+    if (!pos) return std::nullopt;
+    RdlAtom out;
+    out.positive_edges = std::move(*pos);
+    if (atom.rel != Relation::Eq && atom.rel != Relation::Ne) {
+        if (auto neg = edges_for_relation(negate_rel(atom.rel)))
+            out.negative_edges = std::move(*neg);
+    }
+    return out;
+}
+
 bool LraSolver::apply_bound(int var, BoundKind kind, const DeltaRational& value, int source_lit) {
     Bound& b = kind == BoundKind::Lower ? lower_[var] : upper_[var];
     bool stronger = !b.active ||
@@ -361,6 +456,8 @@ void LraSolver::notify_assignment(int lit, bool) {
     level_counts_.back()++;
     if (simple_graph_conflicts_enabled() && simple_graph_atoms_.contains(sat_var))
         add_active_simple_graph_edges(sat_var, lit);
+    if (rdl_propagation_enabled() && rdl_atoms_.contains(sat_var))
+        add_active_rdl_edges(sat_var, lit);
 
     auto it = elementary_atoms_.find(sat_var);
     if (it == elementary_atoms_.end()) return;
@@ -392,6 +489,7 @@ void LraSolver::notify_new_decision_level() {
     level_counts_.push_back(0);
     bound_level_counts_.push_back(0);
     graph_edge_level_counts_.push_back(0);
+    rdl_edge_level_counts_.push_back(0);
 }
 
 void LraSolver::notify_backtrack(size_t new_level) {
@@ -413,6 +511,12 @@ void LraSolver::notify_backtrack(size_t new_level) {
             active_simple_graph_edges_.pop_back();
         active_simple_graph_dirty_ = true;
     }
+    while (rdl_edge_level_counts_.size() > new_level + 1) {
+        size_t n = rdl_edge_level_counts_.back();
+        rdl_edge_level_counts_.pop_back();
+        while (n-- > 0 && !active_rdl_edges_.empty())
+            active_rdl_edges_.pop_back();
+    }
     while (bound_level_counts_.size() > new_level + 1) {
         size_t n = bound_level_counts_.back();
         bound_level_counts_.pop_back();
@@ -430,6 +534,7 @@ void LraSolver::notify_backtrack(size_t new_level) {
     prop_head_ = 0;
     prop_enqueued_.clear();
     mark_all_bound_vars_for_propagation();
+    rebuild_rdl_sigma_from_active();
     reason_serving_lit_ = 0;
     reason_serving_idx_ = 0;
 }
@@ -753,15 +858,32 @@ int LraSolver::current_lit_value(int lit) const {
 
 bool LraSolver::enqueue_propagation(int lit, std::vector<int> reason, bool row_bound) {
     if (has_conflict_) return false;
-    if (std::find(reason.begin(), reason.end(), -lit) != reason.end()) return false;
+    if (stats_) {
+        ++stats_->lra_prop_enqueue_attempts;
+        if (row_bound) ++stats_->lra_row_prop_enqueue_attempts;
+    }
+    if (std::find(reason.begin(), reason.end(), -lit) != reason.end()) {
+        if (stats_) {
+            ++stats_->lra_prop_duplicates;
+            if (row_bound) ++stats_->lra_row_prop_duplicates;
+        }
+        return false;
+    }
     std::sort(reason.begin(), reason.end());
     reason.erase(std::unique(reason.begin(), reason.end()), reason.end());
     reason.erase(std::remove(reason.begin(), reason.end(), lit), reason.end());
     reason.insert(reason.begin(), lit);
 
     int assigned = current_lit_value(lit);
-    if (assigned > 0) return false;
+    if (assigned > 0) {
+        if (stats_) {
+            ++stats_->lra_prop_duplicates;
+            if (row_bound) ++stats_->lra_row_prop_duplicates;
+        }
+        return false;
+    }
     if (assigned < 0) {
+        if (stats_) ++stats_->lra_prop_conflicts;
         set_conflict(reason);
         return false;
     }
@@ -769,8 +891,15 @@ bool LraSolver::enqueue_propagation(int lit, std::vector<int> reason, bool row_b
     if (prop_enqueued_.insert(lit).second) {
         prop_queue_.push_back(lit);
         reason_clauses_[lit] = std::move(reason);
-        if (row_bound && stats_) ++stats_->lra_row_bound_propagations;
+        if (row_bound) {
+            ++row_bound_window_enqueues_;
+            if (stats_) ++stats_->lra_row_bound_propagations;
+        }
         return true;
+    }
+    if (stats_) {
+        ++stats_->lra_prop_duplicates;
+        if (row_bound) ++stats_->lra_row_prop_duplicates;
     }
     return false;
 }
@@ -780,6 +909,20 @@ bool LraSolver::enqueue_graph_propagation(int lit, std::vector<int> reason) {
     bool enqueued = enqueue_propagation(lit, std::move(reason), false);
     if (enqueued && stats_) ++stats_->lra_simple_graph_propagations;
     if (!had_conflict && has_conflict_ && stats_) ++stats_->lra_simple_graph_conflicts;
+    return enqueued;
+}
+
+bool LraSolver::enqueue_rdl_propagation(int lit, std::vector<int> reason) {
+    bool had_conflict = has_conflict_;
+    bool enqueued = enqueue_propagation(lit, std::move(reason), false);
+    if (enqueued) {
+        rdl_labels_[lit] = RdlLabel::Delta;
+        if (stats_) ++stats_->lra_rdl_prop_enqueues;
+    } else if (!had_conflict && has_conflict_) {
+        if (stats_) ++stats_->lra_rdl_prop_conflicts;
+    } else if (stats_) {
+        ++stats_->lra_rdl_prop_duplicates;
+    }
     return enqueued;
 }
 
@@ -816,8 +959,63 @@ void LraSolver::add_active_simple_graph_edges(int sat_var, int lit) {
     if (stats_) stats_->lra_simple_graph_active_edges = active_simple_graph_edges_.size();
 }
 
+std::vector<LraSolver::ActiveGraphEdge> LraSolver::active_rdl_edges(
+    const std::vector<int>* model) const {
+    std::unordered_set<int> model_lits;
+    if (model) model_lits.insert(model->begin(), model->end());
+
+    std::vector<ActiveGraphEdge> edges;
+    for (const auto& [sat_var, atom] : rdl_atoms_) {
+        if (sat_var < 0 || static_cast<size_t>(sat_var) >= atom_assignment_.size()) continue;
+        int value = atom_assignment_[sat_var];
+        if (value == 0 && !model_lits.empty()) {
+            if (model_lits.contains(sat_var)) value = 1;
+            else if (model_lits.contains(-sat_var)) value = -1;
+        }
+        if (value == 0) continue;
+        int lit = value > 0 ? sat_var : -sat_var;
+        const auto& templates = value > 0 ? atom.positive_edges : atom.negative_edges;
+        for (const auto& edge : templates)
+            edges.push_back(ActiveGraphEdge{edge.from, edge.to, edge.weight, lit});
+    }
+    return edges;
+}
+
+void LraSolver::add_active_rdl_edges(int sat_var, int lit) {
+    auto it = rdl_atoms_.find(sat_var);
+    if (it == rdl_atoms_.end()) return;
+    const auto& templates = lit > 0 ? it->second.positive_edges : it->second.negative_edges;
+    // Cotton/Maler labels: Lambda=unassigned, Sigma=assigned/unpropagated,
+    // Pi=assigned/propagated, Delta=implied before SAT assigns it.
+    rdl_labels_[lit] = RdlLabel::Sigma;
+    for (const auto& edge : templates) {
+        active_rdl_edges_.push_back(ActiveGraphEdge{edge.from, edge.to, edge.weight, lit});
+        rdl_sigma_edge_indices_.push_back(active_rdl_edges_.size() - 1);
+    }
+    rdl_edge_level_counts_.back() += templates.size();
+    if (stats_) {
+        stats_->lra_rdl_prop_edges_active = active_rdl_edges_.size();
+        stats_->lra_rdl_prop_sigma = rdl_sigma_edge_indices_.size();
+    }
+}
+
+void LraSolver::rebuild_rdl_sigma_from_active() {
+    rdl_sigma_edge_indices_.clear();
+    for (auto& [_, label] : rdl_labels_) label = RdlLabel::Lambda;
+    for (size_t edge_idx = 0; edge_idx < active_rdl_edges_.size(); ++edge_idx) {
+        int lit = active_rdl_edges_[edge_idx].source_lit;
+        rdl_labels_[lit] = RdlLabel::Sigma;
+        rdl_sigma_edge_indices_.push_back(edge_idx);
+    }
+    if (stats_) {
+        stats_->lra_rdl_prop_edges_active = active_rdl_edges_.size();
+        stats_->lra_rdl_prop_sigma = rdl_sigma_edge_indices_.size();
+    }
+}
+
 std::optional<LraSolver::ShortestPaths> LraSolver::shortest_paths_from(
-    int source, const std::vector<ActiveGraphEdge>& edges, size_t node_count) const {
+    int source, const std::vector<ActiveGraphEdge>& edges, size_t node_count,
+    bool count_rdl_stats) const {
     if (source < 0 || static_cast<size_t>(source) >= node_count) return std::nullopt;
     ShortestPaths out;
     out.dist.resize(node_count);
@@ -827,6 +1025,7 @@ std::optional<LraSolver::ShortestPaths> LraSolver::shortest_paths_from(
     for (size_t iter = 1; iter < node_count; ++iter) {
         bool changed = false;
         for (size_t edge_idx = 0; edge_idx < edges.size(); ++edge_idx) {
+            if (count_rdl_stats && stats_) ++stats_->lra_rdl_prop_sssp_relaxations;
             const auto& edge = edges[edge_idx];
             if (edge.from < 0 || edge.to < 0 ||
                 static_cast<size_t>(edge.from) >= node_count ||
@@ -843,6 +1042,103 @@ std::optional<LraSolver::ShortestPaths> LraSolver::shortest_paths_from(
         if (!changed) break;
     }
     return out;
+}
+
+std::optional<LraSolver::ShortestPaths> LraSolver::shortest_paths_from_excluding(
+    int source, const std::vector<ActiveGraphEdge>& edges, size_t node_count,
+    size_t skip_edge, bool count_rdl_stats) const {
+    if (source < 0 || static_cast<size_t>(source) >= node_count) return std::nullopt;
+    ShortestPaths out;
+    out.dist.resize(node_count);
+    out.pred_edge.assign(node_count, -1);
+    out.dist[source] = DeltaRational(Rational(0));
+
+    for (size_t iter = 1; iter < node_count; ++iter) {
+        bool changed = false;
+        for (size_t edge_idx = 0; edge_idx < edges.size(); ++edge_idx) {
+            if (edge_idx == skip_edge) continue;
+            if (count_rdl_stats && stats_) ++stats_->lra_rdl_prop_sssp_relaxations;
+            const auto& edge = edges[edge_idx];
+            if (edge.from < 0 || edge.to < 0 ||
+                static_cast<size_t>(edge.from) >= node_count ||
+                static_cast<size_t>(edge.to) >= node_count ||
+                !out.dist[edge.from])
+                continue;
+            DeltaRational candidate = *out.dist[edge.from] + edge.weight;
+            if (!out.dist[edge.to] || candidate < *out.dist[edge.to]) {
+                out.dist[edge.to] = candidate;
+                out.pred_edge[edge.to] = static_cast<int>(edge_idx);
+                changed = true;
+            }
+        }
+        if (!changed) break;
+    }
+    return out;
+}
+
+std::optional<LraSolver::ShortestPaths> LraSolver::shortest_paths_from_disabled(
+    int source, const std::vector<ActiveGraphEdge>& edges, size_t node_count,
+    const std::vector<char>& disabled_edges, bool count_rdl_stats) const {
+    if (source < 0 || static_cast<size_t>(source) >= node_count) return std::nullopt;
+    ShortestPaths out;
+    out.dist.resize(node_count);
+    out.pred_edge.assign(node_count, -1);
+    out.dist[source] = DeltaRational(Rational(0));
+
+    for (size_t iter = 1; iter < node_count; ++iter) {
+        bool changed = false;
+        for (size_t edge_idx = 0; edge_idx < edges.size(); ++edge_idx) {
+            if (edge_idx < disabled_edges.size() && disabled_edges[edge_idx]) continue;
+            if (count_rdl_stats && stats_) ++stats_->lra_rdl_prop_sssp_relaxations;
+            const auto& edge = edges[edge_idx];
+            if (edge.from < 0 || edge.to < 0 ||
+                static_cast<size_t>(edge.from) >= node_count ||
+                static_cast<size_t>(edge.to) >= node_count ||
+                !out.dist[edge.from])
+                continue;
+            DeltaRational candidate = *out.dist[edge.from] + edge.weight;
+            if (!out.dist[edge.to] || candidate < *out.dist[edge.to]) {
+                out.dist[edge.to] = candidate;
+                out.pred_edge[edge.to] = static_cast<int>(edge_idx);
+                changed = true;
+            }
+        }
+        if (!changed) break;
+    }
+    return out;
+}
+
+std::optional<LraSolver::ShortestPaths> LraSolver::shortest_paths_to(
+    int target, const std::vector<ActiveGraphEdge>& edges, size_t node_count,
+    bool count_rdl_stats) const {
+    if (target < 0 || static_cast<size_t>(target) >= node_count) return std::nullopt;
+    std::vector<ActiveGraphEdge> reversed;
+    reversed.reserve(edges.size());
+    for (const auto& edge : edges)
+        reversed.push_back(ActiveGraphEdge{edge.to, edge.from, edge.weight, edge.source_lit});
+    return shortest_paths_from(target, reversed, node_count, count_rdl_stats);
+}
+
+std::optional<LraSolver::ShortestPaths> LraSolver::shortest_paths_to_excluding(
+    int target, const std::vector<ActiveGraphEdge>& edges, size_t node_count,
+    size_t skip_edge, bool count_rdl_stats) const {
+    if (target < 0 || static_cast<size_t>(target) >= node_count) return std::nullopt;
+    std::vector<ActiveGraphEdge> reversed;
+    reversed.reserve(edges.size());
+    for (const auto& edge : edges)
+        reversed.push_back(ActiveGraphEdge{edge.to, edge.from, edge.weight, edge.source_lit});
+    return shortest_paths_from_excluding(target, reversed, node_count, skip_edge, count_rdl_stats);
+}
+
+std::optional<LraSolver::ShortestPaths> LraSolver::shortest_paths_to_disabled(
+    int target, const std::vector<ActiveGraphEdge>& edges, size_t node_count,
+    const std::vector<char>& disabled_edges, bool count_rdl_stats) const {
+    if (target < 0 || static_cast<size_t>(target) >= node_count) return std::nullopt;
+    std::vector<ActiveGraphEdge> reversed;
+    reversed.reserve(edges.size());
+    for (const auto& edge : edges)
+        reversed.push_back(ActiveGraphEdge{edge.to, edge.from, edge.weight, edge.source_lit});
+    return shortest_paths_from_disabled(target, reversed, node_count, disabled_edges, count_rdl_stats);
 }
 
 std::vector<int> LraSolver::graph_path_reason(
@@ -1013,45 +1309,229 @@ void LraSolver::discover_simple_graph_propagations(const std::vector<int>* model
     if (budget_cutoff && stats_) ++stats_->lra_simple_graph_budget_cutoffs;
 }
 
+void LraSolver::discover_rdl_propagations(const std::vector<int>* model) {
+    if (!rdl_propagation_enabled() || !propagation_enabled_ || rdl_atoms_.empty() || has_conflict_)
+        return;
+
+    std::vector<ActiveGraphEdge> model_edges;
+    const std::vector<ActiveGraphEdge>* edges = &active_rdl_edges_;
+    std::vector<size_t> model_sigma;
+    const std::vector<size_t>* sigma = &rdl_sigma_edge_indices_;
+    if (model) {
+        model_edges = active_rdl_edges(model);
+        edges = &model_edges;
+        model_sigma.reserve(model_edges.size());
+        for (size_t i = 0; i < model_edges.size(); ++i) model_sigma.push_back(i);
+        sigma = &model_sigma;
+    }
+
+    if (stats_) {
+        stats_->lra_rdl_prop_edges_active = edges->size();
+        stats_->lra_rdl_prop_sigma = sigma->size();
+    }
+    if (edges->empty() || sigma->empty()) return;
+
+    size_t node_count = rdl_node_count();
+    std::unordered_map<int, ShortestPaths> path_cache;
+    std::vector<char> disabled_future(edges->size(), 0);
+    for (size_t edge_idx : *sigma) {
+        if (edge_idx < disabled_future.size()) disabled_future[edge_idx] = 1;
+    }
+    auto implied = [&](const std::vector<GraphEdgeTemplate>& templates,
+                       const std::vector<char>& disabled_edges,
+                       std::vector<int>& reason) {
+        reason.clear();
+        if (templates.empty()) return false;
+        for (const auto& tmpl : templates) {
+            auto pit = path_cache.find(tmpl.from);
+            if (pit == path_cache.end()) {
+                auto paths = shortest_paths_from_disabled(
+                    tmpl.from, *edges, node_count, disabled_edges, true);
+                if (!paths) return false;
+                pit = path_cache.emplace(tmpl.from, std::move(*paths)).first;
+            }
+            const ShortestPaths& paths = pit->second;
+            if (tmpl.to < 0 || static_cast<size_t>(tmpl.to) >= paths.dist.size() ||
+                !paths.dist[tmpl.to] || *paths.dist[tmpl.to] > tmpl.weight)
+                return false;
+            std::vector<int> path_reason = graph_path_reason(tmpl.from, tmpl.to, paths, *edges);
+            reason.insert(reason.end(), path_reason.begin(), path_reason.end());
+        }
+        std::sort(reason.begin(), reason.end());
+        reason.erase(std::unique(reason.begin(), reason.end()), reason.end());
+        return true;
+    };
+
+    size_t candidates = 0;
+    bool budget_cutoff = false;
+    auto inspect = [&](int lit, const std::vector<GraphEdgeTemplate>& templates,
+                       const ShortestPaths& reaches_new_from,
+                       const ShortestPaths& from_new_to,
+                       const std::vector<char>& disabled_edges) {
+        if (has_conflict_ || templates.empty()) return;
+        if (rdl_propagation_budget_ > 0 && candidates >= rdl_propagation_budget_) {
+            budget_cutoff = true;
+            return;
+        }
+        ++candidates;
+        if (stats_) ++stats_->lra_rdl_prop_candidates;
+        if (current_lit_value(lit) > 0) {
+            if (stats_) ++stats_->lra_rdl_prop_duplicates;
+            return;
+        }
+
+        bool relevant = false;
+        for (const auto& tmpl : templates) {
+            if (tmpl.from < 0 || tmpl.to < 0 ||
+                static_cast<size_t>(tmpl.from) >= reaches_new_from.dist.size() ||
+                static_cast<size_t>(tmpl.to) >= from_new_to.dist.size())
+                continue;
+            if (reaches_new_from.dist[tmpl.from] && from_new_to.dist[tmpl.to]) {
+                relevant = true;
+                break;
+            }
+        }
+        if (!relevant) return;
+        if (stats_) ++stats_->lra_rdl_prop_relevant_candidates;
+
+        std::vector<int> reason;
+        if (implied(templates, disabled_edges, reason))
+            enqueue_rdl_propagation(lit, std::move(reason));
+    };
+
+    size_t processed_sigma = 0;
+    for (size_t sigma_pos = 0; sigma_pos < sigma->size() && !has_conflict_; ++sigma_pos) {
+        size_t edge_idx = (*sigma)[sigma_pos];
+        if (edge_idx >= edges->size()) {
+            ++processed_sigma;
+            continue;
+        }
+        const ActiveGraphEdge& new_edge = (*edges)[edge_idx];
+        if (edge_idx < disabled_future.size()) disabled_future[edge_idx] = 0;
+        std::vector<char> disabled_without_current = disabled_future;
+        if (edge_idx < disabled_without_current.size()) disabled_without_current[edge_idx] = 1;
+
+        auto reaches_new_from = shortest_paths_to_disabled(
+            new_edge.from, *edges, node_count, disabled_without_current, true);
+        auto from_new_to = shortest_paths_from_disabled(
+            new_edge.to, *edges, node_count, disabled_without_current, true);
+        if (!reaches_new_from || !from_new_to) {
+            ++processed_sigma;
+            continue;
+        }
+
+        if (new_edge.from >= 0 && static_cast<size_t>(new_edge.from) < from_new_to->dist.size() &&
+            from_new_to->dist[new_edge.from] &&
+            *from_new_to->dist[new_edge.from] + new_edge.weight < DeltaRational(Rational(0))) {
+            std::vector<int> reason = graph_path_reason(
+                new_edge.to, new_edge.from, *from_new_to, *edges);
+            reason.push_back(-new_edge.source_lit);
+            std::sort(reason.begin(), reason.end());
+            reason.erase(std::unique(reason.begin(), reason.end()), reason.end());
+            if (stats_) ++stats_->lra_rdl_prop_conflicts;
+            set_conflict(std::move(reason));
+            break;
+        }
+
+        for (const auto& [sat_var, atom] : rdl_atoms_) {
+            path_cache.clear();
+            inspect(sat_var, atom.positive_edges, *reaches_new_from, *from_new_to,
+                    disabled_future);
+            inspect(-sat_var, atom.negative_edges, *reaches_new_from, *from_new_to,
+                    disabled_future);
+            if (has_conflict_ || budget_cutoff) break;
+        }
+        rdl_labels_[new_edge.source_lit] = RdlLabel::Pi;
+        ++processed_sigma;
+        if (budget_cutoff) break;
+    }
+
+    if (!model) {
+        if (processed_sigma >= rdl_sigma_edge_indices_.size()) {
+            rdl_sigma_edge_indices_.clear();
+        } else {
+            rdl_sigma_edge_indices_.erase(rdl_sigma_edge_indices_.begin(),
+                                          rdl_sigma_edge_indices_.begin() + processed_sigma);
+        }
+        if (stats_) stats_->lra_rdl_prop_sigma = rdl_sigma_edge_indices_.size();
+    }
+    if (budget_cutoff && stats_) ++stats_->lra_rdl_prop_budget_cutoffs;
+}
+
 void LraSolver::discover_row_bound_propagations() {
     if (!row_bound_propagation_) return;
+    if (row_bound_hit_cutoff_) return;
     size_t candidates_this_discovery = 0;
 
     auto enqueue = [&](int lit, std::vector<int> reason) {
         enqueue_propagation(lit, std::move(reason), true);
     };
 
-    auto inspect_atom = [&](int sat_var,
-                            const ElementaryAtom& ea,
-                            const std::optional<DeltaRational>& lower_value,
-                            const std::vector<int>& lower_sources,
-                            const std::optional<DeltaRational>& upper_value,
-                            const std::vector<int>& upper_sources) {
+    auto inspect_candidate = [&]() {
         if (row_bound_propagation_budget_ > 0 &&
             candidates_this_discovery >= row_bound_propagation_budget_)
-            return;
+            return false;
         ++candidates_this_discovery;
         if (stats_) ++stats_->lra_row_prop_candidates_considered;
+        ++row_bound_window_candidates_;
+        return true;
+    };
+
+    auto inspect_lower_atom = [&](const BoundAtomRef& atom,
+                                  const std::optional<DeltaRational>& lower_value,
+                                  const std::vector<int>& lower_sources,
+                                  const std::optional<DeltaRational>& upper_value,
+                                  const std::vector<int>& upper_sources) {
+        if (!inspect_candidate()) return;
         if (lower_value) {
-            if (ea.positive_kind == BoundKind::Lower && *lower_value >= ea.positive_value)
-                enqueue(sat_var, lower_sources);
-            if (ea.positive_kind == BoundKind::Upper && *lower_value > ea.positive_value)
-                enqueue(-sat_var, lower_sources);
+            if (*lower_value >= atom.value)
+                enqueue(atom.sat_var, lower_sources);
         }
         if (upper_value) {
-            if (ea.positive_kind == BoundKind::Upper && *upper_value <= ea.positive_value)
-                enqueue(sat_var, upper_sources);
-            if (ea.positive_kind == BoundKind::Lower && *upper_value < ea.positive_value)
-                enqueue(-sat_var, upper_sources);
+            if (*upper_value < atom.value)
+                enqueue(-atom.sat_var, upper_sources);
         }
+    };
+
+    auto inspect_upper_atom = [&](const BoundAtomRef& atom,
+                                  const std::optional<DeltaRational>& lower_value,
+                                  const std::vector<int>& lower_sources,
+                                  const std::optional<DeltaRational>& upper_value,
+                                  const std::vector<int>& upper_sources) {
+        if (!inspect_candidate()) return;
+        if (lower_value) {
+            if (*lower_value > atom.value)
+                enqueue(-atom.sat_var, lower_sources);
+        }
+        if (upper_value) {
+            if (*upper_value <= atom.value)
+                enqueue(atom.sat_var, upper_sources);
+        }
+    };
+
+    auto maybe_apply_hit_cutoff = [&]() {
+        if (row_bound_min_hit_rate_ == 0 || row_bound_hit_window_ == 0 ||
+            row_bound_hit_cutoff_ || row_bound_window_candidates_ < row_bound_hit_window_)
+            return;
+        if (row_bound_window_enqueues_ * 1000000 < row_bound_window_candidates_ * row_bound_min_hit_rate_) {
+            row_bound_hit_cutoff_ = true;
+            if (stats_) ++stats_->lra_row_prop_hit_cutoffs;
+        }
+        row_bound_window_candidates_ = 0;
+        row_bound_window_enqueues_ = 0;
     };
 
     auto inspect_row = [&](int basic) {
         if (has_conflict_) return;
+        if (row_bound_hit_cutoff_) return;
         if (row_bound_propagation_budget_ > 0 &&
             candidates_this_discovery >= row_bound_propagation_budget_)
             return;
-        if (static_cast<size_t>(basic) >= atoms_by_var_.size() || atoms_by_var_[basic].empty())
+        bool has_lower_atoms = static_cast<size_t>(basic) < lower_atoms_by_var_.size() &&
+                               !lower_atoms_by_var_[basic].empty();
+        bool has_upper_atoms = static_cast<size_t>(basic) < upper_atoms_by_var_.size() &&
+                               !upper_atoms_by_var_[basic].empty();
+        if (!has_lower_atoms && !has_upper_atoms)
             return;
         int row_idx = row_of_basic_[basic];
         if (row_idx < 0) return;
@@ -1094,11 +1574,13 @@ void LraSolver::discover_row_bound_propagations() {
         }
 
         if (!row_lower && !row_upper) return;
-        for (int sat_var : atoms_by_var_[basic]) {
-            auto it = elementary_atoms_.find(sat_var);
-            if (it == elementary_atoms_.end()) continue;
-            inspect_atom(sat_var, it->second, row_lower, lower_sources, row_upper, upper_sources);
-        }
+        if (has_lower_atoms)
+            for (const BoundAtomRef& atom : lower_atoms_by_var_[basic])
+                inspect_lower_atom(atom, row_lower, lower_sources, row_upper, upper_sources);
+        if (has_upper_atoms)
+            for (const BoundAtomRef& atom : upper_atoms_by_var_[basic])
+                inspect_upper_atom(atom, row_lower, lower_sources, row_upper, upper_sources);
+        maybe_apply_hit_cutoff();
     };
 
     auto row_is_dirty = [&](int basic, const TableauRow& row) {
@@ -1148,6 +1630,7 @@ void LraSolver::discover_row_bound_propagations() {
 
     for (int row_idx : dirty_rows) {
         if (has_conflict_) return;
+        if (row_bound_hit_cutoff_) return;
         if (static_cast<size_t>(row_idx) >= row_basic_.size()) continue;
         int basic = row_basic_[row_idx];
         inspect_row(basic);
@@ -1158,29 +1641,50 @@ void LraSolver::discover_bound_propagations() {
     if (!propagation_enabled_) return;
     detect_simple_graph_conflict();
     if (has_conflict_) return;
+    discover_rdl_propagations();
+    if (has_conflict_) return;
     auto enqueue = [&](int lit, std::vector<int> reason) {
         enqueue_propagation(lit, std::move(reason), false);
     };
-    auto inspect_atom = [&](int sat_var, const ElementaryAtom& ea) {
+    auto inspect_lower_atom = [&](const BoundAtomRef& atom, int var) {
         if (stats_) ++stats_->lra_prop_candidates_considered;
-        if (lower_[ea.var].active) {
-            DeltaRational implied = lower_[ea.var].value;
-            if (ea.positive_kind == BoundKind::Lower && implied >= ea.positive_value)
-                enqueue(sat_var, {sat_var, -lower_[ea.var].source_lit});
-            if (ea.positive_kind == BoundKind::Upper && implied > ea.positive_value)
-                enqueue(-sat_var, {-sat_var, -lower_[ea.var].source_lit});
+        if (lower_[var].active) {
+            DeltaRational implied = lower_[var].value;
+            if (implied >= atom.value)
+                enqueue(atom.sat_var, {atom.sat_var, -lower_[var].source_lit});
         }
-        if (upper_[ea.var].active) {
-            DeltaRational implied = upper_[ea.var].value;
-            if (ea.positive_kind == BoundKind::Upper && implied <= ea.positive_value)
-                enqueue(sat_var, {sat_var, -upper_[ea.var].source_lit});
-            if (ea.positive_kind == BoundKind::Lower && implied < ea.positive_value)
-                enqueue(-sat_var, {-sat_var, -upper_[ea.var].source_lit});
+        if (upper_[var].active) {
+            DeltaRational implied = upper_[var].value;
+            if (implied < atom.value)
+                enqueue(-atom.sat_var, {-atom.sat_var, -upper_[var].source_lit});
+        }
+    };
+
+    auto inspect_upper_atom = [&](const BoundAtomRef& atom, int var) {
+        if (stats_) ++stats_->lra_prop_candidates_considered;
+        if (lower_[var].active) {
+            DeltaRational implied = lower_[var].value;
+            if (implied > atom.value)
+                enqueue(-atom.sat_var, {-atom.sat_var, -lower_[var].source_lit});
+        }
+        if (upper_[var].active) {
+            DeltaRational implied = upper_[var].value;
+            if (implied <= atom.value)
+                enqueue(atom.sat_var, {atom.sat_var, -upper_[var].source_lit});
         }
     };
 
     if (!incremental_prop_scan_) {
-        for (const auto& [sat_var, ea] : elementary_atoms_) inspect_atom(sat_var, ea);
+        for (size_t var = 0; var < lower_atoms_by_var_.size(); ++var) {
+            for (const BoundAtomRef& atom : lower_atoms_by_var_[var])
+                inspect_lower_atom(atom, static_cast<int>(var));
+        }
+        for (size_t var = 0; var < upper_atoms_by_var_.size(); ++var) {
+            for (const BoundAtomRef& atom : upper_atoms_by_var_[var])
+                inspect_upper_atom(atom, static_cast<int>(var));
+        }
+        if (has_conflict_) return;
+        discover_rdl_propagations();
         if (has_conflict_) return;
         discover_simple_graph_propagations();
         if (has_conflict_) return;
@@ -1195,13 +1699,16 @@ void LraSolver::discover_bound_propagations() {
 
     for (int var : prop_dirty_vars_) {
         if (has_conflict_) return;
-        if (var < 0 || static_cast<size_t>(var) >= atoms_by_var_.size()) continue;
-        for (int sat_var : atoms_by_var_[var]) {
-            auto it = elementary_atoms_.find(sat_var);
-            if (it == elementary_atoms_.end()) continue;
-            inspect_atom(sat_var, it->second);
-        }
+        if (var < 0) continue;
+        if (static_cast<size_t>(var) < lower_atoms_by_var_.size())
+            for (const BoundAtomRef& atom : lower_atoms_by_var_[var])
+                inspect_lower_atom(atom, var);
+        if (static_cast<size_t>(var) < upper_atoms_by_var_.size())
+            for (const BoundAtomRef& atom : upper_atoms_by_var_[var])
+                inspect_upper_atom(atom, var);
     }
+    discover_rdl_propagations();
+    if (has_conflict_) return;
     discover_simple_graph_propagations();
     if (has_conflict_) return;
     discover_row_bound_propagations();
@@ -1216,6 +1723,8 @@ bool LraSolver::cb_check_found_model(const std::vector<int>& model) {
     if (stats_) ++stats_->lra_final_checks;
     if (has_conflict_) return false;
     detect_simple_graph_conflict(&model);
+    if (has_conflict_) return false;
+    discover_rdl_propagations(&model);
     if (has_conflict_) return false;
     discover_simple_graph_propagations(&model);
     if (has_conflict_) return false;
@@ -1253,6 +1762,12 @@ int LraSolver::cb_propagate() {
     prop_queue_.clear();
     prop_head_ = 0;
     if (!tableau_dirty_) return 0;
+    discover_rdl_propagations();
+    if (has_conflict_) return 0;
+    while (prop_head_ < prop_queue_.size()) {
+        if (stats_) ++stats_->lra_propagations;
+        return prop_queue_[prop_head_++];
+    }
     if (!check()) return 0;
     tableau_dirty_ = false;
     discover_bound_propagations();

@@ -257,6 +257,12 @@ int main(int argc, char** argv) {
                         "Enable experimental QF_LRA reverse row index for dirty row-bound propagation scans");
     lra_group->add_option("--lra-row-bound-prop-budget", opts.lra_row_bound_prop_budget,
                           "Maximum QF_LRA row-bound propagation candidates per discovery (0 = unlimited)");
+    lra_group->add_option("--lra-row-bound-min-hit-rate", opts.lra_row_bound_min_hit_rate,
+                          "Disable QF_LRA row-bound propagation when queued literals per million candidates fall below N (0 = disabled)")
+       ->check(CLI::NonNegativeNumber);
+    lra_group->add_option("--lra-row-bound-hit-window", opts.lra_row_bound_hit_window,
+                          "QF_LRA row-bound candidates observed before applying --lra-row-bound-min-hit-rate")
+       ->check(CLI::NonNegativeNumber);
     lra_group->add_flag("--lra-tableau-row-index", opts.lra_tableau_row_index,
                         "Enable experimental QF_LRA reverse row index for simplex update/pivot scans");
     lra_group->add_option("--lra-pivot-heuristic", opts.lra_pivot_heuristic,
@@ -271,6 +277,12 @@ int main(int argc, char** argv) {
                         "Enable experimental QF_LRA unary/difference/UTVPI graph propagation");
     lra_group->add_option("--lra-simple-graph-budget", opts.lra_simple_graph_budget,
                           "Maximum QF_LRA simple-graph propagation candidates per discovery (0 = unlimited)");
+    lra_group->add_option("--lra-rdl-prop", opts.lra_rdl_prop,
+                          "Experimental lazy QF_LRA real difference-logic propagation: off or cotton")
+       ->check(CLI::IsMember({"off", "cotton"}));
+    lra_group->add_option("--lra-rdl-prop-budget", opts.lra_rdl_prop_budget,
+                          "Maximum QF_LRA RDL propagation candidates per callback (0 = unlimited)")
+       ->check(CLI::NonNegativeNumber);
     lra_group->add_flag("!--no-lra-dl-fast-path", opts.lra_dl_fast_path,
                         "Disable QF_LRA top-level unary/difference/UTVPI contradiction precheck");
 
@@ -325,12 +337,16 @@ int main(int argc, char** argv) {
         lra.set_row_bound_dirty_scan(opts.lra_row_bound_dirty_scan);
         lra.set_row_bound_indexed_dirty_scan(opts.lra_row_bound_indexed_dirty_scan);
         lra.set_row_bound_propagation_budget(opts.lra_row_bound_prop_budget);
+        lra.set_row_bound_min_hit_rate(opts.lra_row_bound_min_hit_rate);
+        lra.set_row_bound_hit_window(opts.lra_row_bound_hit_window);
         lra.set_tableau_row_index(opts.lra_tableau_row_index);
         lra.set_pivot_heuristic(opts.lra_pivot_heuristic);
         lra.set_pivot_bland_after(opts.lra_pivot_bland_after);
         lra.set_simple_graph_conflicts(opts.lra_simple_graph_conflicts);
         lra.set_simple_graph_propagation(opts.lra_simple_graph_prop);
         lra.set_simple_graph_budget(opts.lra_simple_graph_budget);
+        lra.set_rdl_propagation(opts.lra_rdl_prop);
+        lra.set_rdl_propagation_budget(opts.lra_rdl_prop_budget);
         euf.set_prop_interval(opts.prop_interval);
         euf.set_prop_assign_threshold(opts.prop_assign_threshold);
         euf.set_prop_delivery_budget(opts.prop_delivery_budget);

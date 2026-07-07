@@ -143,12 +143,16 @@ Theory propagation options:
 - `--no-lra-row-bound-prop`
 - `--lra-row-bound-dirty-scan`
 - `--lra-row-bound-prop-budget N`
+- `--lra-row-bound-min-hit-rate N`
+- `--lra-row-bound-hit-window N`
 - `--lra-tableau-row-index`
 - `--lra-pivot-heuristic min-var|min-column`
 - `--lra-pivot-bland-after N`
 - `--lra-simple-graph-conflicts`
 - `--lra-simple-graph-prop`
 - `--lra-simple-graph-budget N`
+- `--lra-rdl-prop off|cotton`
+- `--lra-rdl-prop-budget N`
 - `--no-lra-dl-fast-path`
 - `--prop-interval N`
 - `--prop-assign-threshold X`

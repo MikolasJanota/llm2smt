@@ -251,6 +251,190 @@ TEST(LraSolver, SimpleGraphConflictOnlyFindsNegativeCycle) {
     EXPECT_EQ(stats.lra_simple_graph_propagations, 0u);
 }
 
+TEST(LraSolver, RdlCottonPropagatesDifferenceConstraint) {
+    llm2smt::Stats stats;
+    LraSolver solver(&stats);
+    solver.set_rdl_propagation("cotton");
+    solver.declare_real("x");
+    solver.declare_real("y");
+    solver.declare_real("z");
+
+    LinearExpr x_minus_y_minus_one;
+    x_minus_y_minus_one.add_var("x", Rational(1));
+    x_minus_y_minus_one.add_var("y", Rational(-1));
+    x_minus_y_minus_one.constant = Rational(-1);
+
+    LinearExpr y_minus_z_minus_one;
+    y_minus_z_minus_one.add_var("y", Rational(1));
+    y_minus_z_minus_one.add_var("z", Rational(-1));
+    y_minus_z_minus_one.constant = Rational(-1);
+
+    LinearExpr x_minus_z_minus_two;
+    x_minus_z_minus_two.add_var("x", Rational(1));
+    x_minus_z_minus_two.add_var("z", Rational(-1));
+    x_minus_z_minus_two.constant = Rational(-2);
+
+    int xy = solver.register_atom({x_minus_y_minus_one, Relation::Le});
+    int yz = solver.register_atom({y_minus_z_minus_one, Relation::Le});
+    int xz = solver.register_atom({x_minus_z_minus_two, Relation::Le});
+
+    solver.notify_assignment(xy, false);
+    solver.notify_assignment(yz, false);
+
+    EXPECT_EQ(solver.cb_propagate(), xz);
+    EXPECT_GT(stats.lra_rdl_prop_enqueues, 0u);
+    EXPECT_GT(stats.lra_rdl_prop_relevant_candidates, 0u);
+
+    EXPECT_EQ(solver.cb_add_reason_clause_lit(xz), xz);
+    std::vector<int> antecedents;
+    for (int lit = solver.cb_add_reason_clause_lit(xz); lit != 0;
+         lit = solver.cb_add_reason_clause_lit(xz)) {
+        antecedents.push_back(lit);
+    }
+    std::sort(antecedents.begin(), antecedents.end());
+    EXPECT_EQ(antecedents, (std::vector<int>{-yz, -xy}));
+}
+
+TEST(LraSolver, RdlCottonDetectsNegativeCycleConflict) {
+    llm2smt::Stats stats;
+    LraSolver solver(&stats);
+    solver.set_rdl_propagation("cotton");
+    solver.declare_real("x");
+    solver.declare_real("y");
+
+    LinearExpr x_minus_y;
+    x_minus_y.add_var("x", Rational(1));
+    x_minus_y.add_var("y", Rational(-1));
+
+    LinearExpr y_minus_x_minus_one;
+    y_minus_x_minus_one.add_var("y", Rational(1));
+    y_minus_x_minus_one.add_var("x", Rational(-1));
+    y_minus_x_minus_one.constant = Rational(1);
+
+    int xy = solver.register_atom({x_minus_y, Relation::Le});
+    int yx = solver.register_atom({y_minus_x_minus_one, Relation::Le});
+
+    solver.notify_assignment(xy, false);
+    solver.notify_assignment(yx, false);
+
+    EXPECT_EQ(solver.cb_propagate(), 0);
+    bool forgettable = true;
+    EXPECT_TRUE(solver.cb_has_external_clause(forgettable));
+    EXPECT_FALSE(forgettable);
+    EXPECT_GT(stats.lra_rdl_prop_conflicts, 0u);
+}
+
+TEST(LraSolver, RdlCottonBacktrackingRestoresActiveEdges) {
+    llm2smt::Stats stats;
+    LraSolver solver(&stats);
+    solver.set_rdl_propagation("cotton");
+    solver.declare_real("x");
+    solver.declare_real("y");
+    solver.declare_real("z");
+
+    LinearExpr x_minus_y_minus_one;
+    x_minus_y_minus_one.add_var("x", Rational(1));
+    x_minus_y_minus_one.add_var("y", Rational(-1));
+    x_minus_y_minus_one.constant = Rational(-1);
+
+    LinearExpr y_minus_z_minus_one;
+    y_minus_z_minus_one.add_var("y", Rational(1));
+    y_minus_z_minus_one.add_var("z", Rational(-1));
+    y_minus_z_minus_one.constant = Rational(-1);
+
+    LinearExpr x_minus_z_minus_two;
+    x_minus_z_minus_two.add_var("x", Rational(1));
+    x_minus_z_minus_two.add_var("z", Rational(-1));
+    x_minus_z_minus_two.constant = Rational(-2);
+
+    int xy = solver.register_atom({x_minus_y_minus_one, Relation::Le});
+    int yz = solver.register_atom({y_minus_z_minus_one, Relation::Le});
+    int xz = solver.register_atom({x_minus_z_minus_two, Relation::Le});
+
+    solver.notify_assignment(xy, false);
+    solver.notify_new_decision_level();
+    solver.notify_assignment(yz, false);
+    EXPECT_EQ(solver.cb_propagate(), xz);
+
+    solver.notify_backtrack(0);
+    EXPECT_EQ(stats.lra_rdl_prop_edges_active, 1u);
+    EXPECT_EQ(solver.cb_propagate(), 0);
+}
+
+TEST(LraSolver, RdlCottonIsLazyUntilPropagationCallback) {
+    llm2smt::Stats stats;
+    LraSolver solver(&stats);
+    solver.set_rdl_propagation("cotton");
+    solver.declare_real("x");
+    solver.declare_real("y");
+
+    LinearExpr x_minus_y;
+    x_minus_y.add_var("x", Rational(1));
+    x_minus_y.add_var("y", Rational(-1));
+    int xy = solver.register_atom({x_minus_y, Relation::Le});
+
+    solver.notify_assignment(xy, false);
+    EXPECT_EQ(stats.lra_rdl_prop_sigma, 1u);
+    EXPECT_EQ(stats.lra_rdl_prop_candidates, 0u);
+}
+
+TEST(LraSolver, RdlCottonBudgetReportsCutoff) {
+    llm2smt::Stats stats;
+    LraSolver solver(&stats);
+    solver.set_rdl_propagation("cotton");
+    solver.set_rdl_propagation_budget(1);
+    solver.declare_real("x");
+    solver.declare_real("y");
+    solver.declare_real("z");
+
+    LinearExpr x_minus_y;
+    x_minus_y.add_var("x", Rational(1));
+    x_minus_y.add_var("y", Rational(-1));
+
+    LinearExpr y_minus_z;
+    y_minus_z.add_var("y", Rational(1));
+    y_minus_z.add_var("z", Rational(-1));
+
+    LinearExpr x_minus_z;
+    x_minus_z.add_var("x", Rational(1));
+    x_minus_z.add_var("z", Rational(-1));
+
+    int xy = solver.register_atom({x_minus_y, Relation::Le});
+    (void)solver.register_atom({y_minus_z, Relation::Le});
+    (void)solver.register_atom({x_minus_z, Relation::Le});
+
+    solver.notify_assignment(xy, false);
+    EXPECT_EQ(solver.cb_propagate(), 0);
+    EXPECT_GT(stats.lra_rdl_prop_budget_cutoffs, 0u);
+}
+
+TEST(LraSolver, RdlCottonPreservesStrictInequalityOrdering) {
+    llm2smt::Stats stats;
+    LraSolver solver(&stats);
+    solver.set_rdl_propagation("cotton");
+    solver.declare_real("x");
+    solver.declare_real("y");
+
+    LinearExpr x_minus_y;
+    x_minus_y.add_var("x", Rational(1));
+    x_minus_y.add_var("y", Rational(-1));
+
+    LinearExpr y_minus_x;
+    y_minus_x.add_var("y", Rational(1));
+    y_minus_x.add_var("x", Rational(-1));
+
+    int x_lt_y = solver.register_atom({x_minus_y, Relation::Lt});
+    int y_le_x = solver.register_atom({y_minus_x, Relation::Le});
+
+    solver.notify_assignment(x_lt_y, false);
+    solver.notify_assignment(y_le_x, false);
+
+    EXPECT_EQ(solver.cb_propagate(), 0);
+    bool forgettable = true;
+    EXPECT_TRUE(solver.cb_has_external_clause(forgettable));
+    EXPECT_GT(stats.lra_rdl_prop_conflicts, 0u);
+}
+
 TEST(LraSolver, MinColumnPivotHeuristicReportsChoices) {
     llm2smt::Stats stats;
     LraSolver solver(&stats);
