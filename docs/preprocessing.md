@@ -189,7 +189,17 @@ term sequence.  Term `p_i` may use only the first `i+1` values, and
 existing finite-domain ALO/AMO clauses still provide exact-one semantics; this
 pass only removes value-renaming representatives.  This is stronger than the
 earlier cumulative-constant prototype and is closer to the Paradox/Reger
-principal-term ordering clauses.  The new stats are:
+principal-term ordering clauses.
+
+One important soundness condition is that the ordered finite-domain terms must
+not themselves contain the permuted values.  For example, the group
+`(f c0), (f c1), ...` over values `c0, c1, ...` is not a fixed ordered term
+sequence under a value permutation; the terms move with the values.  A QG-style
+table such as `(op c_i c_j)` has the same issue.  The recognizer therefore
+rejects these moving-term groups even if the formula as a whole is invariant
+under value permutations.
+
+The new stats are:
 
 - `preproc.uf_symmetry_sets`
 - `preproc.uf_symmetry_values`
@@ -228,6 +238,44 @@ timeout to `unsat` in about 5.7 seconds under the tuned UF command line
 --prop-assign-threshold 0.25 --prop-delivery-budget 1000
 --uf-symmetry-breaking`).  The same run emitted 255 UF symmetry clauses for 51
 finite-domain terms over 6 values.
+
+### UF Symmetry Fuzzing
+
+The symmetry pass has two dedicated test artifacts:
+
+- `scripts/gen_uf_symmetry_seeds.py` writes a deterministic corpus in
+  `tests/fuzz/uf_symmetry`.
+- `scripts/fuzz_uf_symmetry.py` is a randomized differential fuzzer for the
+  fragile recognizer boundary.
+
+The deterministic corpus contains fixed-choice cases that should emit symmetry
+clauses and moving-term cases that must emit zero clauses.  The CTest
+`smt2/uf_symmetry_generated_seed_corpus` checks all generated seeds and prevents
+the QG moving-term bug from regressing.
+
+The randomized fuzzer compares the tuned solver with and without
+`--uf-symmetry-breaking`, and can optionally compare against a reference solver:
+
+```bash
+python3 scripts/fuzz_uf_symmetry.py --count 1000 --seed 7
+python3 scripts/fuzz_uf_symmetry.py --count 1000 --seed 7 --ref 'z3 model_validate=true'
+```
+
+It generates satisfiable fixed-choice, moving-unary, moving-binary, and
+Latin-square-like QF_UF instances.  For moving-term cases, it also checks that
+`preproc.uf_symmetry_clauses` stays zero.  Counterexamples are saved under
+`fuzz_fails/uf_symmetry` by default.
+
+The initial local run after adding the moving-term guard checked 2,000 generated
+instances with no disagreements:
+
+```text
+checked=2000
+failures=0
+fixed=363
+moving=1637
+sym_clause_cases=84
+```
 
 ## QF_LRA Equality Elimination
 
