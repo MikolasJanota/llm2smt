@@ -290,7 +290,7 @@ add_test(
          grep -Eq 'preproc\\.uf_symmetry_sets[[:space:]]+1$' /tmp/uf_sym_on.err && \
          grep -Eq 'preproc\\.uf_symmetry_values[[:space:]]+3$' /tmp/uf_sym_on.err && \
          grep -Eq 'preproc\\.uf_symmetry_terms[[:space:]]+3$' /tmp/uf_sym_on.err && \
-         grep -Eq 'preproc\\.uf_symmetry_clauses[[:space:]]+2$' /tmp/uf_sym_on.err"
+         grep -Eq 'preproc\\.uf_symmetry_clauses[[:space:]]+6$' /tmp/uf_sym_on.err"
 )
 add_test(
     NAME "smt2/uf_symmetry_breaking_rejects_noninvariant"
@@ -311,7 +311,7 @@ add_test(
          >/tmp/uf_sym_term.out 2>/tmp/uf_sym_term.err && \
          grep -q '^sat' /tmp/uf_sym_term.out && \
          grep -Eq 'preproc\\.uf_symmetry_sets[[:space:]]+1$' /tmp/uf_sym_term.err && \
-         grep -Eq 'preproc\\.uf_symmetry_clauses[[:space:]]+1$' /tmp/uf_sym_term.err"
+         grep -Eq 'preproc\\.uf_symmetry_clauses[[:space:]]+6$' /tmp/uf_sym_term.err"
 )
 add_test(
     NAME "smt2/uf_symmetry_breaking_proof_gate"

@@ -3100,22 +3100,6 @@ bool formulas_are_invariant_under_value_permutations(
            base == canonical_formula_multiset(nm, formulas, swap_first_two_permutation(values));
 }
 
-std::unordered_set<NodeId> values_used_in_term(NodeManager& nm, NodeId root,
-                                               const std::unordered_set<NodeId>& values)
-{
-    std::unordered_set<NodeId> used;
-    std::vector<NodeId> work{root};
-    while (!work.empty()) {
-        NodeId n = work.back();
-        work.pop_back();
-        if (values.contains(n))
-            used.insert(n);
-        for (NodeId c : nm.get(n).children)
-            work.push_back(c);
-    }
-    return used;
-}
-
 } // namespace
 
 void Smt2Visitor::encode_finite_domain_value_precedence()
@@ -3244,50 +3228,32 @@ void Smt2Visitor::encode_uf_symmetry_breaking()
             continue;
         }
 
-        std::unordered_set<NodeId> value_set;
-        value_set.reserve(group.values.size());
-        for (NodeId value : group.values)
-            value_set.insert(value);
-
         std::sort(group.terms.begin(), group.terms.end(),
-                  [&](const FiniteDomainSymmetryTerm& a,
-                      const FiniteDomainSymmetryTerm& b) {
-                      auto au = values_used_in_term(nm, a.term, value_set).size();
-                      auto bu = values_used_in_term(nm, b.term, value_set).size();
-                      if (au != bu) return au < bu;
+                  [](const FiniteDomainSymmetryTerm& a,
+                     const FiniteDomainSymmetryTerm& b) {
                       return a.term < b.term;
                   });
 
-        std::unordered_set<NodeId> cts;
-        cts.reserve(group.values.size());
         ++stats_.preproc_uf_symmetry_sets;
         stats_.preproc_uf_symmetry_values += static_cast<uint64_t>(group.values.size());
         stats_.preproc_uf_symmetry_terms += static_cast<uint64_t>(group.terms.size());
 
-        for (const FiniteDomainSymmetryTerm& term : group.terms) {
-            auto used = values_used_in_term(nm, term.term, value_set);
-            for (NodeId value : used)
-                cts.insert(value);
-
-            if (cts.size() < group.values.size()) {
-                for (NodeId value : group.values) {
-                    if (!cts.contains(value)) {
-                        cts.insert(value);
-                        break;
-                    }
-                }
+        for (size_t i = 0; i < group.terms.size(); ++i) {
+            const auto& term = group.terms[i];
+            for (size_t j = i + 1; j < group.values.size(); ++j) {
+                std::array<int,1> cl = {-term.choice_lits[j]};
+                ctx_.sat.add_clause(std::span<const int>(cl));
+                ++stats_.preproc_uf_symmetry_clauses;
             }
 
-            if (cts.size() == group.values.size()) break;
-
-            std::vector<int> clause;
-            clause.reserve(cts.size());
-            for (size_t i = 0; i < group.values.size(); ++i) {
-                if (cts.contains(group.values[i]))
-                    clause.push_back(term.choice_lits[i]);
-            }
-            if (!clause.empty()) {
-                ctx_.sat.add_clause(std::span<const int>(clause));
+            const size_t max_j = std::min(i, group.values.size() - 1);
+            for (size_t j = 1; j <= max_j; ++j) {
+                std::vector<int> cl;
+                cl.reserve(i + 1);
+                cl.push_back(-term.choice_lits[j]);
+                for (size_t k = 0; k < i; ++k)
+                    cl.push_back(group.terms[k].choice_lits[j - 1]);
+                ctx_.sat.add_clause(std::span<const int>(cl));
                 ++stats_.preproc_uf_symmetry_clauses;
             }
         }

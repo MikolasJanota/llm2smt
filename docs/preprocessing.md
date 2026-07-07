@@ -182,13 +182,14 @@ commutativity of `and`, `or`, and equality, under both the cycle and first-swap
 generators for the value constants.  Top-level assertions are compared as a
 multiset, so a permutation may swap two asserted formulas.
 
-For each accepted value set, eligible finite-domain terms are processed in a
-stable order, preferring terms that already mention fewer values from the set.
-The pass maintains the cumulative constant set from Déharbe et al.'s algorithm:
-constants used inside the chosen term are added, then one fresh representative
-is added if possible, and the solver asserts that the term must equal one of the
-currently selected constants.  Once all values are selected, no further clauses
-are useful.  The new stats are:
+For each accepted value set, eligible finite-domain terms are processed in
+stable `NodeId` order and the pass emits full value-precedence clauses over the
+term sequence.  Term `p_i` may use only the first `i+1` values, and
+`p_i = v_j` for `j > 0` implies that some earlier `p_k` used `v_{j-1}`.  The
+existing finite-domain ALO/AMO clauses still provide exact-one semantics; this
+pass only removes value-renaming representatives.  This is stronger than the
+earlier cumulative-constant prototype and is closer to the Paradox/Reger
+principal-term ordering clauses.  The new stats are:
 
 - `preproc.uf_symmetry_sets`
 - `preproc.uf_symmetry_values`
@@ -219,6 +220,14 @@ The same candidate also completed a YinYang QF_UF fuzz run over the combined
 209-file seed directory with 124 valid seeds and no bug triggers.  These numbers
 are promising enough to justify broader evaluation, but the option remains
 default-off until it has more benchmark and fuzz coverage.
+
+After strengthening the emitted clauses to full value precedence,
+`sandbox/non-incremental/QF_UF/PEQ/PEQ018_size6.smt2` changed from a 30-second
+timeout to `unsat` in about 5.7 seconds under the tuned UF command line
+(`--preprocess-passes 4 --eq-bridge --prop-interval 32
+--prop-assign-threshold 0.25 --prop-delivery-budget 1000
+--uf-symmetry-breaking`).  The same run emitted 255 UF symmetry clauses for 51
+finite-domain terms over 6 values.
 
 ## QF_LRA Equality Elimination
 
