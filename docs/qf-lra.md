@@ -564,6 +564,58 @@ The first 2026-07-05 trial rejected the cutoff as a default candidate: quick
 PAR2 regressed from 1.323 s to 3.007 s, and hard regressed from 8/10 solved,
 PAR2 9.136 s, to 7/10 solved, PAR2 12.252 s.
 
+A 2026-07-08 frame-pointer `perf` pass on
+`simple_startup_10nodes.missing.induct.smt2` and
+`simple_startup_15nodes.missing.induct.smt2` found the remaining hot path in
+incremental simplex work rather than parsing or SAT encoding. On the 10-node
+case, about two thirds of sampled time was under `pivot_and_update`, with
+`std::map` row operations, exact-rational arithmetic, and row-bound propagation
+visible in the flat profile. The 15-node case made 54,717 LRA checks, 14,758
+pivots, and inspected 4,349,011 row-bound candidates before solving in about
+53 seconds locally. Treat sparse-tableau representation and cheaper pivot row
+updates as the next high-value implementation experiments.
+
+The same profiling pass tried lazy row-bound reason construction: compute row
+bounds first, skip already-known candidate literals, and build the source vector
+only for an actual enqueue or conflict. This was rejected for now. It did reduce
+eager reason materialization, but the profiled startup cases often did enqueue
+from inspected rows, so the extra row walk offset the saved allocation
+(`10nodes` stayed near 4.6 s and `15nodes` moved from about 53.2 s to about
+54.1 s). The retained low-risk part is reserving row-bound source vectors to the
+row width before filling them.
+
+Follow-up implementation probes from the same 2026-07-08 pass:
+
+- Pivot variable lists no longer sort the whole `basic_vars_` and
+  `nonbasic_vars_` vectors after every pivot. The replacement variable is erased
+  and reinserted with `lower_bound`, preserving the order expected by the
+  min-variable pivot heuristic. This is retained as a small default-on cleanup:
+  the local quick suite solved 5/5 with PAR2 1.196 s, and the local hard suite
+  solved 8/10 with PAR2 8.742 s.
+- A stored-position reverse row index for `--lra-tableau-row-index` was tried
+  and rejected. It removed the linear search in `unregister_row_coeffs`, but the
+  added per-row hash-map maintenance made the indexed 15-node startup case worse
+  at about 78 s. The indexed mode remains default-off with the older simpler
+  maintenance.
+- An ordered-map merge update for pivot-affected rows was tried and rejected.
+  It replaced repeated `std::map::operator[]` updates with a single sorted merge
+  into a fresh map, but rebuilding maps cost more than the saved lookups:
+  `simple_startup_15nodes.missing.induct.smt2` moved to about 56.7 s with
+  identical solver counters. A real sparse-vector tableau row representation is
+  still the relevant larger experiment; rebuilding `std::map` rows is not it.
+
+`--lra-unate-lemmas` enables an experimental static arithmetic-lemma pass
+inspired by cvc5's unate arithmetic lemmas. It emits SAT-visible binary clauses
+between already-created simple literals on the same variable, for example
+`x <= 1 -> x <= 2`; equality-to-bound and finite-domain choice exclusions are
+left to the existing finite-domain encodings when those are enabled. The current
+implementation emits adjacent upper-bound and lower-bound chains rather than all
+pairwise implications, because the pairwise variant added too much CNF. This is
+default-off: on the 2026-07-08 local quick suite it kept 5/5 solved but regressed
+PAR2 from 2.732 s to 3.615 s, and on the hard suite it kept 8/10 solved but
+regressed PAR2 from 9.360 s to 9.899 s. It did reduce pivots on selected
+`tta_startup` instances, but not enough to justify enabling it by default.
+
 `--lra-tableau-row-index` enables a separate experimental reverse row index for
 simplex `update` and `pivot` scans. The intended target is pivot-heavy problems
 where scanning every basic row dominates the profile. It is default-off: on the
@@ -643,6 +695,9 @@ earlier run.
 | 2026-07-03 | `--lra-ite-eq-direct` candidate, repeat 2 | 20 s | 116 / 137 | 51 / 72 | 21 | 0 | 6.943 s | `loop-ite-eq-direct-repeat-2-full-candidate-20260703-230538` | Solved count ties the strongest default repeat while preserving a PAR2 win; promoted to the default on 2026-07-04 with `--no-lra-ite-eq-direct` retained as the ablation. |
 | 2026-07-04 | DL/UTVPI fast path default on | 20 s | 114 / 137 | 49 / 72 | 23 | 0 | 7.478 s | `full-dlfast-default-20260704` | Accepted as default-on but small; the pure graph regressions avoid SAT/LRA rows, and the paired ablation below shows one extra local `tta_startup` solve with no Z3 answer disagreements. |
 | 2026-07-04 | `--no-lra-dl-fast-path` ablation | 20 s | 113 / 137 | 48 / 72 | 24 | 0 | 7.604 s | `full-dlfast-off-20260704` | Slightly worse than the default-on run; keep the disable flag because the current benchmark set has few pure DL/UTVPI instances and timing near the cutoff is noisy. |
+| 2026-07-08 | local hard suite, default | 20 s | 8 / 10 | 7 / 9 | 2 | 0 | 9.360 s | `scripts/qf_lra_eval.py --suite hard` | Baseline for static unate lemma experiment. |
+| 2026-07-08 | local hard suite, `--lra-unate-lemmas` | 20 s | 8 / 10 | 7 / 9 | 2 | 0 | 9.899 s | `scripts/qf_lra_eval.py --suite hard --opts=--lra-unate-lemmas` | Rejected as a default candidate; same solved count, worse PAR2 despite lower pivot counts on selected instances. |
+| 2026-07-08 | local hard suite, pivot-list replacement cleanup | 20 s | 8 / 10 | 7 / 9 | 2 | 0 | 8.742 s | `local-retained-pivot-sort-hard-20260708` | Retained as a small default-on cleanup; avoids sorting two basis vectors on every pivot. |
 
 Most native rows in this log solve `check`, `keymaera`, and
 `spider_benchmarks` completely; the moving metric is usually `tta_startup`.

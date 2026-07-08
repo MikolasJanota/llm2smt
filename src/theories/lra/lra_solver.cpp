@@ -102,6 +102,17 @@ void LraSolver::unregister_row_coeffs(int row_idx) {
     }
 }
 
+void LraSolver::replace_sorted_var(std::vector<int>& xs, int old_v, int new_v) {
+    auto old_it = std::lower_bound(xs.begin(), xs.end(), old_v);
+    if (old_it != xs.end() && *old_it == old_v) {
+        xs.erase(old_it);
+    } else {
+        auto fallback = std::find(xs.begin(), xs.end(), old_v);
+        if (fallback != xs.end()) xs.erase(fallback);
+    }
+    xs.insert(std::lower_bound(xs.begin(), xs.end(), new_v), new_v);
+}
+
 int LraSolver::ensure_real_var(const std::string& name) {
     auto it = real_to_var_.find(name);
     if (it != real_to_var_.end()) return it->second;
@@ -627,13 +638,8 @@ bool LraSolver::pivot(int basic, int nonbasic) {
     row_of_basic_[basic] = -1;
     is_basic_[basic] = false;
     is_basic_[nonbasic] = true;
-    auto replace = [](std::vector<int>& xs, int old_v, int new_v) {
-        auto it = std::find(xs.begin(), xs.end(), old_v);
-        if (it != xs.end()) *it = new_v;
-        std::sort(xs.begin(), xs.end());
-    };
-    replace(basic_vars_, basic, nonbasic);
-    replace(nonbasic_vars_, nonbasic, basic);
+    replace_sorted_var(basic_vars_, basic, nonbasic);
+    replace_sorted_var(nonbasic_vars_, nonbasic, basic);
     if (stats_) ++stats_->lra_pivots;
     return true;
 }
@@ -854,6 +860,18 @@ int LraSolver::current_lit_value(int lit) const {
     int value = atom_assignment_[sat_var];
     if (value == 0) return 0;
     return lit > 0 ? value : -value;
+}
+
+bool LraSolver::propagation_already_known(int lit, bool row_bound, bool count_duplicate) {
+    int assigned = current_lit_value(lit);
+    if (assigned > 0 || (assigned == 0 && prop_enqueued_.contains(lit))) {
+        if (count_duplicate && stats_) {
+            ++stats_->lra_prop_prefiltered_duplicates;
+            if (row_bound) ++stats_->lra_row_prop_prefiltered_duplicates;
+        }
+        return true;
+    }
+    return false;
 }
 
 bool LraSolver::enqueue_propagation(int lit, std::vector<int> reason, bool row_bound) {
@@ -1296,7 +1314,7 @@ void LraSolver::discover_simple_graph_propagations(const std::vector<int>* model
         }
         ++candidates;
         if (stats_) ++stats_->lra_simple_graph_candidates;
-        if (current_lit_value(lit) > 0) return;
+        if (propagation_already_known(lit, false)) return;
         std::vector<int> reason;
         if (implied(templates, reason)) enqueue_graph_propagation(lit, std::move(reason));
     };
@@ -1375,7 +1393,7 @@ void LraSolver::discover_rdl_propagations(const std::vector<int>* model) {
         }
         ++candidates;
         if (stats_) ++stats_->lra_rdl_prop_candidates;
-        if (current_lit_value(lit) > 0) {
+        if (propagation_already_known(lit, false)) {
             if (stats_) ++stats_->lra_rdl_prop_duplicates;
             return;
         }
@@ -1477,38 +1495,6 @@ void LraSolver::discover_row_bound_propagations() {
         return true;
     };
 
-    auto inspect_lower_atom = [&](const BoundAtomRef& atom,
-                                  const std::optional<DeltaRational>& lower_value,
-                                  const std::vector<int>& lower_sources,
-                                  const std::optional<DeltaRational>& upper_value,
-                                  const std::vector<int>& upper_sources) {
-        if (!inspect_candidate()) return;
-        if (lower_value) {
-            if (*lower_value >= atom.value)
-                enqueue(atom.sat_var, lower_sources);
-        }
-        if (upper_value) {
-            if (*upper_value < atom.value)
-                enqueue(-atom.sat_var, upper_sources);
-        }
-    };
-
-    auto inspect_upper_atom = [&](const BoundAtomRef& atom,
-                                  const std::optional<DeltaRational>& lower_value,
-                                  const std::vector<int>& lower_sources,
-                                  const std::optional<DeltaRational>& upper_value,
-                                  const std::vector<int>& upper_sources) {
-        if (!inspect_candidate()) return;
-        if (lower_value) {
-            if (*lower_value > atom.value)
-                enqueue(-atom.sat_var, lower_sources);
-        }
-        if (upper_value) {
-            if (*upper_value <= atom.value)
-                enqueue(atom.sat_var, upper_sources);
-        }
-    };
-
     auto maybe_apply_hit_cutoff = [&]() {
         if (row_bound_min_hit_rate_ == 0 || row_bound_hit_window_ == 0 ||
             row_bound_hit_cutoff_ || row_bound_window_candidates_ < row_bound_hit_window_)
@@ -1541,6 +1527,8 @@ void LraSolver::discover_row_bound_propagations() {
         std::optional<DeltaRational> row_upper = row.constant;
         std::vector<int> lower_sources;
         std::vector<int> upper_sources;
+        lower_sources.reserve(row.coeffs.size());
+        upper_sources.reserve(row.coeffs.size());
 
         for (const auto& [x, a] : row.coeffs) {
             if (a > Rational(0)) {
@@ -1574,12 +1562,28 @@ void LraSolver::discover_row_bound_propagations() {
         }
 
         if (!row_lower && !row_upper) return;
-        if (has_lower_atoms)
-            for (const BoundAtomRef& atom : lower_atoms_by_var_[basic])
-                inspect_lower_atom(atom, row_lower, lower_sources, row_upper, upper_sources);
-        if (has_upper_atoms)
-            for (const BoundAtomRef& atom : upper_atoms_by_var_[basic])
-                inspect_upper_atom(atom, row_lower, lower_sources, row_upper, upper_sources);
+        if (has_lower_atoms) {
+            for (const BoundAtomRef& atom : lower_atoms_by_var_[basic]) {
+                if (!inspect_candidate()) continue;
+                if (row_lower && *row_lower >= atom.value &&
+                    !propagation_already_known(atom.sat_var, true))
+                    enqueue(atom.sat_var, lower_sources);
+                if (row_upper && *row_upper < atom.value &&
+                    !propagation_already_known(-atom.sat_var, true))
+                    enqueue(-atom.sat_var, upper_sources);
+            }
+        }
+        if (has_upper_atoms) {
+            for (const BoundAtomRef& atom : upper_atoms_by_var_[basic]) {
+                if (!inspect_candidate()) continue;
+                if (row_lower && *row_lower > atom.value &&
+                    !propagation_already_known(-atom.sat_var, true))
+                    enqueue(-atom.sat_var, lower_sources);
+                if (row_upper && *row_upper <= atom.value &&
+                    !propagation_already_known(atom.sat_var, true))
+                    enqueue(atom.sat_var, upper_sources);
+            }
+        }
         maybe_apply_hit_cutoff();
     };
 
@@ -1650,12 +1654,14 @@ void LraSolver::discover_bound_propagations() {
         if (stats_) ++stats_->lra_prop_candidates_considered;
         if (lower_[var].active) {
             DeltaRational implied = lower_[var].value;
-            if (implied >= atom.value)
+            if (implied >= atom.value &&
+                !propagation_already_known(atom.sat_var, false))
                 enqueue(atom.sat_var, {atom.sat_var, -lower_[var].source_lit});
         }
         if (upper_[var].active) {
             DeltaRational implied = upper_[var].value;
-            if (implied < atom.value)
+            if (implied < atom.value &&
+                !propagation_already_known(-atom.sat_var, false))
                 enqueue(-atom.sat_var, {-atom.sat_var, -upper_[var].source_lit});
         }
     };
@@ -1664,12 +1670,14 @@ void LraSolver::discover_bound_propagations() {
         if (stats_) ++stats_->lra_prop_candidates_considered;
         if (lower_[var].active) {
             DeltaRational implied = lower_[var].value;
-            if (implied > atom.value)
+            if (implied > atom.value &&
+                !propagation_already_known(-atom.sat_var, false))
                 enqueue(-atom.sat_var, {-atom.sat_var, -lower_[var].source_lit});
         }
         if (upper_[var].active) {
             DeltaRational implied = upper_[var].value;
-            if (implied <= atom.value)
+            if (implied <= atom.value &&
+                !propagation_already_known(atom.sat_var, false))
                 enqueue(atom.sat_var, {atom.sat_var, -upper_[var].source_lit});
         }
     };

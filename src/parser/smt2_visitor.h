@@ -223,6 +223,14 @@ private:
     std::optional<std::pair<std::string, std::string>>
         lra_var_var_equality(const lra::LinearExpr& e) const;
     bool lra_bound_holds(const lra::Rational& choice, lra::Relation rel, const lra::Rational& bound) const;
+    bool lra_bound_implies(
+        lra::Relation premise_rel,
+        const lra::Rational& premise_value,
+        lra::Relation conclusion_rel,
+        const lra::Rational& conclusion_value) const;
+    void lra_add_unate_lemma(int premise, int conclusion);
+    void lra_encode_unate_lemmas_for_var(const std::string& var);
+    void lra_encode_unate_lemmas();
     void lra_encode_finite_domain_bound_defs_for_var(const std::string& var);
     void lra_remember_bound_lit(
         const std::string& var,
@@ -266,6 +274,7 @@ private:
     std::unordered_set<std::string> lra_bound_lits_seen_;
     std::unordered_set<std::string> lra_finite_domain_bound_defs_seen_;
     std::unordered_set<std::string> lra_finite_domain_eq_defs_seen_;
+    std::unordered_set<std::string> lra_unate_lemmas_seen_;
     std::vector<smt2parser::SMTLIBv2Parser::TermContext*> pending_lra_asserts_;
     std::unordered_map<std::string, lra::LinearExpr> lra_eq_elim_subst_;
     mutable std::unordered_map<std::string, lra::Rational> lra_model_value_cache_;

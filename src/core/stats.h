@@ -53,6 +53,7 @@ struct Stats {
     uint64_t lra_const_bool_folds    = 0; // QF_LRA Boolean constants/connectives folded before Tseitin encoding
     uint64_t lra_const_arith_folds   = 0; // QF_LRA arithmetic atoms folded to constants before LRA registration
     uint64_t lra_ite_terms_simplified = 0; // QF_LRA arithmetic ite auxiliaries avoided by local simplification
+    uint64_t lra_unate_lemmas        = 0; // SAT-visible implications between existing simple QF_LRA literals
 
     // ── SAT encoding ───────────────────────────────────────────────────────
     uint64_t sat_vars                = 0; // SAT variables allocated through the wrapper
@@ -84,10 +85,12 @@ struct Stats {
     uint64_t lra_propagations        = 0; // theory literals delivered to SAT
     uint64_t lra_prop_candidates_considered = 0; // elementary atoms inspected by propagation discovery
     uint64_t lra_prop_enqueue_attempts = 0; // implied LRA literals submitted to the propagation queue
+    uint64_t lra_prop_prefiltered_duplicates = 0; // candidates skipped before reason construction because the literal is already true/queued
     uint64_t lra_prop_duplicates     = 0; // implied LRA literals already assigned/enqueued or self-redundant
     uint64_t lra_prop_conflicts      = 0; // contradicted implied LRA literals turned into conflicts
     uint64_t lra_row_prop_candidates_considered = 0; // row-bound atoms inspected by propagation discovery
     uint64_t lra_row_prop_enqueue_attempts = 0; // row-bound implied literals submitted to the propagation queue
+    uint64_t lra_row_prop_prefiltered_duplicates = 0; // row-bound candidates skipped before reason construction because the literal is already true/queued
     uint64_t lra_row_prop_duplicates = 0; // row-bound implied literals already assigned/enqueued or self-redundant
     uint64_t lra_row_bound_propagations = 0; // literals enqueued from derived row bounds
     uint64_t lra_row_prop_hit_cutoffs = 0; // row-bound discovery disabled after low enqueue hit rate
@@ -179,6 +182,7 @@ struct Stats {
         row("lra.const_bool_folds",     lra_const_bool_folds);
         row("lra.const_arith_folds",    lra_const_arith_folds);
         row("lra.ite_terms_simplified", lra_ite_terms_simplified);
+        row("lra.unate_lemmas",         lra_unate_lemmas);
         out << "  -- sat encoding --\n";
         row("sat.vars",                 sat_vars);
         row("sat.clauses",              sat_clauses);
@@ -207,10 +211,12 @@ struct Stats {
         row("lra.propagations",         lra_propagations);
         row("lra.prop_candidates_considered", lra_prop_candidates_considered);
         row("lra.prop_enqueue_attempts", lra_prop_enqueue_attempts);
+        row("lra.prop_prefiltered_duplicates", lra_prop_prefiltered_duplicates);
         row("lra.prop_duplicates",      lra_prop_duplicates);
         row("lra.prop_conflicts",       lra_prop_conflicts);
         row("lra.row_prop_candidates_considered", lra_row_prop_candidates_considered);
         row("lra.row_prop_enqueue_attempts", lra_row_prop_enqueue_attempts);
+        row("lra.row_prop_prefiltered_duplicates", lra_row_prop_prefiltered_duplicates);
         row("lra.row_prop_duplicates",  lra_row_prop_duplicates);
         row("lra.row_bound_propagations", lra_row_bound_propagations);
         row("lra.row_prop_hit_cutoffs", lra_row_prop_hit_cutoffs);

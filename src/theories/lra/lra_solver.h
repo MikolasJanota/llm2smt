@@ -246,6 +246,7 @@ private:
     static Relation negate_rel(Relation r);
     void register_row_coeffs(int row_idx);
     void unregister_row_coeffs(int row_idx);
+    void replace_sorted_var(std::vector<int>& xs, int old_v, int new_v);
     bool apply_bound(int var, BoundKind kind, const DeltaRational& value, int source_lit);
     void set_conflict(std::vector<int> clause);
     bool check();
@@ -265,6 +266,7 @@ private:
     void add_active_simple_graph_edges(int sat_var, int lit);
     void mark_all_bound_vars_for_propagation();
     int current_lit_value(int lit) const;
+    bool propagation_already_known(int lit, bool row_bound, bool count_duplicate = true);
     bool enqueue_propagation(int lit, std::vector<int> reason, bool row_bound);
     bool enqueue_graph_propagation(int lit, std::vector<int> reason);
     bool feasible_for_literals(const std::vector<int>& lits,

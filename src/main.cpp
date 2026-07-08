@@ -243,6 +243,8 @@ int main(int argc, char** argv) {
                         "Enable experimental QF_LRA value-2 finite-domain choice literals as SAT decision hints");
     lra_group->add_flag("!--no-lra-finite-domain-branch", opts.lra_finite_domain_branch,
                         "Disable QF_LRA finite-domain choice literals as SAT decision hints");
+    lra_group->add_flag("--lra-unate-lemmas", opts.lra_unate_lemmas,
+                        "Enable experimental SAT-visible unate implications between existing simple QF_LRA literals");
     lra_group->add_flag("--lra-direct-eq-atoms", opts.lra_direct_eq_atoms,
                         "Enable experimental direct LRA Eq atoms for positive top-level QF_LRA equalities");
     lra_group->add_flag("!--no-lra-incremental-prop-scan", opts.lra_incremental_prop_scan,

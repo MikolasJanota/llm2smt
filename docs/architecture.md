@@ -133,6 +133,7 @@ Preprocessing and encoding options:
 - `--no-lra-finite-domain-eqdefs`
 - `--lra-finite-domain-branch`
 - `--no-lra-finite-domain-branch`
+- `--lra-unate-lemmas`
 - `--lra-direct-eq-atoms`
 
 Theory propagation options:

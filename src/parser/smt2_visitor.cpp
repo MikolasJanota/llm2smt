@@ -362,6 +362,119 @@ bool Smt2Visitor::lra_bound_holds(
     return false;
 }
 
+bool Smt2Visitor::lra_bound_implies(
+    lra::Relation premise_rel,
+    const lra::Rational& premise_value,
+    lra::Relation conclusion_rel,
+    const lra::Rational& conclusion_value) const
+{
+    switch (premise_rel) {
+    case lra::Relation::Le:
+        if (conclusion_rel == lra::Relation::Le) return premise_value <= conclusion_value;
+        if (conclusion_rel == lra::Relation::Lt) return premise_value <  conclusion_value;
+        return false;
+    case lra::Relation::Lt:
+        if (conclusion_rel == lra::Relation::Le) return premise_value <= conclusion_value;
+        if (conclusion_rel == lra::Relation::Lt) return premise_value <= conclusion_value;
+        return false;
+    case lra::Relation::Ge:
+        if (conclusion_rel == lra::Relation::Ge) return premise_value >= conclusion_value;
+        if (conclusion_rel == lra::Relation::Gt) return premise_value >  conclusion_value;
+        return false;
+    case lra::Relation::Gt:
+        if (conclusion_rel == lra::Relation::Ge) return premise_value >= conclusion_value;
+        if (conclusion_rel == lra::Relation::Gt) return premise_value >= conclusion_value;
+        return false;
+    case lra::Relation::Eq:
+    case lra::Relation::Ne:
+        return false;
+    }
+    return false;
+}
+
+void Smt2Visitor::lra_add_unate_lemma(int premise, int conclusion)
+{
+    if (premise == conclusion) return;
+    const std::string key = std::to_string(premise) + ">" + std::to_string(conclusion);
+    if (!lra_unate_lemmas_seen_.insert(key).second) return;
+
+    std::array<int,2> cl = {-premise, conclusion};
+    ctx_.sat.add_clause(std::span<const int>(cl));
+    ++stats_.lra_unate_lemmas;
+}
+
+void Smt2Visitor::lra_encode_unate_lemmas_for_var(const std::string& var)
+{
+    if (!opts_.lra_unate_lemmas) return;
+
+    auto bit = lra_bound_lits_by_var_.find(var);
+    if (bit != lra_bound_lits_by_var_.end()) {
+        std::vector<LraBoundLit> uppers;
+        std::vector<LraBoundLit> lowers;
+        for (const auto& bound : bit->second) {
+            if (bound.rel == lra::Relation::Le || bound.rel == lra::Relation::Lt)
+                uppers.push_back(bound);
+            else if (bound.rel == lra::Relation::Ge || bound.rel == lra::Relation::Gt)
+                lowers.push_back(bound);
+        }
+        auto upper_less = [](const LraBoundLit& a, const LraBoundLit& b) {
+            if (a.value != b.value) return a.value < b.value;
+            if (a.rel != b.rel) return a.rel == lra::Relation::Lt;
+            return a.lit < b.lit;
+        };
+        auto lower_less = [](const LraBoundLit& a, const LraBoundLit& b) {
+            if (a.value != b.value) return b.value < a.value;
+            if (a.rel != b.rel) return a.rel == lra::Relation::Gt;
+            return a.lit < b.lit;
+        };
+        auto emit_chain = [&](std::vector<LraBoundLit>& bounds, auto less) {
+            std::sort(bounds.begin(), bounds.end(), less);
+            for (size_t i = 1; i < bounds.size(); ++i) {
+                const auto& stronger = bounds[i - 1];
+                const auto& weaker = bounds[i];
+                if (lra_bound_implies(stronger.rel, stronger.value, weaker.rel, weaker.value))
+                    lra_add_unate_lemma(stronger.lit, weaker.lit);
+            }
+        };
+        emit_chain(uppers, upper_less);
+        emit_chain(lowers, lower_less);
+    }
+
+    auto cit = lra_simple_eqs_by_var_.find(var);
+    if (cit == lra_simple_eqs_by_var_.end()) return;
+
+    if (!opts_.finite_domain_amo) {
+        const auto& choices = cit->second;
+        for (size_t i = 0; i < choices.size(); ++i) {
+            for (size_t j = i + 1; j < choices.size(); ++j) {
+                if (choices[i].value == choices[j].value) continue;
+                lra_add_unate_lemma(choices[i].lit, -choices[j].lit);
+                lra_add_unate_lemma(choices[j].lit, -choices[i].lit);
+            }
+        }
+    }
+
+    if (!opts_.lra_finite_domain_bounds && bit != lra_bound_lits_by_var_.end()) {
+        for (const auto& choice : cit->second) {
+            for (const auto& bound : bit->second) {
+                const int conclusion = lra_bound_holds(choice.value, bound.rel, bound.value)
+                    ? bound.lit
+                    : -bound.lit;
+                lra_add_unate_lemma(choice.lit, conclusion);
+            }
+        }
+    }
+}
+
+void Smt2Visitor::lra_encode_unate_lemmas()
+{
+    if (!opts_.lra_unate_lemmas) return;
+    std::unordered_set<std::string> vars;
+    for (const auto& [var, _] : lra_bound_lits_by_var_) vars.insert(var);
+    for (const auto& [var, _] : lra_simple_eqs_by_var_) vars.insert(var);
+    for (const auto& var : vars) lra_encode_unate_lemmas_for_var(var);
+}
+
 void Smt2Visitor::lra_encode_finite_domain_bound_defs_for_var(const std::string& var)
 {
     if (!opts_.finite_domain_amo || !opts_.lra_finite_domain_bounds) return;
@@ -1245,6 +1358,7 @@ void Smt2Visitor::lra_flush_assertions()
     }
     for (auto* t : pending_lra_asserts_)
         lra_assert_formula(t);
+    lra_encode_unate_lemmas();
     pending_lra_asserts_.clear();
 }
 

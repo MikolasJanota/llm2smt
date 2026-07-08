@@ -448,6 +448,20 @@ add_test(
          grep -Eq 'preproc\\.finite_domain_bounds[[:space:]]+0$' /tmp/lra26_off.err"
 )
 add_test(
+    NAME "smt2/lra_unate_lemmas_cli_gate"
+    COMMAND bash -c
+        "$<TARGET_FILE:llm2smt> --quiet --stats \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra39_unate_lemmas.smt2 \
+         >/tmp/lra39_off.out 2>/tmp/lra39_off.err && \
+         grep -q '^sat' /tmp/lra39_off.out && \
+         grep -Eq 'lra\\.unate_lemmas[[:space:]]+0$' /tmp/lra39_off.err && \
+         $<TARGET_FILE:llm2smt> --quiet --stats --lra-unate-lemmas \
+         ${CMAKE_CURRENT_SOURCE_DIR}/smt2/lra39_unate_lemmas.smt2 \
+         >/tmp/lra39_on.out 2>/tmp/lra39_on.err && \
+         grep -q '^sat' /tmp/lra39_on.out && \
+         grep -Eq 'lra\\.unate_lemmas[[:space:]]+[1-9][0-9]*$' /tmp/lra39_on.err"
+)
+add_test(
     NAME "smt2/lra_direct_eq_atom_stats"
     COMMAND bash -c
         "$<TARGET_FILE:llm2smt> --quiet --stats --no-lra-eq-elim --lra-direct-eq-atoms \

@@ -35,6 +35,7 @@ struct PreprocOptions {
     bool        lra_finite_domain_bounds = true; // link QF_LRA finite-domain choices to simple bound atoms
     bool        lra_finite_domain_eq_defs = true; // propagate QF_LRA variable equalities through finite-domain choices
     bool        lra_finite_domain_branch = false; // experimental: prefer selected QF_LRA finite-domain choice literals as SAT decisions
+    bool        lra_unate_lemmas = false; // experimental: add SAT-visible unate implications between existing simple LRA literals
     bool        lra_direct_eq_atoms = false; // experimental: assert positive top-level QF_LRA equalities as direct LRA Eq atoms
     bool        lra_incremental_prop_scan = true; // scan only LRA vars whose bounds changed during propagation discovery
     bool        lra_row_bound_prop = true; // propagate elementary atoms implied by tableau row bounds
