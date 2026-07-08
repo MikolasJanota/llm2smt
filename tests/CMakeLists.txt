@@ -336,7 +336,7 @@ add_test(
              >/tmp/uf_sym_seed.out 2>/tmp/uf_sym_seed.err; \
            grep -q '^sat' /tmp/uf_sym_seed.out; \
            case \"$base\" in \
-             fixed_choice_*) grep -Eq 'preproc\\.uf_symmetry_clauses[[:space:]]+[1-9][0-9]*$' /tmp/uf_sym_seed.err ;; \
+             fixed_choice_*|mixed_fixed_moving_*) grep -Eq 'preproc\\.uf_symmetry_clauses[[:space:]]+[1-9][0-9]*$' /tmp/uf_sym_seed.err ;; \
              *) grep -Eq 'preproc\\.uf_symmetry_clauses[[:space:]]+0$' /tmp/uf_sym_seed.err && \
                 grep -Eq 'preproc\\.uf_symmetry_rejected_noninvariant[[:space:]]+1$' /tmp/uf_sym_seed.err ;; \
            esac; \

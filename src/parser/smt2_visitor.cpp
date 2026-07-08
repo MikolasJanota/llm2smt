@@ -3033,6 +3033,17 @@ bool symmetry_terms_contain_values(NodeManager& nm,
     return false;
 }
 
+void remove_symmetry_terms_containing_values(NodeManager& nm,
+                                             std::vector<FiniteDomainSymmetryTerm>& terms,
+                                             const std::unordered_set<NodeId>& values)
+{
+    terms.erase(std::remove_if(terms.begin(), terms.end(),
+                               [&](const FiniteDomainSymmetryTerm& term) {
+                                   return contains_any_node(nm, term.term, values);
+                               }),
+                terms.end());
+}
+
 std::string canonical_symmetry_key(NodeManager& nm, NodeId root,
                                    const std::unordered_map<NodeId, NodeId>& perm,
                                    std::unordered_map<NodeId, std::string>& memo)
@@ -3163,7 +3174,8 @@ void Smt2Visitor::encode_finite_domain_value_precedence()
         for (NodeId value : group.values)
             value_set.insert(value);
 
-        if (symmetry_terms_contain_values(nm, group.terms, value_set))
+        remove_symmetry_terms_containing_values(nm, group.terms, value_set);
+        if (group.terms.size() < 2)
             continue;
 
         bool undistinguished = true;
@@ -3242,8 +3254,11 @@ void Smt2Visitor::encode_uf_symmetry_breaking()
         for (NodeId value : group.values)
             value_set.insert(value);
         if (symmetry_terms_contain_values(nm, group.terms, value_set)) {
-            ++stats_.preproc_uf_symmetry_rejected_noninvariant;
-            continue;
+            remove_symmetry_terms_containing_values(nm, group.terms, value_set);
+            if (group.terms.empty()) {
+                ++stats_.preproc_uf_symmetry_rejected_noninvariant;
+                continue;
+            }
         }
         if (!formulas_are_invariant_under_value_permutations(nm, pending_fmls_, group.values)) {
             ++stats_.preproc_uf_symmetry_rejected_noninvariant;

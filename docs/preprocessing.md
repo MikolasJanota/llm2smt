@@ -196,8 +196,11 @@ not themselves contain the permuted values.  For example, the group
 `(f c0), (f c1), ...` over values `c0, c1, ...` is not a fixed ordered term
 sequence under a value permutation; the terms move with the values.  A QG-style
 table such as `(op c_i c_j)` has the same issue.  The recognizer therefore
-rejects these moving-term groups even if the formula as a whole is invariant
-under value permutations.
+drops moving terms from the ordered sequence even if the formula as a whole is
+invariant under value permutations.  If an invariant value set also contains
+fixed finite-domain terms, such as extra constants whose definitions do not
+mention the values, those fixed terms can still receive value-precedence
+clauses.  If no fixed term remains, the candidate is rejected.
 
 The new stats are:
 
@@ -249,9 +252,10 @@ The symmetry pass has two dedicated test artifacts:
   fragile recognizer boundary.
 
 The deterministic corpus contains fixed-choice cases that should emit symmetry
-clauses and moving-term cases that must emit zero clauses.  The CTest
+clauses, moving-term cases that must emit zero clauses, and mixed fixed/moving
+cases that should keep only the fixed terms.  The CTest
 `smt2/uf_symmetry_generated_seed_corpus` checks all generated seeds and prevents
-the QG moving-term bug from regressing.
+both the QG moving-term bug and the NEQ fixed-term regression from coming back.
 
 The randomized fuzzer compares the tuned solver with and without
 `--uf-symmetry-breaking`, and can optionally compare against a reference solver:
@@ -261,10 +265,11 @@ python3 scripts/fuzz_uf_symmetry.py --count 1000 --seed 7
 python3 scripts/fuzz_uf_symmetry.py --count 1000 --seed 7 --ref 'z3 model_validate=true'
 ```
 
-It generates satisfiable fixed-choice, moving-unary, moving-binary, and
-Latin-square-like QF_UF instances.  For moving-term cases, it also checks that
-`preproc.uf_symmetry_clauses` stays zero.  Counterexamples are saved under
-`fuzz_fails/uf_symmetry` by default.
+It generates satisfiable fixed-choice, moving-unary, mixed fixed/moving,
+moving-binary, and Latin-square-like QF_UF instances.  For moving-only cases,
+it checks that `preproc.uf_symmetry_clauses` stays zero; for fixed and mixed
+cases, it checks that some symmetry clauses are emitted.  Counterexamples are
+saved under `fuzz_fails/uf_symmetry` by default.
 
 The initial local run after adding the moving-term guard checked 2,000 generated
 instances with no disagreements:
@@ -272,9 +277,9 @@ instances with no disagreements:
 ```text
 checked=2000
 failures=0
-fixed=363
-moving=1637
-sym_clause_cases=84
+fixed=318
+moving=1682
+sym_clause_cases=367
 ```
 
 ## QF_LRA Equality Elimination

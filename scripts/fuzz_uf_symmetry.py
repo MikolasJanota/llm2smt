@@ -26,6 +26,7 @@ class Case:
     kind: str
     text: str
     moving_terms: bool
+    expect_symmetry_clauses: bool
 
 
 @dataclass
@@ -69,10 +70,12 @@ def make_fixed_choice(rng: random.Random, max_size: int) -> Case:
         rng.shuffle(shuffled)
         lines.append(domain_assert(x, shuffled))
     # Plant a partial assignment that is compatible with value precedence.
-    for i, x in enumerate(xs[: rng.randint(0, min(terms, size))]):
+    planted = rng.randint(0, min(terms, size))
+    for i, x in enumerate(xs[:planted]):
         lines.append(f"(assert (= {x} {values[min(i, size - 1)]}))")
     lines += ["(check-sat)", ""]
-    return Case("fixed-choice", "\n".join(lines), moving_terms=False)
+    return Case("fixed-choice", "\n".join(lines), moving_terms=False,
+                expect_symmetry_clauses=planted == 0)
 
 
 def make_moving_unary(rng: random.Random, max_size: int) -> Case:
@@ -93,7 +96,27 @@ def make_moving_unary(rng: random.Random, max_size: int) -> Case:
     if rng.random() < 0.4:
         lines.append(f"(assert (not (= ({fn} {values[0]}) ({fn} {values[1]}))))")
     lines += ["(check-sat)", ""]
-    return Case("moving-unary", "\n".join(lines), moving_terms=True)
+    return Case("moving-unary", "\n".join(lines), moving_terms=True,
+                expect_symmetry_clauses=False)
+
+
+def make_mixed_fixed_moving(rng: random.Random, max_size: int) -> Case:
+    size = choose_size(rng, max_size)
+    values = [f"v{i}" for i in range(size)]
+    fixed_count = rng.randint(size, max(size, size + 5))
+    xs = [f"x{i}" for i in range(fixed_count)]
+    lines = header()
+    lines += [f"(declare-fun {value} () U)" for value in values]
+    lines += [f"(declare-fun {x} () U)" for x in xs]
+    lines += ["(declare-fun f (U) U)"]
+    lines += disequalities(values)
+    for x in xs:
+        lines.append(domain_assert(x, values))
+    for value in values:
+        lines.append(domain_assert(f"(f {value})", values))
+    lines += ["(check-sat)", ""]
+    return Case("mixed-fixed-moving", "\n".join(lines), moving_terms=True,
+                expect_symmetry_clauses=True)
 
 
 def make_moving_binary(rng: random.Random, max_size: int) -> Case:
@@ -115,7 +138,8 @@ def make_moving_binary(rng: random.Random, max_size: int) -> Case:
                 f"(assert (= (op {left} {right}) {values[(i + j + offset) % size]}))"
             )
     lines += ["(check-sat)", ""]
-    return Case("moving-binary", "\n".join(lines), moving_terms=True)
+    return Case("moving-binary", "\n".join(lines), moving_terms=True,
+                expect_symmetry_clauses=False)
 
 
 def make_latin_square(rng: random.Random, max_size: int) -> Case:
@@ -141,12 +165,19 @@ def make_latin_square(rng: random.Random, max_size: int) -> Case:
                 f"(assert (= (op {left} {right}) {values[(i + j + offset) % size]}))"
             )
     lines += ["(check-sat)", ""]
-    return Case("latin-square", "\n".join(lines), moving_terms=True)
+    return Case("latin-square", "\n".join(lines), moving_terms=True,
+                expect_symmetry_clauses=False)
 
 
 def make_case(rng: random.Random, max_size: int) -> Case:
-    makers = [make_fixed_choice, make_moving_unary, make_moving_binary, make_latin_square]
-    weights = [2, 4, 3, 2]
+    makers = [
+        make_fixed_choice,
+        make_moving_unary,
+        make_mixed_fixed_moving,
+        make_moving_binary,
+        make_latin_square,
+    ]
+    weights = [2, 4, 2, 3, 2]
     maker = rng.choices(makers, weights=weights, k=1)[0]
     return maker(rng, max_size)
 
@@ -268,8 +299,11 @@ def main() -> int:
             elif off.returncode != 0 or on.returncode != 0:
                 reason = "solver_error"
                 details = f"off_rc={off.returncode} on_rc={on.returncode}"
-            elif case.moving_terms and on.clauses not in (0, None):
+            elif not case.expect_symmetry_clauses and on.clauses not in (0, None):
                 reason = "moving_terms_got_clauses"
+                details = f"kind={case.kind} clauses={on.clauses}"
+            elif case.expect_symmetry_clauses and (on.clauses is None or on.clauses == 0):
+                reason = "missing_symmetry_clauses"
                 details = f"kind={case.kind} clauses={on.clauses}"
             elif ref:
                 ref_result = run_solver(ref, smt2, args.timeout)

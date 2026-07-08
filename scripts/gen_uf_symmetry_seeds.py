@@ -74,6 +74,20 @@ def moving_unary_seed(size: int) -> str:
     return "\n".join(lines)
 
 
+def mixed_fixed_moving_seed(size: int, fixed_terms: int) -> str:
+    values = [f"v{i}" for i in range(size)]
+    xs = [f"x{i}" for i in range(fixed_terms)]
+    lines = header()
+    lines += [f"(declare-fun {value} () U)" for value in values]
+    lines += [f"(declare-fun {x} () U)" for x in xs]
+    lines += ["(declare-fun f (U) U)"]
+    lines += disequalities(values)
+    lines += [domain_assert(x, values) for x in xs]
+    lines += [domain_assert(f"(f {value})", values) for value in values]
+    lines += ["(check-sat)", ""]
+    return "\n".join(lines)
+
+
 def moving_binary_seed(size: int) -> str:
     values = [f"v{i}" for i in range(size)]
     lines = header()
@@ -177,6 +191,15 @@ def main() -> int:
         )
         manifest.append(
             f"{name}\tmoving-unary\tsat\t0\tterms contain permuted values\t{bytes_}"
+        )
+
+        name, bytes_ = write_seed(
+            args.out_dir,
+            f"mixed_fixed_moving_n{size}_t{args.fixed_terms}.smt2",
+            mixed_fixed_moving_seed(size, args.fixed_terms),
+        )
+        manifest.append(
+            f"{name}\tmixed-fixed-moving\tsat\tpositive\tkeep fixed terms and drop moving terms\t{bytes_}"
         )
 
         name, bytes_ = write_seed(
