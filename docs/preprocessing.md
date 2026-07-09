@@ -153,6 +153,46 @@ The pass is disabled in proof mode. Term definitions, incremental model-size
 search, full sort inference, and Paradox's broader finite-model search strategy
 are intentionally out of scope for this branch.
 
+### Symmetry Literature Anchors
+
+The finite-domain symmetry work is intentionally narrow.  It borrows static
+ordering clauses from finite-model finding, but it does not turn the solver into
+a Paradox- or MACE-style finite-model finder.
+
+The papers used for the current implementation are:
+
+- Koen Claessen and Niklas Sorensson, *New Techniques that Improve MACE-style
+  Finite Model Finding* (MODEL 2003).  This is the Paradox reference point:
+  static symmetry reduction, term definitions, sort inference, and incremental
+  finite-domain search.  We use only the static symmetry-reduction idea; term
+  definitions, sort inference, and model-size search are out of scope.
+- Giles Reger, Martin Riener, and Martin Suda, *Symmetry Avoidance in
+  MACE-Style Finite Model Finding* (FroCoS 2019).  This is the main source for
+  the principal-term/value-precedence clauses used by
+  `--finite-domain-value-precedence` and by the stronger
+  `--uf-symmetry-breaking` emission.
+- Joseph Poremba, *Static Symmetry Breaking in Many-Sorted Finite Model
+  Finding* (2020).  This is the sort-aware finite-model-finding background.  It
+  motivated keeping value sets sort-like and treating sort inference as related
+  but out of scope.
+- Andrew Reynolds, Cesare Tinelli, Amit Goel, and Sava Krstic, *Finite Model
+  Finding in SMT* (CAV 2013).  This is the SMT-side guardrail: DPLL(T)-native
+  finite model finding is not the same architecture as a SAT reduction with
+  explicit domain constants, so these symmetry passes remain default-off and
+  evaluation-gated.
+
+The SMT-native pass additionally follows:
+
+- David Deharbe, Pascal Fontaine, Stephan Merz, and Bruno Woltzenlogel Paleo,
+  *Exploiting Symmetry in SMT Problems* (CADE 2011).  This is the source for the
+  constant-permutation theorem behind SMT-native symmetry breaking, implemented
+  in veriT and exposed by Yices as `break-symmetries`.  Our implementation uses
+  a cheap syntactic invariance check instead of a full symmetry detector.
+- Carlos Areces, Pascal Fontaine, and Stephan Merz, *SyMT: Finding Symmetries in
+  SMT Formulas* (SMT 2013).  This is the graph-automorphism SMT symmetry
+  detection line.  We explicitly do not implement SyMT-style automorphism
+  detection; it is recorded here as the heavier alternative.
+
 ## SMT-Native QF_UF Symmetry Breaking
 
 ```text

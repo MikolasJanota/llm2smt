@@ -147,3 +147,24 @@ Controls:
 Candidate discovery is based on flat nodes whose CC class changed. The solver
 uses an occurrence index from flat endpoint node to equality literals, so it
 does not scan every equality atom after every merge.
+
+The main EUF propagation shape is a triangle equality:
+
+```text
+a = b, b = c  ==>  a = c
+```
+
+More generally, when CC has already made the two endpoints of a registered
+equality atom congruent, `cb_propagate` can return that equality literal. The
+reason clause is the implied literal plus the negation of the equality literals
+returned by `CC::explain(lhs, rhs)`, for example:
+
+```text
+(or (= a c) (not (= a b)) (not (= b c)))
+```
+
+This is deliberately implemented as theory propagation, not as an eager
+preprocessing pass that materializes all transitivity triangles. The occurrence
+index keeps discovery local to recently changed flat endpoints; without it,
+checking all registered equality atoms after every merge regresses on formulas
+with many unrelated equalities.
