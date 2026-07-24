@@ -32,6 +32,13 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Default to a Release build when the caller doesn't specify one (e.g. a bare
+# `cmake -B build`). Explicit -DCMAKE_BUILD_TYPE=... always wins.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build." FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "RelWithDebInfo" "MinSizeRel")
+endif()
+
 # Export compile_commands.json for IDE/tooling support
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
